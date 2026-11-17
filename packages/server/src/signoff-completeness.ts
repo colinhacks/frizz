@@ -1,34 +1,38 @@
-// A SIGN-OFF IS THE WHOLE HANDOFF (2026-11-11) — what scheduler SOURCE 18 reads off a rest.
+// WHAT A SIGN-OFF OWES THE QUESTIONS STILL OPEN — what scheduler SOURCE 18 reads off a rest.
 //
-// The human reads a thread from their own last message down, and the board folds everything between it and
-// the newest sign-off behind one row (web lib/stretchFolds). So the newest sign-off has to stand alone: it
-// replaces the one before it, and every question still open on the thread is named in it, under the
-// paragraph it belongs to. A worker woken with nothing new writes no new sign-off at all: it rests on its
-// signal fence alone, or on that sign-off's own fence again word for word (tailer restatesSignOff), and the
-// sign-off before stays the one the human reads (sign-offs.ts).
+// The human reads a thread from their own last message down, and the board folds the work between the
+// sign-offs since then behind hairlines, keeping every sign-off in view (web lib/stretchFolds). So a question
+// asked or named in any of them is ON SCREEN, live, until the human types to the thread. Typing past it ends
+// that: the thread no longer queues on it (question-fences.ts standingQuestions), and the human, who has
+// moved on, needs telling whether it still matters. A worker woken with nothing new writes no new sign-off
+// at all: it rests on its signal fence alone, or on that sign-off's own fence again word for word (tailer
+// restatesSignOff), and the sign-offs before stay the ones the human reads (sign-offs.ts).
 //
-// Until then a worker re-listed every open question at every rest, because the maintainer's own
+// Two faults, each refused with a correction (the maintainer's call, 2026-11-11):
+//
+//  - MISSING: a new sign-off leaves out a question still open on the thread that has FADED — asked before
+//    the human last typed, and named in no message since. Only answering, withdrawing or dismissing ends a
+//    question, so the first sign-off after the human writes names each faded one again (a reference, which
+//    puts it back in their queue) or the worker withdraws it: the eager withdrawal the maintainer asked for
+//    (2026-11-16: "It should also eagerly revoke questions that were previously asked"), forced once per
+//    message of theirs and never at a wake. Until 2026-11-16 every open question counted, standing ones
+//    included, because the board kept only the newest sign-off in view, and each sign-off re-named every
+//    question asked in the ones before it.
+//  - RELISTED: the rested-on message names questions asked before it and says nothing else — no prose, no
+//    new ask, no fence body. That is the re-listing itself; the cards are still where they were asked.
+//
+// Until 2026-11-11 a worker re-listed every open question at every rest, because the maintainer's own
 // instructions asked it to (2026-11-05), and each re-listing drew its card again (maintainer 2026-11-11:
 // "the thread will be reawakened by something or other, and it will repeat the questions it asked
 // previously"). Measured over the six days after: 952 `id:`-only references, 634 of them naming a card
 // already on screen since the human last typed.
 //
-// Two faults, each refused with a correction (the maintainer's call, 2026-11-11):
-//
-//  - MISSING: a new sign-off leaves out a question still open on the thread — one the human has typed past
-//    included, since only answering, withdrawing or dismissing it ends it. A question asked anywhere in the
-//    sign-off's own turn counts as named.
-//  - RELISTED: the rested-on message names questions asked before it and says nothing else — no prose, no
-//    new ask, no fence body. That is the re-listing itself; the cards are still where they were asked.
-//
 // NOT A FAULT: a question named mid-turn in a turn that then rests on a quiet park. It belongs to no
-// sign-off, but telling it apart needs the turn's start, and the fold knows only the newest delivery
-// (`lastUserAt`), which a sub-agent's return does not move — so a sign-off two rests back would read as
-// this turn's. The board draws the live card in the newest SIGN-OFF naming it (web lib/questionShadow), so
-// a stray naming moves nothing.
+// sign-off, but it was named since the human typed, so it stands, and the board keeps the message holding
+// its home card in view (web ChatView's rows).
 //
-// What none of this can check is the PROSE: a sign-off that names every open question under one line of
-// text passes. The contract carries that half.
+// What none of this can check is the PROSE: a sign-off that repeats the one before it word for word passes.
+// The contract carries that half.
 
 import { awaitingStatus, questionFenceBlocks, type AskedQuestion } from "@frizz/shared"
 import type { QuestionSighting } from "./backend/types.ts"
@@ -48,6 +52,9 @@ export interface SignOffRest {
   restAt: string
   /** The newest delivery before it (`lastUserAt`): the turn the rest closes started after it. */
   turnFrom?: string
+  /** When the human last typed to the thread (`restFromAt`): a question asked or named since then stands,
+   *  on screen in a sign-off the board keeps. Absent: the turn's start stands in, as standingQuestions reads it. */
+  humanFrom?: string
   sightings: readonly QuestionSighting[]
   lastFence?: FenceView
   /** The rested-on message is its signal fence alone (tailer signalFenceAlone); undefined on an old fold. */
@@ -71,6 +78,7 @@ export function readSignOffFaults(rest: SignOffRest): SignOffFaults {
   const restMs = ms(rest.restAt)
   if (!Number.isFinite(restMs)) return none
   const fromMs = Number.isFinite(ms(rest.turnFrom)) ? ms(rest.turnFrom) : Number.NEGATIVE_INFINITY
+  const humanMs = Number.isFinite(ms(rest.humanFrom)) ? Math.min(ms(rest.humanFrom), fromMs) : fromMs
   const turn = rest.sightings.filter((s) => ms(s.at) > fromMs && ms(s.at) <= restMs)
   const rested = turn.filter((s) => ms(s.at) === restMs).at(-1)
   const cache = new Map<string, string[]>()
@@ -110,8 +118,20 @@ export function readSignOffFaults(rest: SignOffRest): SignOffFaults {
   const prose = rest.fenceAlone === false
   const newSignOff = rested !== undefined || (prose && (rest.lastFence === undefined || (rest.lastFence.kind === "awaiting" && !quiet)))
   if (!newSignOff || rest.repair || rest.lastFence?.kind === "done") return none
+  // Every question named since the human last typed stands (see the header): this turn's namings, and the
+  // earlier sign-offs' since then, which the board keeps in view.
+  for (const s of rest.sightings) {
+    const atMs = ms(s.at)
+    if (!(atMs > humanMs && atMs <= restMs)) continue
+    const index = handleIndex(rest.rows, atMs, cache)
+    for (const b of questionFenceBlocks(s.text)) {
+      if (b.read.form === "invalid") continue
+      const row = index.get(b.read.id.toLowerCase())
+      if (row) named.add(row.id)
+    }
+  }
   const missing = rest.rows.flatMap((row) => {
-    if (row.state !== "open" || row.asked_at > restMs || named.has(row.id)) return []
+    if (row.state !== "open" || row.asked_at > restMs || row.asked_at > humanMs || named.has(row.id)) return []
     const spec = rest.spec(row)
     return spec ? [{ id: row.handle ?? row.id, question: spec.question }] : []
   })

@@ -15,6 +15,14 @@
 //                      whole, one hairline, and ONE to-do card, the live one at the tail.
 //   • fold-restated-quiet — the same with tool calls and no words before the write-up, the reported
 //                      thread's own shape, where the card was drawn twice.
+//   • fold-incremental — two sign-offs in one stretch: the write-up that asks `bad-wkb`, then a CI wake and
+//                      a sign-off that says only what changed (2026-11-16). Expect: BOTH in view, the first
+//                      with its live card, a hairline over the work before each.
+//   • fold-withdrawn — the same, but the first sign-off's only question is withdrawn before the second
+//                      (`unask` it through the RPC after seeding: `{ slug: "fold-withdrawn", id: "store" }`).
+//                      Expect: the first sign-off folded with the work, the second in view.
+//   • fold-afterword — a write-up, one more command, and a one-line afterword ("The test stacks are
+//                      removed."). Expect: the write-up and the afterword both in view.
 //
 // Every wake is the text Frizz really delivers, built by the server's own builders, so each draws the
 // hairline a real one does. A made-up wake falls back to FrizzWake's bell card, which no real wake draws.
@@ -212,5 +220,63 @@ const stretch = (s, ask) => [
     ...wake(s, shellDoneMessage({ taskId: "b2c4e6g8i", label: "Re-checking the contractor notes", status: "completed" }), 1),
     ...narrate(s, "Checking the notes once more.", [bash("rg -n Mercury people", "Checking the notes for Mercury")], 1),
     ...restOn(s, steps, 1),
+  ])
+}
+
+{
+  const s = "f01dc0de-0000-4000-8000-000000000006"
+  clock = 0
+  write("fold-incremental", s, "Geometry values, with an incremental sign-off", [
+    ...human(s, "Geometry values from a run come back as hex strings. Fix it so the notebook can draw them.", 1),
+    ...doWork(s, WORK),
+    ...restOn(s, SIGN_OFF, 2),
+    ...wake(s, prWatchWakeMessage({ target: "acme/geo#42", checks: { verdict: "failing", passed: 210, failed: 2, failing: ["snapshots (ubuntu)", "snapshots (windows)"] } }), 18),
+    ...doWork(s, MORE.slice(2)),
+    ...restOn(s, `CI caught two snapshots on Linux and Windows that still pinned the hex. Both are updated, and acme/geo#42 is green on all 212 checks.\n\n${fence("awaiting", "prs: [acme/geo#42]\nstatus: needs_input\nfor: 180d")}`, 2),
+    ...quietRounds(s).slice(0, 2),
+  ])
+}
+
+{
+  const s = "f01dc0de-0000-4000-8000-000000000007"
+  clock = 0
+  const asks = [
+    "The settings move is ready apart from one call: where they live.",
+    "",
+    fence("question", [
+      "id: store",
+      "kind: choice",
+      "question: Should the settings store use SQLite or a JSON file?",
+      "options:",
+      "  - label: SQLite",
+      "    description: Transactional, and one store to back up",
+      "    recommended: true",
+      "  - label: JSON file",
+      "    description: No dependency, hand-editable",
+    ].join("\n")),
+  ].join("\n")
+  write("fold-withdrawn", s, "Settings store, question withdrawn", [
+    ...human(s, "Move the settings into a real store.", 1),
+    ...doWork(s, WORK.slice(0, 2)),
+    ...restOn(s, asks, 2),
+    ...wake(s, shellDoneMessage({ taskId: "b3d5f7h9j", label: "Benchmarking concurrent settings writes", status: "completed" }), 12),
+    ...narrate(s, "The benchmark settles it: a JSON file lost writes under four writers.", [bash("cat bench/settings-writes.txt", "Reading the benchmark")], 1),
+    ...restOn(s, "Went with **SQLite** and withdrew the store question: under four concurrent writers the JSON file lost 3 of 400 writes and SQLite lost none. The settings are in `settings.db`, and `nub run test` is green.\n\n" + fence("awaiting", "status: needs_input\nfor: 1h"), 2),
+  ])
+}
+
+{
+  const s = "f01dc0de-0000-4000-8000-000000000008"
+  clock = 0
+  write("fold-afterword", s, "Console chip in the prompt box, with an afterword", [
+    ...human(s, "Put the Console's project chip inside the prompt box.", 1),
+    ...doWork(s, WORK.slice(0, 3)),
+    ...narrate(s, [
+      "**Fixed.** The Console's project chip now sits inside the prompt box, first in the row along the bottom. It's committed on `main` as `92337310d`.",
+      "",
+      "- **The status row** above the box is back to one line.",
+      "- **The chip's menu** opens upward, so it never covers the box.",
+    ].join("\n"), [bash("kill 81234 81240", "Stopping the test stacks")], 2),
+    ...restOn(s, "The test stacks and their scripted workers are removed.", 1),
   ])
 }

@@ -2777,13 +2777,14 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
   }
 
-  // ---- SOURCE 18: A SIGN-OFF THAT IS NOT THE WHOLE HANDOFF -----------------------------------------
+  // ---- SOURCE 18: A SIGN-OFF THAT LEAVES A FADED QUESTION UNSETTLED ----------------------------------
   //
-  // A sign-off replaces the one before it, and the board folds everything else since the human last typed
-  // behind one row, so the newest sign-off is all the human reads (signoff-completeness.ts has the rule and
-  // the measurement behind it). This pass refuses, with one correction for the rest, a sign-off that leaves
-  // out an open question, and a message that only re-lists questions still on screen — the maintainer's
-  // choice over drawing the duplicate quietly (2026-11-11).
+  // The board keeps every sign-off since the human last typed in view and folds the work between, so a
+  // question asked or named since then is on screen; one the human typed past is not, and the first
+  // sign-off after their message names it again or the worker withdraws it (signoff-completeness.ts has
+  // the rule and the measurement behind it). This pass refuses, with one correction for the rest, a
+  // sign-off that leaves such a question out, and a message that only re-lists questions still on screen
+  // — the maintainer's choice over drawing the duplicate quietly (2026-11-11).
   //
   // ONE VOICE PER REST, as SOURCE 15: a rest SOURCE 14 or 15 already took is left to that correction, and
   // SOURCE 12 reads `signOffFaultRests` so an honoured park beside a refused naming does not hand the
@@ -2809,6 +2810,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const faults = readSignOffFaults({
         restAt: spokeAt,
         turnFrom: tele.lastUserAt,
+        humanFrom: tele.restFromAt,
         sightings: tele.questionSightings ?? [],
         lastFence: tele.lastFence,
         fenceAlone: tele.lastAssistantFenceAlone,

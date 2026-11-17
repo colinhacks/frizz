@@ -1669,8 +1669,8 @@ function noteUserRecordForQuestions(state: FoldState, text: string, at: string, 
 // A correction that asks the worker to REPAIR a fence — a ```question fence that could not register, a park
 // naming something dead or nothing — rather than to write a new sign-off. The turn answering one is a fix-up
 // (SOURCE 14's own words: "a fence that registers needs nothing else"), so scheduler SOURCE 18 does not
-// hold it to naming every open question. The sign-off and done corrections are not repairs: each asks for
-// the whole handoff.
+// hold it to settling the questions the human typed past. The sign-off and done corrections are not
+// repairs: each asks for a new sign-off.
 function carriesRepairCorrection(text: string): boolean {
   if (!text.includes("⚠️ Your ")) return false
   const repair = (body: string) => {

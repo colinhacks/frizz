@@ -19,7 +19,7 @@ import { restatedByRestingCard } from "../lib/restatedFences.ts"
 import { useSendNowKey } from "../lib/sendNowKey.ts"
 import { ComposerSendContext, SendScopeContext, useComposerSendHandle, useComposerSendPresent, useSendScope, type SendScope } from "../lib/sendScope.tsx"
 import { settledQuestionPositions, type SettledPlacement } from "../lib/settledQuestions.ts"
-import { latestSignOffs, restingDoneIndex } from "../lib/signOffs.ts"
+import { restingDoneIndex, stretchSignOffs } from "../lib/signOffs.ts"
 import { stepsDoneReplies, type StepsReply } from "../lib/stepsAnswer.ts"
 import { replaceEqualDeep } from "@tanstack/react-query"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
@@ -91,7 +91,7 @@ export interface ThreadSurfaceSource {
  *      (useArrivedQuestions), an answered one where its card stood (useSettledQuestions);
  *   4. with every question fence the server refused marked on its message (useRefusedFences), and every
  *      id the thread asked more than once resolved to the row it meant in each message (useQuestionOwners);
- *   5. with the newest sign-off since the human last spoke marked on a thread at rest (useLatestSignOff).
+ *   5. with every sign-off since the human last spoke marked on a thread at rest (useKeptSignOffs).
  *
  *  What a surface does on top of this is its own: the thread view draws a send that ends a rest where it
  *  will land (after this). */
@@ -114,22 +114,24 @@ export function useThreadMessages(thread: ThreadView | undefined, loaded: ChatMe
   const openQuestions = useArrivedQuestions(boardQuestions, held)
   const refused = useRefusedFences(shown, thread, openQuestions, settledQuestions)
   const owned = useQuestionOwners(refused, thread, openQuestions, settledQuestions)
-  const messages = useLatestSignOff(owned, thread)
+  const messages = useKeptSignOffs(owned, thread)
   return { messages, openQuestions, settledQuestions, transcriptShells }
 }
 
-/** Step 5: the newest sign-off since the human last spoke, marked `latestSignOff` on a thread AT REST, so
- *  its ```awaiting card is still drawn after a later quiet round has made the fence stale (lib/signOffs).
+/** Step 5: every sign-off since the human last spoke, marked `keptSignOff` on a thread AT REST, so each
+ *  one's ```awaiting card is still drawn after a later round has made its fence stale (lib/signOffs). A
+ *  sign-off says what is new since the one before it, so an earlier one's card is not a copy of the newest:
+ *  a worker that writes its hand-off in the fence body, under `---`, says it there and nowhere else.
  *  Not while the thread runs: a spinning thread is resting on nothing, and no awaiting card is drawn then
  *  (maintainer 2026-09-24: "When the agent is running, an awaiting card should never be shown at all"). */
-function useLatestSignOff(messages: ChatMessage[], thread: ThreadView | undefined): ChatMessage[] {
+function useKeptSignOffs(messages: ChatMessage[], thread: ThreadView | undefined): ChatMessage[] {
   const running = thread?.runtime === "running" || thread?.runtime === "spawning"
   return useMemo(() => {
     if (running) return messages
-    const keep = latestSignOffs(messages, lastHumanTurnIndex(messages))
+    const keep = stretchSignOffs(messages, lastHumanTurnIndex(messages))
     if (keep.length === 0) return messages
     const out = [...messages]
-    for (const i of keep) out[i] = { ...out[i], latestSignOff: true }
+    for (const i of keep) out[i] = { ...out[i], keptSignOff: true }
     return out
   }, [messages, running])
 }

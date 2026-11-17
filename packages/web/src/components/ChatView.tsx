@@ -31,7 +31,7 @@ import { ProviderErrorCard, providerErrorVisible } from "./ProviderErrorCard.tsx
 import { providerNameFor } from "./providerMark.ts"
 import { answersNote, isAnswersMessage, parseAnswersCard, userSendShown, type PairedAnswer } from "../lib/answersMessage.ts"
 import { questionsByAnchor } from "../lib/questionAnchor.ts"
-import { fenceStandsFor, placedFrom, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
+import { fenceStandsFor, namesOnlyClosedQuestions, placedFrom, placedRestEnds, resolveQuestionName } from "../lib/questionShadow.ts"
 import { previousUserBoundary } from "../lib/transcriptPagination.ts"
 import { FrizzWake } from "./FrizzWake.tsx"
 import { LinkifiedText } from "./LinkifiedText.tsx"
@@ -1005,7 +1005,13 @@ function VirtualizedThreadTranscript({
   }, [messageRows, settledPlacement.anchored])
   // The work between each human message and the sign-off that answers it, folded (lib/stretchFolds). A
   // fold the reader opened stays open, by its key, for as long as this transcript is mounted.
-  const folds = useMemo(() => stretchFoldRanges(messages, { running }), [messages, running])
+  // An earlier sign-off whose questions were all withdrawn folds away once a later one follows it
+  // (lib/signOffs stretchSignOffs), read off the thread's fence rows, which say how each question closed.
+  const fenceQuestions = transcript.fenceQuestions
+  const folds = useMemo(() => {
+    const closedOnly = fenceQuestions ? (i: number) => namesOnlyClosedQuestions(messages[i], fenceQuestions) : undefined
+    return stretchFoldRanges(messages, { running, closedOnly })
+  }, [messages, running, fenceQuestions])
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(() => new Set())
   const rows = useMemo<VirtualThreadRow[]>(() => {
     const next: VirtualThreadRow[] = [{ key: "head-anchor", kind: "head-anchor" }]
@@ -1026,8 +1032,8 @@ function VirtualizedThreadTranscript({
     }
     // A row a fold never hides: one an open question's stack (or its rest's Send) hangs off, or a message
     // holding a question's HOME card (lib/questionShadow placeQuestions). Every other naming draws the card
-    // live too, and folds freely: the home is the newest sign-off naming it. A worker held to the
-    // whole-handoff rule names every open question in its sign-off, so this only catches one that did not.
+    // live too, and folds freely: the home is the newest sign-off naming it. Every sign-off of the stretch
+    // is kept already (lib/stretchFolds), so this only catches a question asked where no sign-off names it.
     // Nor the done card Mark as done rides on (ThreadTranscript doneIdx): it is the sign-off the fold keeps
     // already, except where a thread ended on an empty ```done after a sign-off of another kind, and then
     // the card that files the thread away is the one the reader needs in view.
@@ -2116,7 +2122,7 @@ function settledFenceDraws(hints: readonly AwaitingHint[]): boolean {
 }
 // …or the newest sign-off's, which draws its card, or only its prose where it names questions (renderText).
 function signOffFenceDraws(m: ChatMessage, fence: { hints: readonly AwaitingHint[]; body: string }): boolean {
-  if (!m.latestSignOff) return false
+  if (!m.keptSignOff) return false
   return !awaitingDefersToQuestions(fence.hints) || awaitingProseBlock(fence.body) !== null
 }
 // The leading gap for the shimmer that tails a live transcript. The shimmer is a quiet single-line row
@@ -3973,9 +3979,10 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, done
         // review parks quietly on the next rest, and the hand-off it is still standing on went with the
         // settled fences. The newest one since the human last spoke keeps its card, stated with no thread
         // as the steps card above is — no live rows, no verb — while the thread is at rest
-        // (ChatMessage.latestSignOff, lib/signOffs). A fence that names questions keeps only its prose,
-        // which is all it draws when it is live.
-        if (fseg.fenceKind === "awaiting" && staleAwaiting && !m.fenceRefused && !restingCardShown && m.latestSignOff) {
+        // (ChatMessage.keptSignOff, lib/signOffs). Since 2026-11-16 every sign-off since then does: each
+        // says what is new since the one before it, so an earlier card is no copy of the newest. A fence
+        // that names questions keeps only its prose, which is all it draws when it is live.
+        if (fseg.fenceKind === "awaiting" && staleAwaiting && !m.fenceRefused && !restingCardShown && m.keptSignOff) {
           if (awaitingDefersToQuestions(fseg.hints)) {
             const prose = awaitingProseBlock(fseg.body)
             if (prose) push(<ProseHtml key={`${keyBase}-f${fi}`} md={prose} />)

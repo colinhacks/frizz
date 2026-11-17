@@ -39,7 +39,19 @@
 // restatesSignOff), until the human comes in: a fence repeated after they typed or answered is a reply.
 // Of the to-do fences that followed another in one stretch over the 12 days before, 39 of 231 were
 // verbatim; 118 kept the steps and reworded the rest, which is something new and stays a sign-off.
-import { awaitingStatus, BURIED_ANSWERS_HEADER, carriesDoneRegistration, SIGNOFF_NUDGE_MARKER, type TranscriptMessage } from "@frizz/shared"
+//
+// A SIGN-OFF SHORTER THAN THE WORDS BEFORE IT IS THEIR AFTERWORD, AND BOTH ARE MARKED (2026-11-16). A worker
+// often writes its write-up, runs one more command (`frizzctl done`, a cleanup, a commit) and ends on a line
+// about that command: "I've marked the thread done.", "The test stacks are all removed." Only the line was
+// the message the turn rested on, so only the line was marked, and the board folded the write-up behind a
+// hairline above it (maintainer 2026-11-16: "I keep seeing important messages getting collapsed"). So the
+// last words before the rested-on message, in the same turn, are marked too when they say more than it does
+// (wordsSaid): its prose, its questions, and its signal fence's body and steps, never the fence's keys.
+// Measured over the five days before: 36 rests, 23 of them a write-up over 400 characters, the rest a status
+// line above an even terser sign-off. The last words before a sign-off are otherwise narration (a median of
+// 134 characters), which the rule leaves to the fold. Marking is additive: the afterword stays marked, so
+// nothing that was in view leaves it.
+import { awaitingStatus, awaitingSteps, BURIED_ANSWERS_HEADER, carriesDoneRegistration, SIGNOFF_NUDGE_MARKER, signalFenceOf, type TranscriptMessage } from "@frizz/shared"
 import { hasQuestionBlock, parseSignalFence, restatesSignOff, signalFenceAlone, signalFenceText } from "./tailer.ts"
 
 /** What one rest said about the human: written for them, a quiet park, or no fence at all. */
@@ -98,6 +110,34 @@ function restedOnIndex(messages: readonly TranscriptMessage[], from: number, res
   return -1
 }
 
+/** How much a message says to the human, in characters, whitespace folded: its prose outside every fence,
+ *  each question it asks (the fence's text, as its card draws it), and its signal fence's body and steps (an
+ *  ```awaiting fence's prose under `---` and its to-do list, a ```done fence's ledger). A signal fence's
+ *  keys are furniture. A question counts because an ask IS what its message says: measured without it, a
+ *  sign-off asking one question under a line of prose read as the afterword of the status line before it. */
+export function wordsSaid(text: string): number {
+  const norm = text.replace(/\r\n/g, "\n")
+  const signal = signalFenceOf(norm)
+  const fence = signal ? parseSignalFence(norm) : undefined
+  const fold = (s: string) => s.replace(/\s+/g, " ").trim().length
+  const outside = signal ? norm.slice(0, signal.start) + norm.slice(signal.end) : norm
+  const steps = fence ? awaitingSteps(fence.hints).reduce((n, step) => n + fold(step), 0) : 0
+  return fold(outside) + fold(fence?.body ?? "") + steps
+}
+
+/** The write-up an afterword follows: the last agent prose before `at` in its own turn — never past a
+ *  delivery, whose words answered something else — when it says more than the message at `at` does (see
+ *  the header). -1 when there is none. */
+function writeUpBefore(messages: readonly TranscriptMessage[], from: number, at: number): number {
+  for (let i = at - 1; i >= from; i--) {
+    const m = messages[i]
+    if (m.role === "user") return -1
+    if (m.kind || !m.text.trim()) continue
+    return wordsSaid(m.text) > wordsSaid(messages[at].text) ? i : -1
+  }
+  return -1
+}
+
 /** The first thing delivered after a rest: a WAKE frizz composed, or the human. Frizz's own sign-off
  *  reminder is the one that matters here. */
 function nudgedAfter(messages: readonly TranscriptMessage[], rest: number): boolean {
@@ -114,6 +154,8 @@ function nudgedAfter(messages: readonly TranscriptMessage[], rest: number): bool
 interface Rest {
   /** The message to mark: the prose the turn ended on, or the one carrying its `frizzctl done`. -1: none. */
   at: number
+  /** The write-up `at` is an afterword to, marked with it (writeUpBefore). -1: none. */
+  writeUp: number
   reading: RestReading
   /** The next turn opened on frizz's sign-off reminder about this rest. */
   nudged: boolean
@@ -138,7 +180,9 @@ export function readRests(messages: readonly TranscriptMessage[]): Rest[] {
     // (see the header).
     const stands = registered < 0 && reading === "signOff" && at >= 0 && (signalFenceAlone(messages[at].text) || restatesSignOff(messages[at].text, standing))
     if (reading === "signOff" && !stands) standing = at >= 0 ? fenceOf(messages[at]) : undefined
-    rests.push({ at: stands ? -1 : at >= 0 ? at : registered, reading, nudged: nudgedAfter(messages, r) })
+    const marked = stands ? -1 : at >= 0 ? at : registered
+    const writeUp = marked >= 0 ? writeUpBefore(messages, turnStart, marked) : -1
+    rests.push({ at: marked, writeUp, reading, nudged: nudgedAfter(messages, r) })
     turnStart = r + 1
   }
   return rests
@@ -155,6 +199,7 @@ export function signOffIndices(messages: readonly TranscriptMessage[]): number[]
     const signs = rest.reading === "bare" ? (rest.nudged && next !== undefined ? next : true) : rest.reading === "signOff"
     next = signs
     if (signs && rest.at >= 0) out.push(rest.at)
+    if (signs && rest.writeUp >= 0) out.push(rest.writeUp)
   }
   return out.reverse()
 }

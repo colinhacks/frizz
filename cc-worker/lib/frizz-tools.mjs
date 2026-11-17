@@ -1420,9 +1420,9 @@ async function activity() {
     `\n\n${questions.length} question${questions.length === 1 ? "" : "s"} still owed an answer:\n\n` +
     questions.map((q) => `  question: ${questionId(q)}\n    ${String(q?.spec?.question ?? "").replace(/\s+/g, " ").slice(0, 160)}`).join("\n") +
     "\n\nEach one blocks `done` until it is answered or withdrawn — `frizzctl unask <id>` the ones since " +
-    "decided. Its card stays where you asked it: a rest on the fence alone leaves it there, and a NEW " +
-    "sign-off names every open question with a ```question fence carrying its `id:` alone, under the " +
-    "paragraph it belongs to, which draws the card there."
+    "decided. Its card stays where you asked it, in view, so never name it again while it stands. Once " +
+    "the human has typed past one, the first sign-off after their message names it again with a " +
+    "```question fence carrying its `id:` alone, under the paragraph it belongs to, or you withdraw it."
   )
   if (!items.length) {
     if (questions.length > 0) {

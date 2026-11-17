@@ -42,9 +42,17 @@ test("the lead is the first message with words: a bare park fence or a tool-only
   assert.deepEqual(stretchFoldRanges([human("Go."), work("", 2), work("", 1), say("Done.", true)], { running: false }), [{ from: 1, to: 2 }])
 })
 
-test("the newest sign-off replaces the earlier ones, which fold with the work", () => {
-  const messages = [human("Go."), work("Step one."), say("First hand-off.", true), rest(), wake("CI failed"), work("Fixing."), say("Whole new hand-off.", true), rest()]
-  assert.deepEqual(stretchFoldRanges(messages, { running: false }), [{ from: 2, to: 5, lead: 1 }, { from: 7, to: 7 }])
+test("every sign-off of the stretch stays in view, and the work between them folds", () => {
+  const messages = [human("Go."), work("Step one."), say("First hand-off.", true), rest(), wake("CI failed"), work("Fixing."), say("CI is green now.", true), rest()]
+  assert.deepEqual(stretchFoldRanges(messages, { running: false }), [{ from: 3, to: 5 }, { from: 7, to: 7 }])
+})
+
+test("an earlier sign-off whose questions were all withdrawn folds once a later one follows it", () => {
+  const messages = [human("Go."), work("Step one."), say("Which store?", true), rest(), wake("CI failed"), work("Fixing."), say("Went with SQLite.", true), rest()]
+  const closed = (i: number) => i === 2
+  assert.deepEqual(stretchFoldRanges(messages, { running: false, closedOnly: closed }), [{ from: 2, to: 5, lead: 1 }, { from: 7, to: 7 }])
+  // The newest never folds, whatever its questions: it is what the thread rests on.
+  assert.deepEqual(stretchFoldRanges(messages, { running: false, closedOnly: (i) => i === 6 }), [{ from: 3, to: 5 }, { from: 7, to: 7 }])
 })
 
 test("a sign-off answering Frizz's reminder keeps the write-up it points back to", () => {
