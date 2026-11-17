@@ -290,7 +290,7 @@ test("a done card draws Mark as done only while the thread rests on it", () => {
   assert.match(shell, /const doneIdx = useMemo\(\(\) => \(running \? -1 : restingDoneIndex\(messages, lastAgentIdx, lastHumanTurnIndex\(messages\)\)\)/)
   assert.match(source, /doneLive=\{index === t\.doneIdx\}/, "ThreadMessage hands each row its answer")
   // …and no fold hides that card.
-  assert.match(source, /const keeps = \(i: number\) => [^\n]*\|\| messageRows\[i\]\.messageIndex === doneIdx\n/)
+  assert.match(source, /const keeps = \(i: number\) => [^\n]*\|\| messageRows\[i\]\.messageIndex === doneIdx\b/)
   const card = source.match(/export function FenceCard[\s\S]*?\n}\n/)?.[0]
   assert.ok(card, "FenceCard must exist")
   assert.match(card, /const markDone = doneThread && !isMobile && !pastRest \? \(/, "a card the thread has moved past draws no verb")
