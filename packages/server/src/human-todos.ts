@@ -56,18 +56,33 @@ export function humanStepId(text: string): string {
 }
 
 /** The list after a fence listing `steps` landed at `atMs`. Pure: the fold's state is cached as JSON, and
- *  the board reads a fence that has not ended its rest yet through this same function. */
+ *  the board reads a fence that has not ended its rest yet through this same function.
+ *
+ *  THE NEWEST FENCE SETS THE ORDER OF WHAT IT LISTS (2026-11-17, maintainer: the report "is also rendering
+ *  in a different order than the checkboxes did in the original message"). A worker that put a new first
+ *  step ahead of three it had handed over before ("Sign up for Azure", then the app, its secret and the
+ *  database) got it appended as the fourth, so the list, and the "Done 1 of 4" a send composes from it,
+ *  read in a different order from the card the human ticked. What no fence lists any more is the record of
+ *  what was done, and keeps its place: under the step it followed, or at the top when no step it followed
+ *  is listed, so a step listed again after the one beside it was done does not jump past it. */
 export function foldHumanSteps(list: readonly HumanStep[], steps: readonly AwaitingStep[], atMs: number): HumanStep[] {
   const named = new Map(steps.map((step) => [humanStepId(step.text), step]))
-  const next = list.map((step): HumanStep => {
-    const listed = named.get(step.id)
-    if (listed === undefined) return { ...step, listed: false }
-    named.delete(step.id)
-    const { closedAt: _closed, body: _body, ...open } = step
-    return { ...open, text: detached(listed.text), ...(listed.body ? { body: detached(listed.body) } : {}), listedAt: atMs, listed: true }
-  })
+  const known = new Map(list.map((step) => [step.id, step]))
+  // The record, by the listed step it follows ("" for the top).
+  const after = new Map<string, HumanStep[]>()
+  let anchor = ""
+  for (const step of list) {
+    if (named.has(step.id)) anchor = step.id
+    else after.set(anchor, [...(after.get(anchor) ?? []), { ...step, listed: false }])
+  }
+  const next = [...(after.get("") ?? [])]
   // A step is cut out of the reply that listed it, and the list outlives the reply: copy (detached-string.ts).
-  for (const [id, { text, body }] of named) next.push({ id, text: detached(text), ...(body ? { body: detached(body) } : {}), listedAt: atMs, listed: true })
+  for (const [id, { text, body }] of named) {
+    // Listing a step again reopens what a typed Done closed, and the newest fence says what its body is.
+    const { closedAt: _closed, body: _body, ...open } = known.get(id) ?? { id, text, listedAt: atMs, listed: true }
+    next.push({ ...open, text: detached(text), ...(body ? { body: detached(body) } : {}), listedAt: atMs, listed: true })
+    next.push(...(after.get(id) ?? []))
+  }
   while (next.length > HUMAN_STEPS_MAX) {
     const oldest = next.findIndex((step) => !step.listed)
     next.splice(oldest === -1 ? 0 : oldest, 1)

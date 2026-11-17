@@ -24,6 +24,16 @@ test("a later fence adds to the list, in the order things were handed over", () 
   assert.deepEqual(shown(second), [[SIGN_IN, false, false], [APPROVE, false, false]])
 })
 
+test("the newest fence sets the order of what it lists, and what was done keeps its place", () => {
+  const first = foldHumanSteps([], items(APPROVE, MERGE), 10)
+  const second = foldHumanSteps(first, items(SIGN_IN, APPROVE, MERGE), 20)
+  assert.deepEqual(shown(second).map(([text]) => text), [SIGN_IN, APPROVE, MERGE], "a new first step goes first, not last")
+  const third = foldHumanSteps(second, items(MERGE, APPROVE), 30)
+  assert.deepEqual(shown(third, [tick(SIGN_IN, 25, 26)]).map(([text]) => text), [SIGN_IN, MERGE, APPROVE], "a done step no step it followed is listed with goes on top")
+  const fourth = foldHumanSteps(foldHumanSteps([], items(SIGN_IN, APPROVE, MERGE), 10), items(MERGE, SIGN_IN), 20)
+  assert.deepEqual(shown(fourth, [tick(APPROVE, 15, 16)]).map(([text]) => text), [MERGE, SIGN_IN, APPROVE], "and one that followed a listed step stays under it")
+})
+
 test("the newest steps drop an unticked item they leave out, and keep a ticked one", () => {
   const first = foldHumanSteps([], items(SIGN_IN, APPROVE), 10)
   const second = foldHumanSteps(first, items(MERGE), 20)
@@ -51,7 +61,7 @@ test("a tick a message on its way carries, as it stands now, is not staged, and 
 test("every box one send reported carries that send's instant, and a report the worker has been re-listed past carries none", () => {
   const steps = foldHumanSteps(foldHumanSteps([], items(SIGN_IN, APPROVE), 10), items(MERGE, APPROVE), 20)
   const view = humanTodoView(steps, [tick(SIGN_IN, 15, 30), tick(APPROVE, 25, 30), tick(MERGE, 26)])
-  assert.deepEqual(view.map((todo) => [todo.text, todo.reportedAt]), [[SIGN_IN, 30], [APPROVE, 30], [MERGE, undefined]], "the send at 30 carried the box from the earlier rest along with this one's")
+  assert.deepEqual(view.map((todo) => [todo.text, todo.reportedAt]), [[SIGN_IN, 30], [MERGE, undefined], [APPROVE, 30]], "the send at 30 carried the box from the earlier rest along with this one's")
   const relisted = foldHumanSteps(steps, items(SIGN_IN), 40)
   assert.equal(humanTodoView(relisted, [tick(SIGN_IN, 15, 30)])[0].reportedAt, undefined, "listed again after the report: that report no longer stands")
 })
