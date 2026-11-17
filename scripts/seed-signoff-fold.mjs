@@ -23,6 +23,9 @@
 //                      Expect: the first sign-off folded with the work, the second in view.
 //   • fold-afterword — a write-up, one more command, and a one-line afterword ("The test stacks are
 //                      removed."). Expect: the write-up and the afterword both in view.
+//   • fold-picture   — a ```lightbox gallery posted mid-work, between tool calls and before the sign-off
+//                      (2026-11-17: "never collapse any message containing screenshots"). Expect: the lead, a
+//                      hairline, the gallery's message whole, a hairline, the sign-off.
 //
 // Every wake is the text Frizz really delivers, built by the server's own builders, so each draws the
 // hairline a real one does. A made-up wake falls back to FrizzWake's bell card, which no real wake draws.
@@ -278,5 +281,27 @@ const stretch = (s, ask) => [
       "- **The chip's menu** opens upward, so it never covers the box.",
     ].join("\n"), [bash("kill 81234 81240", "Stopping the test stacks")], 2),
     ...restOn(s, "The test stacks and their scripted workers are removed.", 1),
+  ])
+}
+
+{
+  const s = "f01dc0de-0000-4000-8000-000000000009"
+  clock = 0
+  // Real files for the gallery to draw, inside the project the image proxy serves.
+  const shots = path.join(projectDir, "shots")
+  fs.mkdirSync(shots, { recursive: true })
+  const repo = path.join(path.dirname(new URL(import.meta.url).pathname), "..")
+  fs.copyFileSync(path.join(repo, "assets/goal.png"), path.join(shots, "before.png"))
+  fs.copyFileSync(path.join(repo, "assets/board.png"), path.join(shots, "after.png"))
+  write("fold-picture", s, "Geometry values, with screenshots mid-work", [
+    ...human(s, "Geometry values from a run come back as hex strings. Fix it so the notebook can draw them.", 1),
+    ...doWork(s, WORK.slice(0, 3)),
+    ...narrate(s, [
+      "The notebook before and after the converter change:",
+      "",
+      fence("lightbox", `${shots}/before.png  Before: hex strings in the geometry column\n${shots}/after.png  After: the map draws each shape`),
+    ].join("\n"), [bash("nub run test", "Running the full test suite")], 2),
+    ...doWork(s, MORE.slice(0, 2)),
+    ...restOn(s, "**Fixed** — geometry values from a run come back as GeoJSON, and the notebook draws them. Committed on `main`.\n\n" + fence("awaiting", "status: needs_input\nfor: 1h"), 2),
   ])
 }

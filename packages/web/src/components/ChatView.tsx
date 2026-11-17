@@ -59,6 +59,7 @@ import { pressSendNow, sendNowStep, useDeliverQueuedNowSupported, useSendNowPend
 import { SessionMessageLine } from "./SessionMessageLine.tsx"
 import { lastAskIndex, lastHumanTurnIndex, messagePresentationText } from "../lib/messagePresentation.ts"
 import { foldCounts, stretchFoldRanges, type FoldRange } from "../lib/stretchFolds.ts"
+import { showsPicture } from "../lib/messagePictures.ts"
 import { latestSignOffs } from "../lib/signOffs.ts"
 import { inQueuedTail, withRestReplyInline } from "../lib/restReply.ts"
 import { steeredSinceRest, useSteeredAt, useTurnHeldForTranscript } from "../lib/steering.ts"
@@ -1012,6 +1013,8 @@ function VirtualizedThreadTranscript({
     const closedOnly = fenceQuestions ? (i: number) => namesOnlyClosedQuestions(messages[i], fenceQuestions) : undefined
     return stretchFoldRanges(messages, { running, closedOnly })
   }, [messages, running, fenceQuestions])
+  // The messages that put a picture in front of the human, which no fold hides (lib/messagePictures).
+  const pictures = useMemo(() => new Set(messages.flatMap((m, i) => (showsPicture(m) ? [i] : []))), [messages])
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(() => new Set())
   const rows = useMemo<VirtualThreadRow[]>(() => {
     const next: VirtualThreadRow[] = [{ key: "head-anchor", kind: "head-anchor" }]
@@ -1036,8 +1039,9 @@ function VirtualizedThreadTranscript({
     // is kept already (lib/stretchFolds), so this only catches a question asked where no sign-off names it.
     // Nor the done card Mark as done rides on (ThreadTranscript doneIdx): it is the sign-off the fold keeps
     // already, except where a thread ended on an empty ```done after a sign-off of another kind, and then
-    // the card that files the thread away is the one the reader needs in view.
-    const keeps = (i: number) => questionGroups.byRow.has(i) || placement.placed.has(messageRows[i].messageIndex) || messageRows[i].messageIndex === doneIdx
+    // the card that files the thread away is the one the reader needs in view. Nor a message that shows
+    // the human a picture: a worker only ever does that on purpose (lib/messagePictures).
+    const keeps = (i: number) => questionGroups.byRow.has(i) || placement.placed.has(messageRows[i].messageIndex) || messageRows[i].messageIndex === doneIdx || pictures.has(messageRows[i].messageIndex)
     // Which runs of rows each range hides, first: a shut fold's LEAD (the worker's first words) is drawn as
     // its words alone, its tool calls counted on the hairline under it, so the lead's row has to know.
     const shut = new Map<number, { end: number; key: string; range: FoldRange; to: number }>()
@@ -1100,7 +1104,7 @@ function VirtualizedThreadTranscript({
     })
     if (previousQueued) next.push({ key: "queued-send-now", kind: "queued-send-now" })
     return next
-  }, [beforeCursor, doneIdx, earlierError, folds, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, openFolds, placement, questionGroups, settledByRow, transportFallback, windowStart])
+  }, [beforeCursor, doneIdx, earlierError, folds, hasEarlier, hasRuntimeRow, loadingEarlier, messageRows, messages, openFolds, pictures, placement, questionGroups, settledByRow, transportFallback, windowStart])
 
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).

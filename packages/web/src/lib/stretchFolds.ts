@@ -26,7 +26,8 @@
 // write-ups a shorter, newer sign-off only added to (lib/signOffs has the measurement). Each sign-off now
 // says what is new since the one before it, so the stretch reads as the human's message, the worker's first
 // words, and each thing it came back to say. The transcript still never folds a message that holds a
-// question's home card (ChatView's rows), as a net under a sign-off the server did not mark.
+// question's home card (ChatView's rows), as a net under a sign-off the server did not mark, nor one that
+// shows the human a picture (lib/messagePictures), which a worker only ever does on purpose.
 //
 // Pure index logic: the transcript decides which of a range's rows fold (never a live card, and only
 // where something is hidden), and draws the hairline.
