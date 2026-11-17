@@ -581,7 +581,12 @@ function CommentEditor({ initial, editing, onSave, onCancel, onDirty }: { initia
         }}
         className="block max-h-[220px] min-h-[38px] w-full resize-none bg-transparent text-[13px] leading-[19px] text-fg outline-none placeholder:text-muted"
       />
-      <div className="mt-2 flex items-center justify-end gap-1">
+      {/* The footer band of the transcript cards (CardActions): a full-width hairline and tint, out to the
+          panel's edges, so its corners take the panel's inner radius (rounded-lg less the 1px border).
+          10px from the text to the hairline, the same as the panel's own top padding. Buttons stay on the
+          right, where a comment box's submit is and where typing ends (maintainer 2026-11-16, picked from
+          a mockup over the cards' left-aligned rule). */}
+      <div className="-mx-3 -mb-2.5 mt-2.5 flex items-center justify-end gap-1 rounded-b-[7px] border-t border-border bg-fg/[0.03] px-3 py-[7px]">
         <button type="button" onClick={onCancel} className="rounded-md px-2 py-1 text-[12px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:bg-panel-2">
           Cancel
         </button>
