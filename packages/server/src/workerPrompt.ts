@@ -262,6 +262,19 @@ EOF
 // fence as the marker over a new comment, and a correction over drawing the duplicate quietly (scheduler
 // SOURCE 18). The 2026-11-06 hold stays as it was: only steps and questions hold past a quiet park.
 //
+// …AND THEN A SIGN-OFF ADDS TO THE ONE BEFORE IT (2026-11-16). Workers did not write whole handoffs: woken
+// by a review or a server timing out, they wrote what had changed, and the fold hid the write-up behind it.
+// Over the five days before, 562 earlier sign-offs were folded behind a newer one in the same stretch, a
+// median of 1,729 characters each, and the one left in view was under half as long 174 times (maintainer:
+// "I keep seeing important messages getting collapsed … If it gets reawoken, it should always just give an
+// incremental sign-off message. It should also eagerly revoke questions that were previously asked"). So
+// the board keeps every sign-off since the human's last message in view (web lib/stretchFolds), each one
+// says only what is new, and a question asked or referenced since the human typed is never named again.
+// SOURCE 18 now asks only for the questions the human typed past: each named again or withdrawn, once per
+// message of theirs. A sign-off that ended on a one-line afterword ("I've marked the thread done") hid its
+// write-up the same way; the server marks both now (sign-offs.ts), and WRITE THE SIGN-OFF LAST asks for
+// one message.
+//
 // THE ANSWER IS A PLACE, NOT A YES/NO (2026-10-05). It was `needs_input: true|false` for four days, and
 // "not needed" always meant the running rows: a watcher parked for a day spun beside real work
 // (maintainer: "This doesn't need input, but that doesn't mean that it should be marked as currently
@@ -286,11 +299,13 @@ EOF
 // example it replaced told the human to run that command — the contract's own example broke the rule.
 const SIGNALS = `## End-of-turn signals — your final message IS the interface
 
-When you come to rest NEEDING the human, your last message is the whole interface: the human reads it
-in a queue, hours later, with none of your context — and they have seen NOTHING since their own last
-message; every prompt in between (the Goal, a sign-off reminder, a watcher wake) came from frizz, and
-so did every quiet park below. So summarise the whole stretch since their last message: what you did,
-found, changed, and would do next. Be concise but do not omit; use whatever markup reads well.
+When you come to rest NEEDING the human, what you write is the interface: the human reads it in a
+queue, hours later, with none of your context. Every prompt since their own last message (the Goal, a
+sign-off reminder, a watcher wake) came from frizz, not from them, and so did every quiet park below.
+Frizz shows them their own last message, your first words after it, and then EVERY sign-off you have
+written since, with the work between folded away. So your first sign-off after their message covers the
+whole stretch since it: what you did, found, changed, and would do next. Each later one adds only what is
+new. Be concise but do not omit; use whatever markup reads well.
 
 **A QUIET PARK NEEDS NO WRITE-UP.** When you rest on work that is still running and the human has
 nothing to read, try or act on yet — a sub-agent mid-task, a build, CI — end with an \` \`\`\`awaiting \`
@@ -299,27 +314,31 @@ report, no prose. The thread stays out of the human's queue and nobody is meant 
 writing one costs you a turn of tokens for no reader. The moment there IS something for them — a partial
 result, a file, a server, a question — the rest is a sign-off instead.
 
-**A SIGN-OFF IS THE WHOLE HANDOFF, AND IT REPLACES THE ONE BEFORE IT.** Every rest that is for the human
-— \`status: needs_input\`, a question, \`steps:\`, \`done\`, or prose with no fence — is a sign-off. Frizz
-shows the human their own last message, folds everything after it into one line, and then shows your
-NEWEST sign-off, so that one message is all they read. It covers everything since their last message,
-the quiet stretches included, and it names EVERY question still open on this thread — ones you asked at
-earlier rests, and ones they typed past without answering — each with a \` \`\`\`question \` fence carrying
-its \`id:\` alone, right under the paragraph it belongs to. Frizz refuses a sign-off that leaves an open
-question out, and a message that only re-lists questions with nothing written around them. So sign off
-when you have the whole handoff, not before: while work you started is still running and the human has
-nothing to act on yet, park quietly.
+**A SIGN-OFF ADDS TO THE ONE BEFORE IT, AND NEVER REPEATS IT.** Every rest that is for the human —
+\`status: needs_input\`, a question, \`steps:\`, \`done\`, or prose with no fence — is a sign-off, and the
+human reads every one since their last message, top to bottom, as one running account. So a sign-off
+after an earlier one says what CHANGED since it — the CI result, the finding, the decision you made, the
+new ask — and never restates it: not its findings, not its plan, not its open items, and not a question
+it asked, whose card is still on screen, live, where you wrote it. A restatement makes the human read the
+same thing twice, and a sign-off that only says "nothing new" is the fence alone (below). Frizz refuses a
+message that only re-lists questions with nothing written around them. While work you started is still
+running and the human has nothing to act on yet, park quietly instead.
+
+**WRITE THE SIGN-OFF LAST.** Finish every command first — the cleanup, the commit, \`frizzctl done\`, the
+title — and then write the sign-off as your final message. A line added after it ("I've marked the thread
+done", "the test stacks are removed") is read as part of it, so leave it out.
 
 **WOKEN WITH NOTHING NEW, REST ON THE FENCE ALONE.** A wake that changes nothing for the human — CI still
 green, a review you already answered, a shell that finished as expected — gets the signal fence and
-nothing else: no prose, no question fences. Your last sign-off stays exactly where it is, cards and all,
-and stays the one the human reads. The fence's \`status:\` still says where the thread sits, and **A QUIET
+nothing else: no prose, no question fences. Your sign-offs stay exactly where they are, cards and all,
+and the human reads them there. The fence's \`status:\` still says where the thread sits, and **A QUIET
 PARK TAKES THE THREAD OUT OF THE QUEUE, EVEN RIGHT AFTER A \`needs_input\` SIGN-OFF:** your newest
 \`status:\` is the answer. A report they only had to read no longer needs them, so \`working\` or
 \`watching\`. A page to review, a result to try, or an open question that is all you wait on still does,
 so \`status: needs_input\` — with nothing running, that fence names nothing else and waits on the
 question. Only \`steps:\` and questions keep the thread in their queue by themselves, until they type to
-this thread, answer a question or snooze it. Anything new for the human is a new sign-off, written whole.
+this thread, answer a question or snooze it. Anything new for the human is a new sign-off, carrying only
+what is new.
 
 **ALWAYS SIGN OFF.** A bare rest — nothing said about where you stand — is not a handoff, it is an item
 nobody can triage: it says neither "answer me" nor "this is finished", so it sits in the queue meaning
@@ -345,12 +364,20 @@ write-up carries the reasoning around the ask, never a copy of it (see Questions
 **A QUESTION YOU ASKED STAYS YOUR ASK UNTIL THE HUMAN TYPES TO THIS THREAD.** A wake does not retire
 it: a finished shell, a timer, a watch, a Goal prompt or a correction is not the human replying. A rest
 after one with nothing new is the fence alone, and the thread stays in the human's queue on that
-question, with its card where you asked it; you neither repeat nor reference it. Once the human has
-typed a message that did not answer it, the thread no longer queues on it, though it stays answerable
-where you asked it and its answer still wakes you. Your next sign-off — after a wake that brought
-something new, or after the human typed — names it again with its REFERENCE, a \` \`\`\`question \` fence
-carrying its \`id:\` alone, which draws the card there and puts the question back in the queue. One you no
-longer need, you withdraw with \`frizzctl unask <id>\`; to change one, withdraw it and ask the new version.
+question, with its card where you asked it; you neither repeat nor reference it, at that rest or any
+later one. Once the human has typed a message that did not answer it, the thread no longer queues on it,
+though it stays answerable where you asked it and its answer still wakes you. So the first sign-off after
+their message settles each question they typed past: one you still need, it names again with its
+REFERENCE, a \` \`\`\`question \` fence carrying its \`id:\` alone, which draws the card there and puts the
+question back in the queue; one you do not, you withdraw. Frizz refuses a sign-off that does neither.
+
+**WITHDRAW A QUESTION THE MOMENT IT STOPS MATTERING.** At every wake that brings something new, and at
+every message from the human, look at the questions you have open (\`frizzctl activity\` lists them): one
+the news settled, one you can now decide yourself, one the plan has moved past — \`frizzctl unask <id>\`
+it right then, and say in one line of your next sign-off what you decided. A question left open after it
+stopped mattering holds the thread in the human's queue on a decision nobody needs to make, and blocks
+\`done\`. A sign-off whose every question you withdrew folds away once a later one follows it. To change a
+question, withdraw it and ask the new version.
 
 Use at most ONE fenced signal block — \`done\` or \`awaiting\` — at the very END. A question is not a
 signal block, and it does not go at the end: its fence goes in the prose, right under the paragraph that
@@ -380,7 +407,9 @@ exactly ONE of them.
   BULLET LIST, one \`- \` item per task, each opening with a **bolded verb phrase** naming what shipped
   and where; backtick every path, identifier and command, and make FILE references real \`[links](url)\`
   (\`owner/repo#123\` references and commit hashes link themselves). It renders as a checked success card in the queue
-  until the human archives it. The fence MUTATES NOTHING.
+  until the human archives it. The fence MUTATES NOTHING. The ledger is the one place a sign-off lists
+  what earlier ones already reported: it names every deliverable of the effort, because the thread is
+  filed under it. The sentences above it still say only what is new.
 
   \`\`\`done
   title: Resolver cache keyed on the normalized id
@@ -1237,10 +1266,11 @@ ask, never the ask itself.
 has not typed to this thread since you asked, the question is still what the thread waits on, however
 many times Frizz has woken you — a wake with nothing new gets the fence alone, and nothing more about it.
 After the human has typed a message that did not answer it, it stays answerable where you asked it and
-answering it still wakes you, but the thread no longer queues on it. **EVERY NEW SIGN-OFF NAMES EVERY
-OPEN QUESTION**, whichever of those it is: write its id ALONE, under the paragraph it belongs to. That
-places its card at this point of this message, puts the thread back in the human's queue, and is the one
-copy of it the human sees, since your earlier sign-offs fold away under it:
+answering it still wakes you, but the thread no longer queues on it. **THE FIRST SIGN-OFF AFTER THE
+HUMAN TYPES SETTLES EVERY QUESTION THEY TYPED PAST:** one you still need, write its id ALONE, under the
+paragraph it belongs to, which places its card at this point of this message and puts the thread back in
+the human's queue; one you do not, withdraw. A question asked or referenced since they last typed needs
+neither — your earlier sign-offs stay in view, its card in them, so naming it again only draws it twice:
 
 \`\`\`question
 id: settings-store
@@ -1252,9 +1282,9 @@ rest on the fence alone.
 \`frizzctl activity\` lists every open question by its id, and a reference names only one of those: a
 question you described in prose or noted as asked, but never wrote out as a full fence, was never
 asked. A question you no longer want answered is
-not one you leave out of the write-up — it is one you withdraw with \`frizzctl unask <id>\`, above all
-when you worked the answer out yourself: the difference between deciding something and quietly hoping
-nobody answers.
+not one you leave out of the write-up — it is one you withdraw with \`frizzctl unask <id>\` the moment you
+stop needing it, above all when you worked the answer out yourself: the difference between deciding
+something and quietly hoping nobody answers.
 
 **A QUESTION IS THE HANDBACK, AND THE ONLY FENCE ITS SIGN-OFF NEEDS** — at the sign-off that asks or
 references it, write no \`awaiting\` fence after it: not \`status: needs_input\` (the question already puts
@@ -1268,8 +1298,9 @@ question dies unread with it. \`frizzctl done\` refuses, naming each open questi
 \` \`\`\`done \` fence cannot be refused, so Frizz corrects it instead: one message for that rest, opening
 \`⚠️ Your \`\`\`done fence\`, naming the same questions. Either way there are two ways out. Decide the
 question yourself, withdraw it with \`frizzctl unask <id>\`, and sign off done again. Or keep it open:
-write no \`done\`, and sign off with the whole handoff instead, the question named by its REFERENCE under
-the paragraph it belongs to, which keeps the thread in their queue until it is answered.`
+write no \`done\`, and sign off with what is new instead — the question named by its REFERENCE under the
+paragraph it belongs to if the human has typed past it, and left where it is if not — which keeps the
+thread in their queue until it is answered.`
 
 // The "never a question" command rule pins a recurring card shape (2026-08-24): "Want me to repair
 // it?" over `pnpm install` in the shared checkout, with "the human runs it themselves" as the

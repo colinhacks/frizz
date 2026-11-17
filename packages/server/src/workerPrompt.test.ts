@@ -149,12 +149,16 @@ test("the contract teaches the structured question fence, and none of the gramma
     // a shell finishing took a question out of the queue before the human had seen it).
     assert.match(c, /A QUESTION YOU ASKED STAYS YOUR ASK UNTIL THE HUMAN TYPES TO THIS THREAD/)
     assert.match(c, /A QUESTION STAYS ASKED ACROSS WAKES\. IT FADES ONLY WHEN THE HUMAN TYPES PAST IT/)
-    assert.match(c, /Your next sign-off — after a wake that brought something new, or after the human typed — names it again with its REFERENCE, a ` ```question ` fence carrying its `id:` alone/)
-    // A sign-off is the whole handoff (2026-11-11): it names every open question, and a wake with nothing
-    // new gets the fence alone, which leaves the sign-off before it standing.
-    assert.match(c, /\*\*A SIGN-OFF IS THE WHOLE HANDOFF, AND IT REPLACES THE ONE BEFORE IT\.\*\*/)
+    assert.match(c, /the first sign-off after their message settles each question they typed past: one you still need, it names again with its REFERENCE, a ` ```question ` fence carrying its `id:` alone/)
+    // A sign-off adds to the one before it (2026-11-16): the board keeps every one since the human's last
+    // message in view, so it says only what is new and never names a standing question again; a wake with
+    // nothing new gets the fence alone. A question stops mattering, and is withdrawn, the moment it does.
+    assert.match(c, /\*\*A SIGN-OFF ADDS TO THE ONE BEFORE IT, AND NEVER REPEATS IT\.\*\*/)
+    assert.match(c, /\*\*WRITE THE SIGN-OFF LAST\.\*\*/)
     assert.match(c, /\*\*WOKEN WITH NOTHING NEW, REST ON THE FENCE ALONE\.\*\*/)
-    assert.match(c, /\*\*EVERY NEW SIGN-OFF NAMES EVERY OPEN QUESTION\*\*/)
+    assert.match(c, /\*\*WITHDRAW A QUESTION THE MOMENT IT STOPS MATTERING\.\*\*/)
+    assert.match(c, /\*\*THE FIRST SIGN-OFF AFTER THE HUMAN TYPES SETTLES EVERY QUESTION THEY TYPED PAST:\*\*/)
+    assert.doesNotMatch(c, /WHOLE HANDOFF|EVERY NEW SIGN-OFF NAMES EVERY OPEN QUESTION|written whole/, backend)
     assert.match(c, /A message that only re-lists question ids, with nothing written around them, is refused/)
     assert.match(c, /A QUESTION YOU ASK IS THAT REST'S SIGN-OFF — REST NORMALLY/)
     // And every retired spelling stays gone: the command, the key, the marker and the per-rest rule.

@@ -204,6 +204,18 @@ export function resolveQuestionName<Q extends { id: string; spec?: AskedQuestion
   return rows.find((q) => questionNames(q).includes(n))
 }
 
+/** Does this message name questions, and was every one it names closed without an answer — withdrawn by
+ *  the worker or dismissed by the human? `rows` are the thread's fence rows, a closed one carrying
+ *  `closed` (RegisteredQuestionCards useFenceQuestions). What folds an earlier sign-off away once a later
+ *  one follows it (lib/signOffs stretchSignOffs). A name no row answers to yet is not closed. */
+export function namesOnlyClosedQuestions<Q extends { id: string; spec?: AskedQuestion; handle?: string; closed?: string }>(
+  m: { text: string; refusedFences?: ReadonlySet<string>; questionOwners?: ReadonlyMap<string, string> },
+  rows: readonly Q[],
+): boolean {
+  const names = placementNamesIn(m.text, m.refusedFences)
+  return names.length > 0 && names.every((n) => resolveQuestionName(n, rows, m.questionOwners)?.closed !== undefined)
+}
+
 /** Does `name`, written in this message, mean question `id`? Always, unless the message records that the
  *  name meant another row there (a settled id asked again — lib/questionOwners). */
 export function nameMeans(m: { questionOwners?: ReadonlyMap<string, string> }, name: string, id: string): boolean {
@@ -256,7 +268,9 @@ export function markerIdsIn(text: string): string[] {
  *  everything since the human's last message behind one row except that sign-off (lib/stretchFolds). So it
  *  is the card the human reads, and an earlier naming in the same stretch is folded away (maintainer
  *  2026-11-11: "That way, there's only one copy of each question"). A naming that is no sign-off
- *  (narration mid-turn) never takes the home from one that is.
+ *  (narration mid-turn) never takes the home from one that is. Since 2026-11-16 every sign-off of the
+ *  stretch stays in view and adds to the one before it, so a question is named once per human message and
+ *  its home is, in practice, the sign-off that asked it.
  *
  *  Until 2026-11-09 it was simply the LAST message naming it — the newest handoff, on the reading that an
  *  older placement is history. It is not history while the human has not come back since: the worker had

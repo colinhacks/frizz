@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { SIGNOFF_NUDGE_MESSAGE } from "@frizz/shared"
-import { latestSignOffs, restingDoneIndex, type SignOffMsgLike } from "./signOffs.ts"
+import { latestSignOffs, restingDoneIndex, stretchSignOffs, type SignOffMsgLike } from "./signOffs.ts"
 
 const human = (text: string): SignOffMsgLike => ({ role: "user", text })
 const wake = (text: string): SignOffMsgLike => ({ role: "user", text, wake: true })
@@ -32,6 +32,25 @@ test("a sign-off written in answer to frizz's reminder keeps the write-up it was
   assert.deepEqual(latestSignOffs([human("Go."), say("Status line."), rest, nudge, say("```done\n```", true), rest], 0), [4])
   // A send still queued is not what opened the run.
   assert.deepEqual(latestSignOffs([human("Go."), say("Write-up.", true), rest, nudge, say("```done\n```", true), { role: "user", text: "and also", queued: true }], 0), [1, 4])
+})
+
+test("the newest sign-off takes in the write-up its afterword follows, in the same turn and no further", () => {
+  const messages = [human("Fix it."), say("The whole write-up.", true), say("The test stacks are removed.", true), { ...rest, boundary: "rest" }]
+  assert.deepEqual(latestSignOffs(messages, 0), [1, 2])
+  // An earlier rest's sign-off is not part of it.
+  const earlier = [human("Fix it."), say("First hand-off.", true), { ...rest, boundary: "rest" }, say("Second hand-off.", true), { ...rest, boundary: "rest" }]
+  assert.deepEqual(latestSignOffs(earlier, 0), [3])
+})
+
+test("every sign-off after the human's turn is kept, less a superseded one whose questions all closed", () => {
+  const messages = [
+    say("Old.", true), rest, human("Go."), say("Narration."), say("Which store?", true), rest,
+    wake("CI failed"), say("Fixed CI.", true), rest, wake("Review"), say("Answered the review.", true), rest,
+  ]
+  assert.deepEqual(stretchSignOffs(messages, 2), [4, 7, 10])
+  assert.deepEqual(stretchSignOffs(messages, 2, (i) => i === 4), [7, 10])
+  assert.deepEqual(stretchSignOffs(messages, 2, (i) => i === 10), [4, 7, 10])
+  assert.deepEqual(stretchSignOffs([human("Go."), say("Working.")], 0), [])
 })
 
 // The reylo shape (2026-11-16): a done sign-off, then two rests on the same fence again, each woken by

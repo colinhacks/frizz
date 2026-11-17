@@ -147,19 +147,19 @@ test("a settled fence that handed the human steps keeps its card, with no thread
 // THE NEWEST SIGN-OFF KEEPS ITS CARD (2026-11-06, maintainer: "make sure that at least the most recent
 // sign-off block is made visible"). A hand-off followed by quiet parks on PR reviews went with the settled
 // fences. Drawn with no thread, like the steps card, and only on the message the surface marked
-// (ChatMessage.latestSignOff, ThreadSurface useLatestSignOff); a fence naming questions keeps only its
+// (ChatMessage.keptSignOff, ThreadSurface useKeptSignOffs); a fence naming questions keeps only its
 // prose, as it does live. The emptiness predicates read the same mark, so the spacer walk sees the row
 // it will draw. signOffCard.e2e.test.ts drives it on a real stack.
 test("the newest sign-off's settled fence keeps its card, with no thread behind it", () => {
   const render = renderText()
-  const keep = render.indexOf("&& m.latestSignOff)")
+  const keep = render.indexOf("&& m.keptSignOff)")
   assert.ok(keep >= 0, "the exception must exist")
   assert.ok(keep < render.indexOf("(m.fenceRefused || staleAwaiting || restingCardShown)) continue"), "…ahead of the skip it excepts")
-  assert.match(render, /staleAwaiting && !m\.fenceRefused && !restingCardShown && m\.latestSignOff\)/, "never for a refused fence, nor one the resting card states")
+  assert.match(render, /staleAwaiting && !m\.fenceRefused && !restingCardShown && m\.keptSignOff\)/, "never for a refused fence, nor one the resting card states")
   const branch = render.slice(keep, render.indexOf("continue", keep + render.slice(keep).indexOf("} else push(")))
   assert.match(branch, /if \(awaitingDefersToQuestions\(fseg\.hints\)\) \{\n\s*const prose = awaitingProseBlock\(fseg\.body\)\n\s*if \(prose\) push\(<ProseHtml /)
   assert.match(branch, /\} else push\(<AwaitingBackgroundCard key=\{`[^`]+`\} fence=\{\{ body: fseg\.body, hints: fseg\.hints \}\} \/>\)/, "no `thread`, so no rows and no verb")
-  assert.match(source, /function signOffFenceDraws\(m: ChatMessage, fence: \{ hints: readonly AwaitingHint\[\]; body: string \}\): boolean \{\n\s*if \(!m\.latestSignOff\) return false\n\s*return !awaitingDefersToQuestions\(fence\.hints\) \|\| awaitingProseBlock\(fence\.body\) !== null\n\}/)
+  assert.match(source, /function signOffFenceDraws\(m: ChatMessage, fence: \{ hints: readonly AwaitingHint\[\]; body: string \}\): boolean \{\n\s*if \(!m\.keptSignOff\) return false\n\s*return !awaitingDefersToQuestions\(fence\.hints\) \|\| awaitingProseBlock\(fence\.body\) !== null\n\}/)
 })
 
 // ONE CUT, SHARED. The renderer marks a fence settled by comparing its index against the last assistant

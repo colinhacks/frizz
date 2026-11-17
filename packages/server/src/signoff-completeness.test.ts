@@ -1,4 +1,4 @@
-// A SIGN-OFF IS THE WHOLE HANDOFF (scheduler SOURCE 18, signoff-completeness.ts) — the real fold
+// WHAT A SIGN-OFF OWES THE OPEN QUESTIONS (scheduler SOURCE 18, signoff-completeness.ts) — the real fold
 // (applyRecord), the real scheduler and the real board over real SQLite, with the worker simulated rest by
 // rest, in the manner of question-done.test.ts (whose harness this copies).
 import { test } from "node:test"
@@ -102,7 +102,8 @@ test("woken with nothing new, a rest on the fence alone draws no correction and 
 })
 
 // A worker that pastes its sign-off's fence back after a wake says nothing new either (tailer
-// restatesSignOff), so it is not held to naming the question again; a reworded fence is a new sign-off.
+// restatesSignOff). A reworded fence is a new sign-off, and it owes the question nothing: the human has not
+// typed since it was asked, so its card is on screen in the sign-off that asked it (2026-11-16).
 test("woken with nothing new, the sign-off's own fence again word for word draws no correction", async () => {
   const steps = fence("awaiting", "title: Approve the migration\nsteps:\n  - Approve the migration in the dashboard.\n---\nIt moves 312 rows.")
   const asked = async () => {
@@ -124,7 +125,7 @@ test("woken with nothing new, the sign-off's own fence again word for word draws
   try {
     reworded.say(4, steps.replace("It moves 312 rows.", "The dry run moved 312 rows cleanly."))
     await reworded.tick(5)
-    assert.deepEqual(reworded.deliveries(), [SIGNOFF(4)])
+    assert.deepEqual(reworded.deliveries(), [], reworded.sent.join("\n---\n"))
   } finally { reworded.close() }
 })
 
@@ -145,24 +146,15 @@ test("a message that only re-lists an open question draws ONE correction naming 
   } finally { w.close() }
 })
 
-test("a new sign-off that leaves out an open question draws a correction listing it; naming it passes", async () => {
-  const missing = await askedThenWoken()
+// SINCE 2026-11-16 A SIGN-OFF ADDS TO THE ONE BEFORE IT: the board keeps every sign-off since the human's
+// last message in view, so a question asked in one of them stands and the next one leaves it be.
+test("a new sign-off after a wake owes a standing question nothing", async () => {
+  const w = await askedThenWoken()
   try {
-    missing.say(4, `The migration finished cleanly; 312 rows moved.\n\n${needsInput}`)
-    await missing.tick(5)
-    assert.deepEqual(missing.deliveries(), [SIGNOFF(4)])
-    const message = missing.sent[0].split("\n\n⏱")[0]
-    assert.ok(message.startsWith(`${SIGNOFF_CORRECTION_LEAD}leaves out a question still open on this thread.`), message)
-    assert.match(message, /- `store` — SQLite or a JSON file\?/)
-    assert.match(message, /withdraw with `frizzctl unask <id>` first/)
-  } finally { missing.close() }
-
-  const whole = await askedThenWoken()
-  try {
-    whole.say(4, `The migration finished cleanly; 312 rows moved. The store is still the one call left:\n\n${ref("store")}\n\n${needsInput}`)
-    await whole.tick(5)
-    assert.deepEqual(whole.deliveries(), [], whole.sent.join("\n---\n"))
-  } finally { whole.close() }
+    w.say(4, `The migration finished cleanly; 312 rows moved.\n\n${needsInput}`)
+    await w.tick(5)
+    assert.deepEqual(w.deliveries(), [], w.sent.join("\n---\n"))
+  } finally { w.close() }
 })
 
 test("a question the human typed past is still owed in the next sign-off, and a withdrawn one is not", async () => {
@@ -175,7 +167,27 @@ test("a question the human typed past is still owed in the next sign-off, and a 
     typedPast.say(4, `Renamed it to \`frizz.config.json\`.\n\n${needsInput}`)
     await typedPast.tick(5)
     assert.deepEqual(typedPast.deliveries(), [SIGNOFF(4)])
+    const message = typedPast.sent[0].split("\n\n⏱")[0]
+    assert.ok(message.startsWith(`${SIGNOFF_CORRECTION_LEAD}leaves out a question still open on this thread that the human has typed past since you last named it.`), message)
+    assert.match(message, /- `store` — SQLite or a JSON file\?/)
+    assert.match(message, /Withdraw it with `frizzctl unask <id>` and say in one line what you decided/)
   } finally { typedPast.close() }
+
+  // Named again after the human typed, it stands once more, and later sign-offs before their next message
+  // owe it nothing.
+  const renamed = world()
+  try {
+    renamed.user(0, "move the settings into a real store")
+    renamed.say(1, `One call first.\n\n${choice("store")}`)
+    await renamed.tick(2)
+    renamed.user(3, "also rename the config file")
+    renamed.say(4, `Renamed it. The store is still open:\n\n${ref("store")}`)
+    await renamed.tick(5)
+    renamed.user(6, wake(shellDoneMessage({ taskId: "bzvt", label: "the build", status: "completed" })))
+    renamed.say(7, `The build is green.\n\n${needsInput}`)
+    await renamed.tick(8)
+    assert.deepEqual(renamed.deliveries(), [], renamed.sent.join("\n---\n"))
+  } finally { renamed.close() }
 
   const withdrawn = world()
   try {

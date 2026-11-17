@@ -73,14 +73,38 @@ test("every sign-off is marked, newest last, and a turn's narration is not", () 
   assert.deepEqual(marked(msgs), ["Core is clean.", "```done"])
 })
 
-test("a `frizzctl done` signs its turn off, though a pointer follows it", () => {
+test("a `frizzctl done` signs its turn off, though a pointer follows it, and the write-up stays marked", () => {
   const msgs = project(
     human("Write the report."),
     narrate("The report is written to `report.md`: three findings, all fixed.", "frizzctl done --body-file - <<'EOF'\n- Wrote the report.\nEOF"),
     toolResult(`t${ids}`),
-    rest("The write-up is in the message above."),
+    rest("The write-up is above."),
   )
-  assert.deepEqual(marked(msgs), ["The write-up is in the message above."])
+  assert.deepEqual(marked(msgs), ["The report is written to `report.md`: three findings, all fixed.", "The write-up is above."])
+})
+
+// The frizz Console-chip shape (2026-11-16): the write-up, one more command, and a line about that command.
+test("an afterword keeps the write-up before it marked; a sign-off longer than the narration before it does not", () => {
+  const writeUp = "**Fixed.** The project chip now sits inside the prompt box, first in the row along the bottom. It is on `main` as `92337310d`, and the status row above the box is back to one line."
+  const afterword = project(human("Move the chip."), narrate(writeUp, "kill 4242"), toolResult(`t${ids}`), rest("The test stacks are removed."))
+  assert.deepEqual(marked(afterword), ["**Fixed.** The project chip now sits inside the prompt box, first in the row along the bottom. It is on `main` as `92337310d`, and the status row above the box is back to one line.", "The test stacks are removed."])
+  // A fence's body counts as words, its keys do not: a one-line body under a longer write-up is its afterword.
+  const fenced = project(human("Ship it."), narrate("The release is staged and the approval card is up on your phone.", "stager ask x"), toolResult(`t${ids}`), rest(fence("awaiting", "shells: [b1]\nstatus: needs_input\nfor: 1h\n---\nApprove it.")))
+  assert.deepEqual(marked(fenced), ["The release is staged and the approval card is up on your phone.", "```awaiting"])
+  // A fence ALONE marks nothing, as before: the sign-off before it stands, and a status line written
+  // ahead of it stays narration.
+  const alone = project(human("Ship it."), rest(NEEDS_INPUT), wake("CI passed"), narrate("CI is still green; parking."), toolResult(`t${ids}`), rest(fence("awaiting", "prs: [acme/app#391]\nstatus: needs_input\nfor: 180d")))
+  assert.deepEqual(marked(alone), ["The fix is on acme/app#391 and CI is green; the merge is yours."])
+  // A question is what its message says: one ask under a line of prose is no afterword to the status line
+  // before it (the seeded fold-withdrawn thread kept that status line in view until questions counted).
+  const asks = project(human("Move the settings."), narrate("Geometry columns arrive as WKB buffers and fall through to the hex branch."), toolResult(`t${ids}`), rest("One call is left: where they live.\n\n```question\nid: store\nkind: choice\nquestion: Should the settings store use SQLite or a JSON file?\noptions:\n  - SQLite\n  - JSON file\n```"))
+  assert.deepEqual(marked(asks), ["One call is left: where they live."])
+  // The usual shape: a status line, then the write-up. Only the write-up.
+  const narrated = project(human("Fix it."), narrate("Committing, then stopping my stack."), toolResult(`t${ids}`), rest(writeUp))
+  assert.deepEqual(marked(narrated), [writeUp])
+  // Never past a delivery: the words before a wake belong to the rest before it, here a quiet park.
+  const woken = project(human("Run the bench."), rest(WORKING), wake("Bench finished"), rest("Done."))
+  assert.deepEqual(marked(woken), ["Done."])
 })
 
 test("a bare rest is read by the answer to frizz's reminder about it", () => {
