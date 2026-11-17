@@ -1279,8 +1279,8 @@ a[href] {
 .card-md .md-body pre code {
   background: none;
 }
-/* …and inside a CALLOUT, which sits on the canvas fill (styles.css § Callouts): light's panel-2 chip
-   (#fafafa) on that #f7f7f7 was all but invisible. `:not(pre) >` so a fence inside one keeps no chip. */
+/* …and inside a CALLOUT, which sits on its own tinted fill (styles.css § Callouts): light's panel-2
+   chip (#fafafa) on that fill was all but invisible. `:not(pre) >` so a fence inside one keeps no chip. */
 .md-body .md-callout :not(pre) > code {
   background: color-mix(in srgb, var(--color-fg) 8%, transparent);
 }
@@ -1379,7 +1379,7 @@ a[href] {
   --md-step: 12px;
   font-size: 12px;
 }
-/* A question fence's CONTEXT that ENDS ON A BOX — a table, a callout's rule, a quote, a code block —
+/* A question fence's CONTEXT that ENDS ON A BOX — a table, a callout, a quote, a code block —
    puts that box's edge 8px (the grid's mt-2) above the first option's border, closer than the 6px
    between two options reads apart: the context ran into the choices (measured 2026-10-13 on a context
    ending in a `> [!NOTE]`). A paragraph's ink already sits ~4px inside its line box, so the 8px reads
@@ -1430,35 +1430,32 @@ html[data-code-wrap="off"] {
    blockquote (lib/callouts.ts), a `<details>` section (lib/disclosure.ts), and the inline `<kbd>`,
    `<sub>`, `<sup>` and `<mark>` the sanitizer admits.
 
-   CALLOUTS. A callout is a BLOCK, drawn as a code block is — the same fill, hairline, shared corner and
-   1em inset, so its body's text starts where a fence's code does — with the title in a header strip
-   across its top: the type's ink on a 9% wash of it, closed by the box's own hairline (an 18% tint of
-   the ink there read as a second, different line against the frame; maintainer, the same day: "I
-   don't like that the horizontal rule underneath the header is a different color than the outer
-   border of the callout card"). That hairline is the type's ink mixed 45% into the neutral border,
-   frame and rule alike: the neutral grey around a coloured header read as a foreign box (maintainer
-   2026-10-21: "The gray borders on this look absolutely horrendous. They need to be coded to the
-   color of the callout"). 30% still read grey in dark; 60% outshouted the title. Mixed into the
-   border rather than into `transparent`, so it is opaque and the rule over the header's wash draws
-   the same colour as the frame over the fill. Picked 2026-10-20 from eight
-   shapes (packages/web/src/callout-mockup-fixture.tsx). It was a quote's 2px rule in the type's colour
-   with a bare title above the body until then, and the maintainer found it "so saturated": the rule,
-   icon and title were all one full-strength status colour, and the warning's was amber-400, which a
-   P3 screen paints beyond sRGB. The inks are now their own five tokens (theme.css `--frizz-callout-*`),
-   calm and inside sRGB. The body takes the PROSE colour, not a quote's muted one: a quote is somebody
-   else's words, a callout is the part the author most wants read. */
+   CALLOUTS. A callout is a TINTED PANEL: the box washed in the type's ink (theme.css
+   `--frizz-callout-wash` of it over `--frizz-callout-ground`, 8% over the raised panel in dark, 7% over
+   the canvas fill in light), the code block's corner, NO border and NO header strip, the icon and a
+   bold title in the ink at its top, the body under it. Its insets are a code block's plus the 1px
+   that block's border takes, so its body's text still starts where a fence's code does.
+
+   How it got here. Until 2026-10-20 it was a quote's 2px rule in the type's colour with a bare title,
+   and the maintainer found it "so saturated": rule, icon and title in one full-strength status colour,
+   the warning's amber-400 beyond sRGB on a P3 screen. The inks became their own calm five (theme.css
+   `--frizz-callout-*`), and the shape a code block's neutral frame with the title in a 9% header strip
+   (picked from eight shapes, packages/web/src/callout-mockup-fixture.tsx). Its grey frame around the
+   coloured strip "look[ed] absolutely horrendous" (2026-10-21), so frame and strip rule took the ink,
+   45% into the border. Then, 2026-11-16: "I'm not sure tinting the border is the right move." Of five
+   edges mocked on the real stylesheet (a titled code block, the header strip with no frame, this
+   panel, GitHub's left rule, a neutral block with a coloured edge), the maintainer picked this one: no
+   line anywhere, so there is no grey around the colour and no coloured outline either.
+
+   The body takes the PROSE colour, not a quote's muted one: a quote is somebody else's words, a
+   callout is the part the author most wants read. */
 .md-body .md-callout {
   --md-callout-ink: var(--color-muted);
-  --md-callout-frame: color-mix(in oklab, var(--md-callout-ink) 45%, var(--color-border));
-  border: 1px solid var(--md-callout-frame);
+  border: 0;
   border-radius: var(--block-radius);
-  background: var(--color-bg);
-  padding: 0 1em 0.75em;
+  background: color-mix(in oklab, var(--md-callout-ink) var(--frizz-callout-wash), var(--frizz-callout-ground));
+  padding: calc(0.75em + 1px) calc(1em + 1px);
   color: inherit;
-}
-/* A callout with no body is its header alone, so the inset under the strip has nothing to hold. */
-.md-body .md-callout:has(> .md-callout-title:last-child) {
-  padding-bottom: 0;
 }
 .md-body .md-callout-note {
   --md-callout-ink: var(--color-callout-note);
@@ -1484,10 +1481,8 @@ html[data-code-wrap="off"] {
 .md-body .md-callout > :last-child {
   margin-bottom: 0;
 }
-/* The header strip. Its negative side margins undo the box's inset, so the wash runs the box's whole
-   inner width, and its top corners take the box's INNER curve — the corner minus the hairline — so the
-   wash stops at the border without the box clipping its contents (a body can hold a scrolling fence or
-   a section whose focus ring must show). The icon's ink starts on the body's own left edge, 1em in. */
+/* The title: the first line of the panel, its icon hung in the gutter so the icon's ink starts on the
+   body's own left edge. */
 .md-body .md-callout > .md-callout-title {
   /* The glyph's dead space: how far its ink stands in from each side of its 1em box, which is the
      glyph's own viewBox geometry (set per type below). And the gap the eye reads between icon and
@@ -1497,21 +1492,14 @@ html[data-code-wrap="off"] {
   /* Where the title's text starts: the icon's INK width plus that gap. A wrapped title hangs under
      its own first word, not under the icon. */
   --md-callout-gutter: calc(1em - 2 * var(--md-callout-trim) + var(--md-callout-gap));
-  margin: 0 -1em;
-  padding: 0.4em 1em 0.4em calc(1em + var(--md-callout-gutter));
-  border-bottom: 1px solid var(--md-callout-frame);
-  border-radius: calc(var(--block-radius) - 1px) calc(var(--block-radius) - 1px) 0 0;
-  background: color-mix(in oklab, var(--md-callout-ink) 9%, transparent);
+  margin: 0;
+  padding-left: var(--md-callout-gutter);
   font-weight: 600;
   color: var(--md-callout-ink);
 }
-.md-body .md-callout > .md-callout-title:last-child {
-  border-bottom: 0;
-  border-radius: calc(var(--block-radius) - 1px);
-}
-/* The body under the strip: the box's own 0.75em inset, the space a fence leaves above its code. */
+/* The body binds to its title as a label's text does, well inside the prose step between blocks. */
 .md-body .md-callout > .md-callout-title + * {
-  margin-top: 0.75em;
+  margin-top: 0.35em;
 }
 /* The type's icon: a lucide glyph carried as a mask, for the reason the task marks give — the
    sanitizer drops inline `<svg>` with its subtree, and a mask in the stylesheet keeps lucide's exact
