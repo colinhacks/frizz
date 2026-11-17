@@ -257,6 +257,37 @@ test("a pong keeps the connection alive: the next beat pings again instead of dr
   } finally { conn.stop(); }
 });
 
+test("a ping unanswered for the pong deadline drops the socket, without waiting out another beat", async () => {
+  // 2026-11-16: Cloudflare cut a hibernated board socket without a word, and a visitor's request sent into
+  // it waited for the board to notice. With a whole beat to answer each ping that took 52s, and the
+  // relay gives a visitor 30s, so the phone got "The board did not answer" instead of the board.
+  const identity = await generateClaimIdentity();
+  const h = harness();
+  const conn = await h.start(identity);
+  try {
+    h.sockets[0]!.fire("open");
+    h.timers[h.timers.length - 2]!(); // the beat: pings, then arms the pong deadline and the next beat
+    assert.equal(h.sockets[0]!.sent.at(-1), RELAY_KEEPALIVE_PING);
+    h.timers[h.timers.length - 2]!(); // the pong deadline, with no pong
+    assert.ok(h.status.some((s) => s.startsWith("disconnected")), "an unanswered ping was believed until the next beat");
+    assert.equal(h.sockets[0]!.closed, true);
+  } finally { conn.stop(); }
+});
+
+test("a pong inside the deadline keeps the socket", async () => {
+  const identity = await generateClaimIdentity();
+  const h = harness();
+  const conn = await h.start(identity);
+  try {
+    h.sockets[0]!.fire("open");
+    h.timers[h.timers.length - 2]!();
+    h.sockets[0]!.fire("message", { data: serializeFrame({ t: "pong", id: "keepalive" }) });
+    h.timers[h.timers.length - 2]!(); // a deadline that fires after its pong arrived
+    assert.ok(!h.status.some((s) => s.startsWith("disconnected")), "an answered ping was treated as a miss");
+    assert.equal(h.sockets[0]!.closed, false);
+  } finally { conn.stop(); }
+});
+
 test("req-cancel aborts the request the relay named, and only that one", async () => {
   // Driven with a REAL local server: the request must actually die at the socket level, or the SSE
   // feed keeps producing chunks that ride up the relay socket and wake the Durable Object each time.

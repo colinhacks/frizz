@@ -511,3 +511,183 @@ test("a visitor who hung up stops the board's request instead of being streamed 
   relay.handleFrame(serializeFrame({ t: "res-chunk", id, data: encodeBody(text("two")) }))
   assert.equal(pushes, 1)
 })
+
+/** A clock the test moves by hand, with the timers BoardSocket arms on it. */
+function fakeClock() {
+  let now = 1_000_000
+  let seq = 0
+  const timers = new Map<number, { at: number; fn: () => void }>()
+  return {
+    options: {
+      now: () => now,
+      setTimer: (fn: () => void, ms: number) => {
+        timers.set(++seq, { at: now + ms, fn })
+        return seq
+      },
+      clearTimer: (handle: unknown) => void timers.delete(handle as number),
+    },
+    advance(ms: number) {
+      now += ms
+      for (const [id, timer] of [...timers].sort((a, b) => a[1].at - b[1].at)) {
+        if (timer.at <= now && timers.delete(id)) timer.fn()
+      }
+    },
+  }
+}
+
+const answer = (relay: BoardSocket, board: ReturnType<typeof fakeSocket>, status = 200) =>
+  relay.handleFrame(serializeFrame({ t: "res", id: board.lastId(), status, headers: [], body: encodeBody(text("page")), end: true }))
+
+test("a page asked for as the board reconnects goes down the new socket instead of failing", async () => {
+  // 2026-11-16: the board's socket was cut and replaced 131 times in a day, nearly always back within a
+  // second or two, and every page load that met a cut was answered "The board did not answer: the board
+  // reconnected" until the phone reloaded.
+  const clock = fakeClock()
+  const first = fakeSocket()
+  const relay = new BoardSocket(clock.options)
+  relay.attach(first.socket)
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [["accept", "text/html"]] })
+  const firstId = first.lastId()
+
+  const second = fakeSocket()
+  relay.attach(second.socket)
+  const resent = parseFrame(second.sent[0]!) as { t: string; id: string; method: string; url: string; headers: Array<[string, string]> }
+  assert.equal(resent.t, "req", "the request was not sent down the new socket")
+  assert.equal(resent.url, "https://ada.frizz.sh/")
+  assert.deepEqual(resent.headers, [["accept", "text/html"]])
+  assert.notEqual(resent.id, firstId, "a resend reuses the old id, which the old socket may still answer")
+
+  // An answer under the old id is from a request the relay has given up on.
+  relay.handleFrame(serializeFrame({ t: "res", id: firstId, status: 500, headers: [], end: true }))
+  answer(relay, second)
+  assert.equal((await pending).status, 200)
+})
+
+test("a page asked for as the board drops waits for it to dial back in", async () => {
+  const clock = fakeClock()
+  const first = fakeSocket()
+  const relay = new BoardSocket(clock.options)
+  relay.attach(first.socket)
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] })
+  relay.detach(first.socket)
+
+  clock.advance(1_500)
+  const second = fakeSocket()
+  relay.attach(second.socket)
+  assert.equal((parseFrame(second.sent[0]!) as { t: string }).t, "req")
+  answer(relay, second)
+  assert.equal((await pending).status, 200)
+})
+
+test("a board that does not come back fails the page once the grace runs out, with the reason it went", async () => {
+  const clock = fakeClock()
+  const board = fakeSocket()
+  const relay = new BoardSocket(clock.options)
+  relay.attach(board.socket)
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] })
+  relay.detach(board.socket)
+  let settled = false
+  void pending.catch(() => {}).finally(() => { settled = true })
+
+  clock.advance(9_000)
+  await Promise.resolve()
+  assert.equal(settled, false, "gave up before the grace ran out")
+  clock.advance(1_000)
+  await assert.rejects(pending, /the board disconnected/)
+})
+
+test("a request that is not safe to repeat fails on a reconnect rather than being sent twice", async () => {
+  // Whether the board saw it is unknowable, and a POST is a mutation: a dispatch, a follow-up, an answer.
+  const clock = fakeClock()
+  const first = fakeSocket()
+  const relay = new BoardSocket(clock.options)
+  relay.attach(first.socket)
+  const pending = relay.request({ method: "POST", url: "https://ada.frizz.sh/_frizz/rpc/dispatch", headers: [], body: text("{}") })
+
+  const second = fakeSocket()
+  relay.attach(second.socket)
+  await assert.rejects(pending, /reconnected/)
+  assert.deepEqual(second.sent, [], "a POST was sent down the new socket")
+})
+
+test("an answered stream is ended on a reconnect, never sent again", async () => {
+  const clock = fakeClock()
+  const first = fakeSocket()
+  const relay = new BoardSocket(clock.options)
+  relay.attach(first.socket)
+  let ended = false
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/_frizz/events", headers: [] }, { push: () => {}, end: () => { ended = true } })
+  relay.handleFrame(serializeFrame({ t: "res", id: first.lastId(), status: 200, headers: [], end: false }))
+  await pending
+
+  const second = fakeSocket()
+  relay.attach(second.socket)
+  assert.equal(ended, true, "the visitor's stream was left open with nothing to feed it")
+  assert.deepEqual(second.sent, [], "an answered request was sent again")
+})
+
+test("the head's deadline holds across a resend, so a flapping board cannot hold a visitor forever", async () => {
+  const clock = fakeClock()
+  const relay = new BoardSocket({ ...clock.options, requestTimeoutMs: 30_000 })
+  relay.attach(fakeSocket().socket)
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] })
+  clock.advance(20_000)
+  relay.attach(fakeSocket().socket)
+  clock.advance(10_000)
+  await assert.rejects(pending, /did not answer in time/)
+})
+
+test("one request is sent at most three times", async () => {
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  relay.attach(fakeSocket().socket)
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] })
+  relay.attach(fakeSocket().socket)
+  relay.attach(fakeSocket().socket)
+  const fourth = fakeSocket()
+  relay.attach(fourth.socket)
+  await assert.rejects(pending, /reconnected/)
+  assert.deepEqual(fourth.sent, [])
+})
+
+test("a visitor who arrives while the board is away waits for it, and only for one that was just here", async () => {
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  assert.equal(await relay.whenConnected(), false, "waited for a board that was never here")
+
+  const first = fakeSocket()
+  relay.attach(first.socket)
+  assert.equal(await relay.whenConnected(), true)
+  relay.detach(first.socket)
+  const back = relay.whenConnected()
+  clock.advance(800)
+  const second = fakeSocket()
+  relay.attach(second.socket)
+  assert.equal(await back, true)
+
+  relay.detach(second.socket)
+  const gone = relay.whenConnected()
+  clock.advance(10_000)
+  assert.equal(await gone, false, "a board that never came back was waited for past the grace")
+
+  clock.advance(60_000)
+  assert.equal(await relay.whenConnected(), false, "a board long gone is waited for on every visit")
+})
+
+test("a request made in the moment the board is away is held for it, even one not safe to repeat", async () => {
+  // The Durable Object reads a visitor's body after finding a board connected, and the board can go in
+  // between. Nothing has been sent yet, so holding even a POST for the board's return sends it once.
+  const clock = fakeClock()
+  const first = fakeSocket()
+  const relay = new BoardSocket(clock.options)
+  relay.attach(first.socket)
+  relay.detach(first.socket)
+  const pending = relay.request({ method: "POST", url: "https://ada.frizz.sh/_frizz/rpc/dispatch", headers: [], body: text("{}") })
+  clock.advance(700)
+  const second = fakeSocket()
+  relay.attach(second.socket)
+  assert.equal(second.sent.length, 1)
+  answer(relay, second)
+  assert.equal((await pending).status, 200)
+  assert.deepEqual(first.sent, [])
+})

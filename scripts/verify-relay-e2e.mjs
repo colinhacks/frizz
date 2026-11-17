@@ -57,6 +57,7 @@ const wait = async (label, fn, ms = 90_000) => {
 let dev = null;
 let boardServer = null;
 let connection = null;
+let slowHits = 0;
 const state = mkdtempSync(join(tmpdir(), "frizz-relay-e2e-"));
 
 try {
@@ -111,7 +112,9 @@ try {
   dev = spawn(
     "nubx",
     ["-y", "wrangler", "dev", "-c", devConfig, "--port", String(DEV_PORT), "--ip", "127.0.0.1", "--persist-to", state],
-    { cwd: join(repo, "packages/relay"), stdio: ["ignore", "pipe", "pipe"] },
+    // Its OWN process group, so cleanup reaches the whole tree: a signal to `nubx` alone left `wrangler`
+    // and its `workerd` serving the port after the run, and the next run timed out waiting to listen.
+    { cwd: join(repo, "packages/relay"), stdio: ["ignore", "pipe", "pipe"], detached: true },
   );
   let devOut = "";
   dev.stdout.on("data", (d) => (devOut += d));
@@ -184,6 +187,15 @@ try {
       res.end();
       return;
     }
+    if (req.url?.startsWith("/slow")) {
+      // A page the board takes a moment over, so its socket can drop while the visitor waits on it.
+      slowHits += 1;
+      setTimeout(() => {
+        res.writeHead(200, { "content-type": "text/plain", "content-length": "9" });
+        res.end("SLOW-DONE");
+      }, 1_500);
+      return;
+    }
     res.writeHead(200, { "content-type": "text/plain", "content-length": "13", "x-board": "yes" });
     res.end("BOARD-REACHED");
   });
@@ -208,13 +220,14 @@ try {
   boardServer.listen(BOARD_PORT, "127.0.0.1");
   await once(boardServer, "listening");
 
-  connection = connectRelay({
+  const dial = () => connectRelay({
     name: "ada",
     identity,
     relayOrigin: `http://ada.localhost:${DEV_PORT}`,
     boardOrigin: `http://127.0.0.1:${BOARD_PORT}`,
     publicOrigin: `http://ada.localhost:${DEV_PORT}`,
   });
+  connection = dial();
 
   const served = await wait("the board to be served through the relay", async () => {
     const res = await fetch(at("ada"));
@@ -334,6 +347,44 @@ try {
   });
   check("a terminal the board cannot open is refused, not silently accepted", refused === "refused", refused);
 
+  // A BOARD WHOSE SOCKET DROPS AND COMES BACK, which on the live relay happens many times a day: Cloudflare
+  // cuts a board's socket and the board is back within a second or two. Before 2026-11-16 every visitor
+  // request that met one was answered 504 "The board did not answer", the first page a phone loaded
+  // after a pause, until a reload (packages/relay/src/board-socket.ts BOARD_RETURN_GRACE_MS).
+  const timed = async (label, promise) => {
+    const started = Date.now();
+    const result = await settled(label, promise);
+    return { ...result, ms: Date.now() - started };
+  };
+  connection.stop();
+  await new Promise((r) => setTimeout(r, 300));
+  const whileAway = timed("visitor while the board is away", fetch(at("ada"), { signal: AbortSignal.timeout(20_000) }));
+  await new Promise((r) => setTimeout(r, 1_000));
+  connection = dial();
+  const away = await whileAway;
+  check("a page asked for while the board is away is answered once it dials back in", away.res?.status === 200 && away.text === "BOARD-REACHED", `${away.res ? `HTTP ${away.res.status} ${JSON.stringify(away.text.slice(0, 80))}` : away.text} in ${away.ms}ms`);
+
+  const hitsBefore = slowHits;
+  const inFlight = timed("a page in flight across a drop", fetch(at("ada", "/slow"), { signal: AbortSignal.timeout(20_000) }));
+  await new Promise((r) => setTimeout(r, 400));
+  connection.stop();
+  await new Promise((r) => setTimeout(r, 800));
+  connection = dial();
+  const flight = await inFlight;
+  check("a page in flight when the board's socket drops is sent again and answered", flight.res?.status === 200 && flight.text === "SLOW-DONE", `${flight.res ? `HTTP ${flight.res.status} ${JSON.stringify(flight.text.slice(0, 80))}` : flight.text} in ${flight.ms}ms`);
+  check("and the board was asked twice, once on each socket", slowHits - hitsBefore === 2, `${slowHits - hitsBefore} requests reached the board`);
+
+  // The negative half: a mutation is never sent twice, so one caught by the drop still fails.
+  await wait("the board to be back", async () => (await fetch(at("ada"))).status === 200);
+  const posted = timed("a POST in flight across a drop", fetch(at("ada", "/slow"), { method: "POST", signal: AbortSignal.timeout(20_000) }));
+  await new Promise((r) => setTimeout(r, 400));
+  connection.stop();
+  await new Promise((r) => setTimeout(r, 800));
+  connection = dial();
+  const post = await posted;
+  check("a POST caught by the drop fails rather than being sent twice", post.res?.status === 504, `${post.res ? `HTTP ${post.res.status} ${JSON.stringify(post.text.slice(0, 80))}` : post.text} in ${post.ms}ms`);
+  await wait("the board to be back", async () => (await fetch(at("ada"))).status === 200);
+
   // A board that goes away must stop being served, rather than hanging visitors.
   connection.stop();
   boardServer.closeAllConnections?.();
@@ -350,9 +401,16 @@ try {
   connection?.stop();
   boardServer?.close();
   if (dev) {
-    dev.kill("SIGINT");
+    const signalTree = (signal) => {
+      try {
+        process.kill(-dev.pid, signal);
+      } catch {
+        // The group is already gone.
+      }
+    };
+    signalTree("SIGINT");
     await Promise.race([once(dev, "exit"), new Promise((r) => setTimeout(r, 10_000))]);
-    dev.kill("SIGKILL");
+    signalTree("SIGKILL");
   }
   rmSync(state, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }

@@ -54,6 +54,14 @@ believing a handshake older than five minutes.
 - **A handshake is spent on use.** The Durable Object keeps the newest one it accepted from each key and takes only a strictly newer one. Until 2026-11-12 one connect URL, seen by a TLS-inspecting proxy or a log of request URLs, could reconnect as the board for five minutes, replacing it each time and reading its visitors' cookies. The board signs a fresh handshake for every connect.
 - **The key is checked on every request, not only on connect.** The Worker reads the owner for every visitor request and hands it to the Durable Object, which closes the attached board (code 4003) when its key is no longer the owner. The board tells its operator, and so it does when another connection with its own key replaces it.
 
+## When a board's socket drops
+
+Cloudflare cuts a board's socket now and then, usually without a close frame, and the board dials back in within a second or two. On 2026-11-16 one board's socket was replaced 131 times in a day. A visitor should never see that, so the relay hides it:
+
+- **A request that is safe to repeat waits for the board.** A GET, HEAD or OPTIONS that was in flight when the socket went, or that arrives while the board is away, goes down the next socket the board opens. The relay waits up to 10 seconds for it, and only for a board it saw in the last minute. Each request is sent at most three times, inside its 30-second deadline. A POST caught by a drop still fails, because whether the board saw it can't be known.
+- **A woken Durable Object takes the newest open board socket.** `getWebSockets` still lists a socket the relay closed when its far end never answered the close, and every reconnect leaves one. Until 2026-11-16 a wake attached each listed board socket in turn, and when a stale one came last it closed the live board as "replaced by a newer connection". The visitor whose request woke it got "The board did not answer" instead of the board.
+- **The board pings every 20 seconds and gives each ping 5 seconds** ([`src/relay-connection.ts`](../../src/relay-connection.ts)), so a socket cut without a word is noticed within 25 seconds, inside a visitor's deadline.
+
 ## When a name changes hands
 
 A phone keeps everything it holds for `ada.frizz.sh` whoever's board serves it: cached files, validators, cookies. A name can move to another key (a custom name taken back by its account, or claimed again after a lapse), so whatever one holder's board gave a browser must not work for it under the next. The second security review ran the attack in a headless browser: a holder served `/assets/index-<hash>.js` with its own script and a year's `immutable`, the name moved, and the next board's page ran the cached copy beside a live session. The file name and its ETag are public, so a revalidation alone would have been answered 304. The relay sees every answer, so it applies these rules for every board ([`visitor-headers.ts`](src/visitor-headers.ts)):

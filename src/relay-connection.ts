@@ -86,12 +86,28 @@ export function defaultBackoff(attempt: number, random: () => number = Math.rand
 /**
  * How often the board pings the relay, and therefore how long a dead socket can masquerade as live.
  *
- * The relay answers with a runtime auto-response, so a beat costs nothing on the far side — it does
- * not even wake the Durable Object. What the beat buys is TCP liveness in both directions: a NAT
- * hole that stays open, and a socket that died without a FIN (a slept laptop, a changed network)
- * detected within two beats instead of lingering half-dead for hours while every visitor times out.
+ * The relay answers with a runtime auto-response, so a beat does not wake the Durable Object and bills
+ * no duration; Cloudflare's pricing page leaves open whether it counts as an incoming message (20 to one
+ * request), which at this rate would be 216 a day per board. What the beat buys is TCP liveness in both
+ * directions: a NAT hole that stays open, and a socket that died without a FIN (a slept laptop, a changed
+ * network) detected within one beat and the pong deadline instead of lingering while visitors time out.
+ *
+ * WHY 20s AND NOT 45s (2026-11-16). Cloudflare cuts a hibernated board socket now and then, and the board
+ * often hears nothing: the socket is simply dead until the next frame crosses it. A visitor whose request
+ * woke the relay into such a socket waited for the board to notice, reconnect and be sent the request again
+ * (packages/relay/src/board-socket.ts), and the relay gives a visitor 30s for an answer. At 45s, with a
+ * whole beat to answer each ping, the board noticed after up to 90s (52s on the board where it was seen),
+ * so the phone got "The board did not answer: the board did not answer in time". This beat and the pong
+ * deadline bound it to 25s.
  */
-export const RELAY_KEEPALIVE_INTERVAL_MS = 45_000;
+export const RELAY_KEEPALIVE_INTERVAL_MS = 20_000;
+
+/**
+ * How long a ping may go unanswered before the socket is declared dead. The relay's auto-response comes
+ * back in one round trip (about 100ms measured from a home connection), so five seconds is a dead socket
+ * or a network too broken to serve a visitor anyway, never a slow answer.
+ */
+export const RELAY_PONG_DEADLINE_MS = 5_000;
 
 /**
  * How much one relay connection may have open at once. Each entry holds a socket, memory and a timer
@@ -133,13 +149,23 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
   let stopped = false;
   let retryHandle: unknown;
   let keepaliveHandle: unknown;
+  /** The deadline for the ping in flight. See RELAY_PONG_DEADLINE_MS. */
+  let pongHandle: unknown;
   let awaitingPong = false;
+
+  const clearPongDeadline = () => {
+    if (pongHandle !== undefined) {
+      clearTimer(pongHandle);
+      pongHandle = undefined;
+    }
+  };
 
   const clearKeepalive = () => {
     if (keepaliveHandle !== undefined) {
       clearTimer(keepaliveHandle);
       keepaliveHandle = undefined;
     }
+    clearPongDeadline();
   };
 
   const cancelRequests = () => {
@@ -175,6 +201,7 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
     }
     if (frame.t === "pong") {
       awaitingPong = false;
+      clearPongDeadline();
       return;
     }
     if (frame.t === "req") {
@@ -250,18 +277,24 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
     socket = next;
 
     let settled: unknown;
+    /**
+     * The TCP under this socket is dead even though nobody sent a FIN. Treat it as dropped now rather
+     * than serving nobody while every visitor times out.
+     */
+    const dead = () => {
+      dropped();
+      try {
+        next.close();
+      } catch {
+        // Already gone.
+      }
+    };
     const beat = () => {
       if (stopped || socket !== next) return;
+      // The pong deadline normally catches a silent socket first; this is the backstop for a deadline
+      // that never fired.
       if (awaitingPong) {
-        // The last ping went unanswered for a whole interval: the TCP under this socket is dead
-        // even though nobody sent a FIN. Treat it as dropped now rather than serving nobody for
-        // hours while every visitor times out.
-        dropped();
-        try {
-          next.close();
-        } catch {
-          // Already gone.
-        }
+        dead();
         return;
       }
       awaitingPong = true;
@@ -272,6 +305,10 @@ export function connectRelay(options: RelayConnectionOptions): RelayConnection {
       } catch {
         // The close event will follow and reconnect from there.
       }
+      pongHandle = setTimer(() => {
+        pongHandle = undefined;
+        if (!stopped && socket === next && awaitingPong) dead();
+      }, RELAY_PONG_DEADLINE_MS);
       keepaliveHandle = setTimer(beat, RELAY_KEEPALIVE_INTERVAL_MS);
     };
 

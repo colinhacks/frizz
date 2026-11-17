@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { generateClaimIdentity, exportClaimPublicKey, relayHandshakeInput } from "@frizz/shared"
-import { boardNameFor, handshakeAccepted, ownerPubkeyFor, visitorResponseInit, type RelayEnv } from "./worker.ts"
+import { generateClaimIdentity, exportClaimPublicKey, parseFrame, relayHandshakeInput, serializeFrame, encodeBody } from "@frizz/shared"
+import { Board, boardNameFor, handshakeAccepted, ownerPubkeyFor, visitorResponseInit, type RelayEnv } from "./worker.ts"
+import { OWNER_HEADER } from "./visitor-headers.ts"
 
 const NOW = 1_800_000_000_000
 
@@ -100,4 +101,81 @@ test("the Worker's module exports nothing workerd cannot run as an entry point",
   for (const [name, value] of Object.entries(exported)) {
     assert.ok(typeof value === "function" || (name === "default" && typeof value === "object" && value !== null), `${name} is a ${typeof value}`)
   }
+})
+
+/** A hibernatable socket as a woken Durable Object finds it: a state, an attachment, and what was sent on it. */
+class ListedSocket {
+  sent: string[] = []
+  closed: { code?: number; reason?: string } | null = null
+  onSend?: (data: string) => void
+  readyState: number
+  private attachment: unknown
+  constructor(readyState: number, attachment: unknown) {
+    this.readyState = readyState
+    this.attachment = attachment
+  }
+  serializeAttachment(value: unknown) { this.attachment = value }
+  deserializeAttachment() { return this.attachment }
+  send(data: string) {
+    if (this.readyState !== 1) throw new Error("Can't call WebSocket send() after close().")
+    this.sent.push(data)
+    this.onSend?.(data)
+  }
+  close(code?: number, reason?: string) {
+    this.closed = { ...(code !== undefined ? { code } : {}), ...(reason !== undefined ? { reason } : {}) }
+    this.readyState = 2
+  }
+  accept() {}
+  addEventListener() {}
+}
+
+/** A Durable Object woken from hibernation with these sockets still listed, in this order. */
+function wokenBoard(sockets: ListedSocket[]) {
+  const globals = globalThis as unknown as { WebSocketRequestResponsePair?: unknown }
+  globals.WebSocketRequestResponsePair ??= class {}
+  const state = {
+    id: { toString: () => "ada" },
+    storage: { get: async () => undefined, put: async () => {} },
+    acceptWebSocket: () => {},
+    getWebSockets: () => sockets as unknown as WorkerWebSocket[],
+    setWebSocketAutoResponse: () => {},
+  }
+  return new Board(state as unknown as DurableObjectState)
+}
+
+test("a woken relay serves the visitor through the newest OPEN board socket, and never closes it", async () => {
+  // 2026-11-16, on the live relay: a phone's first request after a pause woke the object, which attached
+  // every listed board socket in turn. The last one listed was a socket it had closed as "replaced" when
+  // the board reconnected, still CLOSING because the board had abandoned it, so the live socket was closed
+  // as "replaced by a newer connection" and the visitor got "The board did not answer: the board is not
+  // connected". The board heard it had been displaced, with no other connection anywhere.
+  const owner = "owner-key"
+  const live = new ListedSocket(1, { role: "board", pubkey: owner, issuedAt: 300 })
+  const stale = new ListedSocket(2, { role: "board", pubkey: owner, issuedAt: 200 })
+  const older = new ListedSocket(1, { role: "board", pubkey: owner, issuedAt: 100 })
+  const board = wokenBoard([live, stale, older])
+  live.onSend = (data) => {
+    const frame = parseFrame(data) as { t: string; id: string }
+    if (frame.t !== "req") return
+    queueMicrotask(() => board.webSocketMessage(live as unknown as WorkerWebSocket, serializeFrame({
+      t: "res", id: frame.id, status: 200, headers: [["content-type", "text/plain"]], body: encodeBody(new TextEncoder().encode("BOARD")), end: true,
+    })))
+  }
+
+  const response = await board.fetch(new Request("https://ada.frizz.sh/", { headers: { [OWNER_HEADER]: owner } }))
+  assert.equal(response.status, 200, await response.clone().text())
+  assert.equal(await response.text(), "BOARD")
+  assert.equal(live.closed, null, "the live board socket was closed")
+  assert.equal(live.sent.length, 1)
+  assert.deepEqual(stale.sent, [], "a request went down a socket the relay had already closed")
+  assert.deepEqual(older.closed, { code: 1000, reason: "replaced by a newer connection" }, "an older open socket was kept")
+})
+
+test("a woken relay that finds only a closing board socket says the board is not running, rather than answering into it", async () => {
+  const owner = "owner-key"
+  const stale = new ListedSocket(2, { role: "board", pubkey: owner, issuedAt: 200 })
+  const board = wokenBoard([stale])
+  const response = await board.fetch(new Request("https://ada.frizz.sh/", { headers: { [OWNER_HEADER]: owner } }))
+  assert.equal(response.status, 502, "a closing socket was treated as a board")
+  assert.deepEqual(stale.sent, [])
 })

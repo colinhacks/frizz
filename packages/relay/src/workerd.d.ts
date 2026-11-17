@@ -58,6 +58,11 @@ interface WorkerWebSocket extends EventTarget {
   /** Small JSON-able state carried WITH the socket, so a woken object can tell what it is. */
   serializeAttachment(value: unknown): void
   deserializeAttachment(): unknown
+  /**
+   * 0 connecting, 1 open, 2 closing, 3 closed. `getWebSockets` lists a socket this object closed until
+   * its far end answers the close, which a dead connection never does, so a listed socket can be CLOSING.
+   */
+  readonly readyState: number
   send(data: string | ArrayBuffer): void
   close(code?: number, reason?: string): void
   addEventListener(type: "message", listener: (event: WorkerMessageEvent) => void): void

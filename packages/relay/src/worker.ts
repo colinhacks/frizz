@@ -181,7 +181,12 @@ interface SocketRole {
   id?: string
   /** The key a board proved itself with, so a woken object still knows whose board it holds. */
   pubkey?: string
+  /** When the board's handshake was signed. Strictly increasing per key, so it says which socket is newest. */
+  issuedAt?: number
 }
+
+/** `WebSocket.readyState` for a socket that is open: neither connecting, nor closing, nor closed. */
+const WEBSOCKET_OPEN = 1
 
 /** Where the Durable Object keeps the newest handshake it accepted from a key (`Board.fetch`). */
 const handshakeKey = (pubkey: string) => `handshake-issued:${pubkey}`
@@ -249,17 +254,44 @@ export class Board {
   private restore(): void {
     if (this.restored) return
     this.restored = true
+    // THE NEWEST OPEN BOARD SOCKET, AND ONLY IT. `getWebSockets` also lists a socket this object closed
+    // whose far end never answered the close: it sits in CLOSING for as long as its connection lingers.
+    // Every board reconnect leaves one, because the socket the relay closes as "replaced" is one the
+    // board has already given up on. Attaching each board socket in the order listed made the LAST one
+    // current and closed the others as "replaced by a newer connection", so when a stale socket came last
+    // the wake closed the live board and sent the visitor's request into the corpse: "The board did not
+    // answer", the first time a phone opened the board after a pause (2026-11-16, seen on the live relay
+    // as a 504 and a board told it had been displaced, with no other connection anywhere).
+    let newest: { ws: WorkerWebSocket; role: SocketRole } | null = null
+    const older: WorkerWebSocket[] = []
     for (const ws of this.state.getWebSockets()) {
       const role = this.roleOf(ws)
-      if (role?.role === "board") {
-        this.relay.attach(this.adapterFor(ws))
-        this.board = { ws, pubkey: role.pubkey ?? null }
-      } else {
+      if (role?.role !== "board") {
         try {
           ws.close(1012, "the relay restarted")
         } catch {
           // Already gone.
         }
+        continue
+      }
+      if (ws.readyState !== WEBSOCKET_OPEN) continue
+      // The handshake's issuedAt orders them: the relay takes only a strictly newer one from a key.
+      if (newest && (newest.role.issuedAt ?? 0) > (role.issuedAt ?? 0)) {
+        older.push(ws)
+        continue
+      }
+      if (newest) older.push(newest.ws)
+      newest = { ws, role }
+    }
+    if (newest) {
+      this.relay.attach(this.adapterFor(newest.ws))
+      this.board = { ws: newest.ws, pubkey: newest.role.pubkey ?? null }
+    }
+    for (const ws of older) {
+      try {
+        ws.close(1000, "replaced by a newer connection")
+      } catch {
+        // Already gone.
       }
     }
   }
@@ -331,20 +363,24 @@ export class Board {
       // lost" and the board reconnected about twice a second, forever. `wrangler dev` does not
       // reproduce it, which is why the whole local suite stayed green through it.
       this.state.acceptWebSocket(server, ["board"])
-      server.serializeAttachment({ role: "board", pubkey: owner } satisfies SocketRole)
+      server.serializeAttachment({ role: "board", pubkey: owner, issuedAt } satisfies SocketRole)
       this.relay.attach(this.adapterFor(server))
       this.board = { ws: server, pubkey: owner }
       return new Response(null, { status: 101, webSocket: pair[0]! })
     }
 
     this.dropBoardUnlessOwner(owner)
+    // A board whose socket went a moment ago is nearly always back within a second or two, and a visitor
+    // who arrived in that gap waits for it rather than being told it is not running (BOARD_RETURN_GRACE_MS).
+    const boardHere = this.relay.connected || (await this.relay.whenConnected())
+    // After the wait: the board that answers may be one that dialled in during it.
     const keyTag = keyTagOf(this.board?.pubkey ?? "")
 
     // A visitor's WebSocket — a terminal. The board opens its own end locally and the two are linked
     // frame by frame. Without this a relayed board renders and streams but cannot be worked in, which
     // is most of what Frizz is for.
     if (request.headers.get("upgrade") === "websocket") {
-      if (!this.relay.connected) return new Response("This Frizz board is not running right now.", { status: 502 })
+      if (!boardHere) return new Response("This Frizz board is not running right now.", { status: 502 })
       const pair = new WebSocketPair()
       const visitor = pair[1]!
       this.state.acceptWebSocket(visitor, ["visitor"])
@@ -364,7 +400,7 @@ export class Board {
       return new Response(null, { status: 101, webSocket: pair[0]! })
     }
 
-    if (!this.relay.connected) {
+    if (!boardHere) {
       // The name exists but nothing is serving it. Said plainly, because "this board is offline" is a
       // different problem from "no such board" and the visitor can act on one of them.
       return new Response("This Frizz board is not running right now.", {
