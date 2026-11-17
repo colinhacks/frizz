@@ -313,9 +313,10 @@ export interface AppContext {
    * context writes the machine's `audit.jsonl`; a test context leaves it out and records nothing.
    */
   audit?: AuditLog
-  // GitHub detection (installed/inRepo/nameWithOwner) resolved ONCE at boot via initGithub() — stable
-  // for the process lifetime. `authed` is NOT cached here; the githubStatus query re-checks it live so
-  // a mid-session sign-in from Settings reflects immediately. Undefined until initGithub() resolves (the
+  // GitHub detection (installed/inRepo/nameWithOwner) resolved at boot via initGithub(). The repo name
+  // holds while the checkout's git remotes do, and is resolved again when they change (resolveRepo in
+  // router.ts). `authed` is NOT cached here; the githubStatus query re-checks it live so a mid-session
+  // sign-in from Settings reflects immediately. Undefined until initGithub() resolves (the
   // githubStatus handler falls back to a live detect during that ~30ms window). Kept OUT of the board
   // snapshot deliberately — no gh shell-out on every board delta.
   github?: GithubDetection

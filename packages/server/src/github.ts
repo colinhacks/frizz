@@ -111,23 +111,52 @@ export function githubRemoteNameWithOwner(remoteUrl: string): string | null {
   return `${owner}/${repo}`
 }
 
-// The stable (process-lifetime) detection triple, resolved once at boot and cached on ctx.github.
+// Every remote the checkout has — each URL, and the `gh-resolved` marker `gh repo set-default` writes —
+// as one string: what `gh repo view` picks its repo from, read off git with no network. A cached repo
+// name is keyed on it (see resolveRepo in router.ts), because the name is only as stable as the remote
+// it came from: a repo moved to another org, or renamed, gets a new remote URL. `""` is a checkout with
+// no remotes (`--get-regexp` exits 1 on no match, which is an answer); undefined is git not answering.
+export async function gitRemoteConfig(dir: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await pexec("git", ["config", "--get-regexp", "^remote\\."], { timeout: GH_TIMEOUT, cwd: dir })
+    return stdout
+  } catch (error) {
+    return (error as { code?: unknown }).code === 1 ? "" : undefined
+  }
+}
+
+// GitHub's search refuses a repo it cannot find with a 422 ("The listed users and repositories cannot
+// be searched…"), and the OLD name of a moved repo is one: search is the one API that does not follow a
+// transfer or a rename. Measured 2026-11-17 on colinhacks/reylo, moved to reylosql/reylo: `gh repo
+// view`, GraphQL, `gh issue view` and REST reads all answered under the old name; `search/issues` 422'd.
+export function isSearchRefusal(error: unknown): boolean {
+  const e = error as { stderr?: unknown; message?: unknown } | null
+  return /\(HTTP 422\)/.test(`${String(e?.stderr ?? "")}\n${String(e?.message ?? "")}`)
+}
+
+// The detection triple, resolved at boot and cached on ctx.github. A positive `installed` is reused for
+// the process lifetime, a positive `nameWithOwner` while `remotes` still matches the checkout's.
 export interface GithubDetection {
   installed: boolean
   inRepo: boolean
   nameWithOwner: string | null
+  // gitRemoteConfig as it read when `nameWithOwner` was resolved. Absent when git did not answer.
+  remotes?: string
 }
 
 // Resolve installed + inRepo/nameWithOwner. Never throws (each probe swallows its own failure), so
 // it is safe to call at boot without wedging startup on a broken/absent gh. NOTE: `gh repo view`
 // needs auth, so a boot done while signed out caches inRepo:false — the router does NOT trust a
 // cached-negative inRepo and re-resolves live (see resolveRepo in router.ts) so a post-boot
-// sign-in from Settings lights up the feature without a restart. A POSITIVE result is stable.
+// sign-in from Settings lights up the feature without a restart. A POSITIVE result holds while the
+// checkout's remotes do (`remotes`).
 export async function detectGithub(dir: string): Promise<GithubDetection> {
   const installed = await ghInstalled()
   if (!installed) return { installed: false, inRepo: false, nameWithOwner: null }
+  // Read BEFORE gh resolves, so a remote edited in between reads as changed and is resolved again.
+  const remotes = await gitRemoteConfig(dir)
   const nameWithOwner = await ghRepo(dir)
-  return { installed: true, inRepo: nameWithOwner !== null, nameWithOwner }
+  return { installed: true, inRepo: nameWithOwner !== null, nameWithOwner, ...(remotes !== undefined ? { remotes } : {}) }
 }
 
 // The full status is composed in the router (githubStatus handler), which owns the ctx.github cache

@@ -233,7 +233,7 @@ import { openableFileRoots } from "./project.ts"
 import { registeredCheckoutRoot, registeredWorktreeRoots, resolvesToCommit } from "./worktree-changes.ts"
 import { resolveThreadLink, threadLinkView } from "./thread-links.ts"
 import { listBoardThreads } from "./thread-listing.ts"
-import { ghInstalled, ghAuthed, ghRepo, gitGithubRemote, listItems, hydrateIssue, hydratePr, renderGithubPrompt, effectiveTemplate, DEFAULT_GITHUB_PROMPT } from "./github.ts"
+import { ghInstalled, ghAuthed, ghRepo, gitGithubRemote, gitRemoteConfig, isSearchRefusal, listItems, hydrateIssue, hydratePr, renderGithubPrompt, effectiveTemplate, DEFAULT_GITHUB_PROMPT } from "./github.ts"
 import { createGithubHovercardService } from "./github-hovercard.ts"
 import { cancelGithubSignIn, clearGithubCredential, githubAppClientId, githubCredentialStatus, githubSignInState, startGithubSignIn } from "./github-credential.ts"
 import { slugify, resolveSlug, resolveLegacyThreadFile, claudeContractOptions, claudeWorkerSystemPrompt, coldResumePermission, permissionIsTighter, spawnedThreadPermission } from "./dispatch.ts"
@@ -2557,11 +2557,11 @@ export function createRouter(ctx: AppContext) {
     return { ...interaction, delivery: { effect } }
   }
 
-  // Resolve the repo owner/name for a GitHub call. A POSITIVE boot cache short-circuits (stable, no
-  // gh call — the common path). A null/absent cache is NOT trusted: it can be the boot race (cache not
-  // resolved yet) OR an unauthed-at-boot detection (`gh repo view` needs auth), so fall back to a live
-  // ghRepo and WARM the cache on success — this makes a post-boot sign-in from Settings light up the feature
-  // without a server restart. Never throws (ghRepo swallows failures → null).
+  // Resolve the repo owner/name for a GitHub call. A POSITIVE cache short-circuits while the remotes
+  // it was resolved under are unchanged (no gh call — the common path; see cachedRepo). A null/absent
+  // cache is NOT trusted: it can be the boot race (cache not resolved yet) OR an unauthed-at-boot
+  // detection (`gh repo view` needs auth), so fall back to a live ghRepo and WARM the cache on success
+  // — this makes a post-boot sign-in from Settings light up the feature without a server restart. Never throws (ghRepo swallows failures → null).
   // `installed` is boot-cached like the repo — and, like the repo, a cached NEGATIVE is not trusted.
   // A `gh --version` that timed out at boot (busy machine, cold keyring), or a gh installed after
   // frizz started, would otherwise hide the whole GitHub feature for the process lifetime with no way
@@ -2574,17 +2574,27 @@ export function createRouter(ctx: AppContext) {
     return live
   }
 
-  async function resolveRepo(): Promise<string | null> {
-    const cached = ctx.github?.nameWithOwner
+  // The cached repo name, while the checkout's remotes are still the ones it was resolved under. A
+  // repo moved to another org gets a new remote URL, and until 2026-11-17 the cache went on naming the
+  // old repo for the life of the process. GitHub's other APIs follow a moved repo, but search refuses
+  // its old name, so Reylo's picker read "Couldn't load issues" after its move from colinhacks to
+  // reylosql until a restart. One local `git config` read per call is the price; gh runs only when the
+  // remotes changed. `fresh` asks gh whatever the remotes say: githubList's retry, for a repo moved
+  // with its remote still naming the old place, which no local read can see.
+  function cachedRepo(remotes: string | undefined): string | null {
+    const cache = ctx.github
+    if (!cache?.nameWithOwner) return null
+    // git did not answer (a timeout on a loaded machine): keep the name rather than spend gh on it.
+    return remotes === undefined || remotes === cache.remotes ? cache.nameWithOwner : null
+  }
+
+  async function resolveRepo(opts: { fresh?: boolean } = {}): Promise<string | null> {
+    const remotes = await gitRemoteConfig(ctx.project.dir)
+    const cached = opts.fresh ? null : cachedRepo(remotes)
     if (cached) return cached
     const live = await ghRepo(ctx.project.dir)
     if (live) {
-      if (ctx.github) {
-        ctx.github.inRepo = true
-        ctx.github.nameWithOwner = live
-      } else {
-        ctx.github = { installed: true, inRepo: true, nameWithOwner: live }
-      }
+      ctx.github = { installed: true, inRepo: true, nameWithOwner: live, ...(remotes !== undefined ? { remotes } : {}) }
       return live
     }
     // gh could not answer. That is USUALLY "not a GitHub repo", but it is also what a network blip
@@ -5876,7 +5886,7 @@ export function createRouter(ctx: AppContext) {
         const installed = await resolveInstalled()
         if (!installed) return { installed: false, inRepo: false, nameWithOwner: null, authed: false }
         const authed = await ghAuthed()
-        const nameWithOwner = authed ? await resolveRepo() : (ctx.github?.nameWithOwner ?? await gitGithubRemote(ctx.project.dir))
+        const nameWithOwner = authed ? await resolveRepo() : (cachedRepo(await gitRemoteConfig(ctx.project.dir)) ?? await gitGithubRemote(ctx.project.dir))
         return { installed: true, inRepo: nameWithOwner !== null, nameWithOwner, authed }
       },
     }),
@@ -5924,7 +5934,17 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         const repo = await resolveRepo()
         if (!repo) return { items: [], total: 0, page: 1, pageCount: 1 }
-        return await listItems(repo, input.kind, input.sort, input.page, input.perPage)
+        try {
+          return await listItems(repo, input.kind, input.sort, input.page, input.perPage)
+        } catch (error) {
+          // Search refuses a moved repo's old name. When the remote still names the old place, the
+          // remote check in resolveRepo saw nothing, so ask gh again, which follows the move, and search
+          // once more under the name it gives. The same name back means the refusal was something else.
+          if (!isSearchRefusal(error)) throw error
+          const moved = await resolveRepo({ fresh: true })
+          if (!moved || moved === repo) throw error
+          return await listItems(moved, input.kind, input.sort, input.page, input.perPage)
+        }
       },
     }),
 

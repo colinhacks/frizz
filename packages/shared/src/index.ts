@@ -7295,9 +7295,10 @@ export function parsePrWatchWake(text: string): PrWatchWake | null {
   return null
 }
 
-// The server's GitHub availability signal. `installed`/`inRepo`/`nameWithOwner` are STABLE for the
-// process lifetime (resolved once at boot); `authed` is whether FRIZZ is signed in to GitHub with its
-// own credential (Settings → GitHub), never the operator's `gh` sign-in, and can flip mid-session.
+// The server's GitHub availability signal. `installed`/`inRepo`/`nameWithOwner` are resolved at boot,
+// and the name again when the checkout's git remotes change or the repo turns out to have moved
+// (resolveRepo in router.ts); `authed` is whether FRIZZ is signed in to GitHub with its own credential
+// (Settings → GitHub), never the operator's `gh` sign-in, and can flip mid-session.
 export const GithubStatus = z.object({
   installed: z.boolean(),
   inRepo: z.boolean(),
