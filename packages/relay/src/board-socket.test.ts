@@ -691,3 +691,42 @@ test("a request made in the moment the board is away is held for it, even one no
   assert.equal((await pending).status, 200)
   assert.deepEqual(first.sent, [])
 })
+
+test("a page held across a reconnect is never sent to a board of another key", async () => {
+  // Its validators were filtered for the first key's board and its answer would be tagged with that key
+  // (visitor-headers.ts), so sending it to the next holder of the name would let that board answer 304 to
+  // a copy the first one served. It fails instead, and the visitor's next request starts clean.
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  relay.attach(fakeSocket().socket, "key-a")
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/assets/app.js", headers: [["if-none-match", '"v1"']] })
+
+  const other = fakeSocket()
+  relay.attach(other.socket, "key-b")
+  await assert.rejects(pending, /key changed/)
+  assert.deepEqual(other.sent, [], "a request framed for one key went to another key's board")
+
+  // The same key coming back is a reconnect, and the request goes through.
+  const again = relay.request({ method: "GET", url: "https://ada.frizz.sh/", headers: [] })
+  const same = fakeSocket()
+  relay.attach(same.socket, "key-b")
+  answer(relay, same)
+  assert.equal((await again).status, 200)
+})
+
+test("a second head for one request is ignored, and its stream still ends when the board ends it", async () => {
+  // Taking the second head dropped the entry with its stream open, so the visitor's response, and the
+  // Durable Object, stayed open with nothing left to end them.
+  const board = fakeSocket()
+  const relay = new BoardSocket()
+  relay.attach(board.socket)
+  let ended = false
+  const pending = relay.request({ method: "GET", url: "https://ada.frizz.sh/_frizz/events", headers: [] }, { push: () => {}, end: () => { ended = true } })
+  const id = board.lastId()
+  relay.handleFrame(serializeFrame({ t: "res", id, status: 200, headers: [], end: false }))
+  await pending
+  relay.handleFrame(serializeFrame({ t: "res", id, status: 200, headers: [], end: true }))
+  assert.equal(ended, false)
+  relay.handleFrame(serializeFrame({ t: "res-end", id }))
+  assert.equal(ended, true, "the stream was orphaned by the second head")
+})

@@ -58,6 +58,11 @@ interface Pending {
   /** Present once a streamed body is underway. */
   stream?: { push: (chunk: Uint8Array) => void; end: () => void }
   frame: RequestFrame
+  /**
+   * The key of the board it was framed for. Its validators were filtered for that key and its answer is
+   * tagged with it (visitor-headers.ts), so it is only ever sent to a socket that proved the same key.
+   */
+  key: string | null
   /** The board has answered with a head, so the request can no longer be sent again. */
   answered?: boolean
   /** Times it has been sent. Bounded by REPLAY_LIMIT, so a board that cannot stay connected cannot loop it. */
@@ -125,6 +130,8 @@ const REPEATABLE_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS
 
 export class BoardSocket {
   private socket: SocketLike | null = null
+  /** The key the current board proved itself with, kept after it goes, so a request in the gap knows whose it is. */
+  private key: string | null = null
   private readonly pending = new Map<string, Pending>()
   /** Requests waiting for a board to dial back in, to be sent the moment one does. */
   private readonly waiting = new Set<Pending>()
@@ -199,10 +206,14 @@ export class BoardSocket {
     return `${kind}${this.idPrefix}-${++this.counter}`
   }
 
-  /** A board has dialled in. Any previous socket is replaced — a reconnect wins over a corpse. */
-  attach(socket: SocketLike): void {
+  /**
+   * A board has dialled in, proven with `key`. Any previous socket is replaced — a reconnect wins over a
+   * corpse.
+   */
+  attach(socket: SocketLike, key: string | null = null): void {
     const previous = this.socket
     this.socket = socket
+    this.key = key
     this.lostAt = null
     if (previous) {
       // The old socket may simply be a stale reconnect from the same board. Nothing in flight on it
@@ -215,7 +226,15 @@ export class BoardSocket {
         // Already gone; nothing to do.
       }
     }
-    for (const entry of [...this.waiting]) this.dispatch(entry)
+    for (const entry of [...this.waiting]) {
+      // The name changed hands while it waited: what it carries was meant for the other key's board.
+      if (entry.key !== key) {
+        this.finish(entry)
+        entry.fail("the board's key changed")
+        continue
+      }
+      this.dispatch(entry)
+    }
     for (const done of [...this.returning]) done(true)
   }
 
@@ -317,6 +336,7 @@ export class BoardSocket {
           ...(input.body && input.body.byteLength > 0 ? { body: encodeBody(input.body) } : {}),
         },
         sends: 0,
+        key: this.key,
       }
       if (this.options.setTimer) {
         entry.deadline = this.options.setTimer(() => {
@@ -452,7 +472,9 @@ export class BoardSocket {
 
     switch (frame.t) {
       case "res": {
-        if (!entry) return
+        // A second head for one request is a board breaking the protocol. Taking it would drop the entry
+        // while its stream is open, and leave the visitor's response, and the object, open for good.
+        if (!entry || entry.answered) return
         this.clear(frame.id)
         entry.answered = true
         this.finish(entry)

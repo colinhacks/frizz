@@ -284,7 +284,7 @@ export class Board {
       newest = { ws, role }
     }
     if (newest) {
-      this.relay.attach(this.adapterFor(newest.ws))
+      this.relay.attach(this.adapterFor(newest.ws), newest.role.pubkey ?? null)
       this.board = { ws: newest.ws, pubkey: newest.role.pubkey ?? null }
     }
     for (const ws of older) {
@@ -364,7 +364,7 @@ export class Board {
       // reproduce it, which is why the whole local suite stayed green through it.
       this.state.acceptWebSocket(server, ["board"])
       server.serializeAttachment({ role: "board", pubkey: owner, issuedAt } satisfies SocketRole)
-      this.relay.attach(this.adapterFor(server))
+      this.relay.attach(this.adapterFor(server), owner)
       this.board = { ws: server, pubkey: owner }
       return new Response(null, { status: 101, webSocket: pair[0]! })
     }
