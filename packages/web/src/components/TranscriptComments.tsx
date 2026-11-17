@@ -504,9 +504,11 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
             onPointerEnter={cancelClose}
             onPointerLeave={() => { if (!focus.pinned) scheduleClose() }}
           >
-            <div className="flex h-5 items-center gap-1.5 text-[11px] text-muted-70">
-              <span className="petite-caps tracking-wide">Pending · goes with your next message</span>
-              <span className="ml-auto flex items-center">
+            {/* The words, and the two things to do with them. Edit and Delete ride the first line, their
+                20px squares centred on its 19px line box. */}
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-[19px] text-fg/90 [overflow-wrap:anywhere]">{open.text}</div>
+              <span className="-mr-1.5 -mt-[0.5px] flex shrink-0 items-center">
                 <button
                   type="button"
                   title="Edit"
@@ -524,7 +526,6 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
                 </button>
               </span>
             </div>
-            <div className="mt-0.5 whitespace-pre-wrap text-[13px] leading-[19px] text-fg/90 [overflow-wrap:anywhere]">{open.text}</div>
           </PopoverContent>
         )}
       </Popover>
@@ -580,8 +581,7 @@ function CommentEditor({ initial, editing, onSave, onCancel, onDirty }: { initia
         }}
         className="block max-h-[220px] min-h-[38px] w-full resize-none bg-transparent text-[13px] leading-[19px] text-fg outline-none placeholder:text-muted"
       />
-      <div className="mt-2 flex items-center gap-1">
-        <span className="mr-auto text-[10.5px] text-muted-60">⌘⏎ saves · Esc cancels</span>
+      <div className="mt-2 flex items-center justify-end gap-1">
         <button type="button" onClick={onCancel} className="rounded-md px-2 py-1 text-[12px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:bg-panel-2">
           Cancel
         </button>
@@ -615,7 +615,6 @@ export function PendingCommentsCount(): ReactElement | null {
     <span data-pending-comments={n} className="mr-auto flex min-w-0 items-baseline text-[11.5px] text-attention">
       <button
         type="button"
-        title="Show the next pending comment"
         onClick={() => controller.nav(1)}
         onMouseDown={(event) => event.preventDefault()}
         className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap rounded-md px-1.5 py-0.5 outline-none transition-colors hover:bg-panel-2 focus-visible:ring-1 focus-visible:ring-focus-ink-60"
@@ -624,7 +623,7 @@ export function PendingCommentsCount(): ReactElement | null {
         <span aria-hidden className="relative block h-[1em] w-[1em] shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)]">
           <span className="absolute inset-0 flex items-center justify-center"><MessageSquare className="h-[1em] w-[1em]" strokeWidth={2.2} /></span>
         </span>
-        <span><span className="font-medium tabular-nums">{n}</span> pending comment{n === 1 ? "" : "s"}</span>
+        <span><span className="font-medium tabular-nums">{n}</span> comment{n === 1 ? "" : "s"}</span>
       </button>
       {confirming ? (
         <span className="flex shrink-0 items-baseline gap-1 whitespace-nowrap pl-1 text-muted-70">
@@ -644,7 +643,7 @@ export function PendingCommentsCount(): ReactElement | null {
           <button type="button" title="Next comment" aria-label="Next comment" onMouseDown={(event) => event.preventDefault()} onClick={() => controller.nav(1)} className={NAV_ICON}>
             <ChevronDown size={12} strokeWidth={2} />
           </button>
-          <button type="button" title="Discard every pending comment" onClick={() => setConfirming(true)} className="ml-0.5 rounded-md px-1.5 py-0.5 text-[11.5px] outline-none transition-colors hover:bg-panel-2 hover:text-fg/85 focus-visible:ring-1 focus-visible:ring-focus-ink-60">
+          <button type="button" onClick={() => setConfirming(true)} className="ml-0.5 rounded-md px-1.5 py-0.5 text-[11.5px] outline-none transition-colors hover:bg-panel-2 hover:text-fg/85 focus-visible:ring-1 focus-visible:ring-focus-ink-60">
             Discard
           </button>
         </span>
