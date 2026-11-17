@@ -26,6 +26,20 @@ export function isKeptDeliveryError(error: unknown): boolean {
   return (error as { deliveryKept?: unknown } | null)?.deliveryKept === true
 }
 
+// The answer never came from the board: the relay, or the board's own supervisor, answered for it that it
+// could not reach it (a non-JSON 502, 503 or 504), or the request never got an answer at all. A read
+// marked so is worth asking again shortly, because a board's connection drops and comes back within
+// seconds; one failure used to leave a query failed for good, under defaults that never retry
+// (main.tsx), and the phone's Console said "Loading…" until a reload.
+export function isUnreachableRpcError(error: unknown): boolean {
+  return (error as { unreachableRpc?: unknown } | null)?.unreachableRpc === true
+}
+
+function markUnreachable<E>(error: E): E {
+  if (error instanceof Error) Object.defineProperty(error, "unreachableRpc", { value: true, enumerable: false })
+  return error
+}
+
 function markRetryable(error: Error): Error {
   Object.defineProperty(error, "retryableRpc", { value: true, enumerable: false })
   return error
@@ -60,7 +74,8 @@ export async function parseRpcResponse(res: Response, name: string): Promise<unk
     if (res.status === 403) {
       throw new Error(`RPC ${name} was refused (403) — the page's origin does not match the server it is talking to. Reload from the URL frizz is actually serving.`)
     }
-    throw new Error(`RPC ${name} returned a non-JSON response (HTTP ${res.status})`)
+    const error = new Error(`RPC ${name} returned a non-JSON response (HTTP ${res.status})`)
+    throw res.status === 502 || res.status === 503 || res.status === 504 ? markUnreachable(error) : error
   }
   if (!res.ok) {
     const error = new Error(typeof json.error === "string" ? json.error : `RPC ${name} failed`)
@@ -194,6 +209,11 @@ export function queryPriority(name: string): RequestPriority {
   return CARD_READS.has(name) ? "low" : "auto"
 }
 
+/** A fetch that got no answer at all, the network gone under it, unless the caller aborted it. */
+const unanswered = (opts?: RpcCallOpts) => (error: unknown): never => {
+  throw opts?.signal?.aborted || !(error instanceof TypeError) ? error : markUnreachable(error)
+}
+
 async function call(name: string, type: ProcType, rawInput?: unknown, opts?: RpcCallOpts, project?: string): Promise<unknown> {
   // The old child may remain healthy while its durable owner is building a replacement. Do not let
   // a mutation race that handoff; local draft state remains editable and every query stays available.
@@ -209,7 +229,7 @@ async function call(name: string, type: ProcType, rawInput?: unknown, opts?: Rpc
   if (type === "query") {
     const url = new URL(`${base}/rpc/${name}`, location.origin)
     if (input !== undefined) url.searchParams.set("input", JSON.stringify(input))
-    const res = await fetch(url.toString(), { signal: opts?.signal, priority: queryPriority(name) })
+    const res = await fetch(url.toString(), { signal: opts?.signal, priority: queryPriority(name) }).catch(unanswered(opts))
     noteServerBootId(res.headers.get("x-frizz-boot")) // notice a server restart on any RPC roundtrip
     return finish(await parseRpcResponse(res, name))
   }
@@ -218,7 +238,7 @@ async function call(name: string, type: ProcType, rawInput?: unknown, opts?: Rpc
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input ?? {}),
     signal: opts?.signal,
-  })
+  }).catch(unanswered(opts))
   noteServerBootId(res.headers.get("x-frizz-boot"))
   return finish(await parseRpcResponse(res, name))
 }

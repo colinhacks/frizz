@@ -40,6 +40,57 @@
       document.documentElement.style.colorScheme = frizzTheme
       document.querySelector('meta[name="theme-color"]')?.setAttribute("content", frizzTheme === "dark" ? "#0d0e10" : "#f7f7f7")
     </script>
+    <!-- BOOT WATCHDOG. A boot script or stylesheet that fails to load (a board's answer cut by the relay, a
+         504) left a blank page that nothing retried, and a board opened from a phone's home screen has no
+         reload button: only killing the app brought it back. So a failed entry module, a failed preload
+         before main.tsx has run, or a failed stylesheet before the page has loaded puts up a line saying
+         so and loads the page again, on a backoff and when it comes back into view. Lazy chunks are not
+         its business: main.tsx sets `frizzBooted` once it runs, and lib/lazyModule retries those. -->
+    <script>
+      addEventListener("error", (event) => {
+        const el = event.target
+        if (!el || el === window || window.frizzBootFailed) return
+        const failed =
+          (el.tagName === "SCRIPT" && el.type === "module") ||
+          (el.tagName === "LINK" && el.rel === "modulepreload" && !window.frizzBooted) ||
+          (el.tagName === "LINK" && el.rel === "stylesheet" && document.readyState !== "complete")
+        if (!failed) return
+        window.frizzBootFailed = true
+        const key = "frizz-boot-retry"
+        let last = null
+        try { last = JSON.parse(sessionStorage.getItem(key) || "null") } catch {}
+        const now = Date.now()
+        const n = last && now - last.at < 120000 ? last.n + 1 : 0
+        try { sessionStorage.setItem(key, JSON.stringify({ n, at: now })) } catch {}
+        const reload = () => location.reload()
+        let timer = n < 12 ? setTimeout(reload, Math.min(30000, 1000 * 2 ** n) * (0.75 + Math.random() / 2)) : 0
+        addEventListener("online", reload)
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState !== "visible") return
+          clearTimeout(timer)
+          timer = setTimeout(reload, 300)
+        })
+        const show = () => {
+          const panel = document.createElement("div")
+          panel.style.cssText = "position:fixed;inset:0;display:grid;place-items:center;padding:24px;font:15px/1.5 system-ui,-apple-system,sans-serif;color:" + (document.documentElement.dataset.theme === "light" ? "#1a1b1e" : "#e6e7ea")
+          const box = document.createElement("div")
+          box.style.maxWidth = "28rem"
+          const line = document.createElement("p")
+          line.style.margin = "0 0 12px"
+          line.textContent = "Frizz didn't finish loading. This page tries again on its own."
+          const button = document.createElement("button")
+          button.type = "button"
+          button.textContent = "Try again"
+          button.style.cssText = "font:inherit;font-size:14px;padding:6px 14px;border-radius:6px;border:1px solid;background:none;color:inherit"
+          button.addEventListener("click", reload)
+          box.append(line, button)
+          panel.append(box)
+          document.body.append(panel)
+        }
+        if (document.body) show()
+        else addEventListener("DOMContentLoaded", show)
+      }, true)
+    </script>
   </head>
   <body>
     <div id="root"></div>

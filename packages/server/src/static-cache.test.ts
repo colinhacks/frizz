@@ -102,8 +102,10 @@ test("the real dashboard document's inline script is the one the policy names", 
   // The source index.html is what the build copies its inline script out of, byte for byte.
   const html = readFileSync(join(import.meta.dirname, "..", "..", "web", "index.html"), "utf8")
   const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]!)
-  assert.equal(inline.length, 1, "the theme bootstrap, and nothing else inline")
-  assert.ok(documentScriptPolicy(html).includes(`'sha256-${createHash("sha256").update(inline[0]!).digest("base64")}'`))
+  assert.equal(inline.length, 2, "the theme bootstrap and the boot watchdog, and nothing else inline")
+  for (const script of inline) {
+    assert.ok(documentScriptPolicy(html).includes(`'sha256-${createHash("sha256").update(script).digest("base64")}'`))
+  }
   assert.doesNotMatch(documentScriptPolicy(html), /unsafe-inline|unsafe-eval/)
 })
 

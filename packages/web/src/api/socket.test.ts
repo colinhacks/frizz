@@ -499,6 +499,48 @@ test("socket transport bounds oversized frames, only resets reconnect backoff af
     // The second budget refusal above lands on a cleared latch and so is a new event worth one line —
     // a refusal repeated on a still-latched slug is what must stay silent.
     assert.equal(warnings.length, 3, "each explicit downgrade logs once without console churn")
+
+    // A /ws that never opened puts the page on SSE, but not for good: through the relay that is usually a
+    // board whose socket was away for a moment. A probe on a backoff tries /ws again and hands the board
+    // back to it the first time one opens, and a second fallback opens the stream again.
+    restarted.close()
+    resetTransportFixtures()
+    FakeEventSource.instances = []
+    store.connection = "connecting"
+    store.socketTranscripts = false
+    const runTimer = (delay: number, what: string) => {
+      const timeout = timeouts.find((candidate) => !candidate.cleared && candidate.delay === delay)
+      assert.ok(timeout, what)
+      timeout.cleared = true
+      timeout.run()
+    }
+    const probing = await import(`./socket.ts?probe-${Date.now()}`)
+    probing.connectSync(queryClient as never)
+    await settle()
+    FakeWebSocket.instances[0].serverClose()
+    assert.equal(FakeEventSource.instances.length, 1, "a /ws that never opened falls back to SSE")
+    runTimer(15_000, "the fallback tries /ws again after 15s")
+    FakeWebSocket.instances[1].serverClose()
+    assert.equal(FakeEventSource.instances[0].closeCalls, 0, "a refused probe leaves the stream alone")
+    runTimer(30_000, "and backs off while /ws still refuses")
+    const probe = FakeWebSocket.instances[2]
+    probe.open()
+    assert.equal(probe.closeCalls, 1, "the probe is closed once it has answered")
+    assert.equal(FakeEventSource.instances[0].closeCalls, 1, "the stream is closed once /ws answers")
+    const back = FakeWebSocket.instances[3]
+    assert.ok(back, "and the board's own socket opens")
+    back.serverClose()
+    assert.equal(FakeEventSource.instances.length, 2, "refused again before it opened: the stream opens again")
+    runTimer(15_000, "the probe starts over from 15s")
+    FakeWebSocket.instances[4].open()
+    const live = FakeWebSocket.instances[5]
+    live.open()
+    live.message(hello)
+    assert.equal(store.socketTranscripts, true, "transcripts come over the socket again")
+    assert.equal(FakeEventSource.instances[1].closeCalls, 1)
+    live.serverClose()
+    nextReconnect(1_000)
+    assert.equal(FakeEventSource.instances.length, 2, "a drop once /ws has opened reconnects on /ws")
   } finally {
     console.warn = originalWarn
     for (const [key, descriptor] of globals) {

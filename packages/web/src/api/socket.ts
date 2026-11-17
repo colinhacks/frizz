@@ -31,9 +31,14 @@ import { localFileQueryKey } from "../lib/localFileQuery.ts"
 //
 // GRACEFUL FALLBACK: a pre-restart server has no /ws route — its upgrade handler destroys the socket, so
 // we never see `onopen`. On a close/error BEFORE the socket ever confirms, we hand the board channel back
-// to the proven SSE path (connectSSE) and useTranscript keeps polling — i.e. EXACTLY today's behavior.
-// Once confirmed, transient drops reconnect on /ws (never fall back); the boot-id reload closes the
+// to the proven SSE path (connectSSE) and useTranscript keeps polling — i.e. EXACTLY today's behavior —
+// and try /ws again now and then (`probeWs`), leaving the fallback the first time one opens. Once
+// confirmed, transient drops reconnect on /ws (never fall back); the boot-id reload closes the
 // bundle-mismatch window across a server bounce.
+//
+// The fallback is NOT for good (2026-11-16): through the relay a refused upgrade is usually a board whose
+// socket was away for a moment, and one at page load kept the page on SSE for the rest of its life, with
+// no transcript push and a 1.5s transcript poll through the relay.
 
 let ws: WebSocket | null = null
 let qc: QueryClient | null = null
@@ -47,7 +52,12 @@ let protocolReady = false
 // only ever ADDED), so a hypothetical restart to a /ws-less build would retry (backoff-capped, not a storm)
 // rather than degrade — an accepted tradeoff for not re-probing SSE on every transient blip.
 let confirmed = false
-let fellBack = false // committed to the SSE fallback — never touch /ws again this session
+let fellBack = false // on the SSE fallback, until a probe finds /ws open (`probeWs`)
+let probeTimer: ReturnType<typeof setTimeout> | null = null
+const PROBE_FIRST_MS = 15_000
+const PROBE_MAX_MS = 120_000
+let probeDelay = PROBE_FIRST_MS
+let lastProbe = 0
 
 // slug → count of interested surfaces (main ChatView + any drawer ChatViews on the same running thread).
 // Ref-counted so a drawer close doesn't unsubscribe a slug the main view still shows; the server holds one
@@ -212,8 +222,8 @@ function dropWs(): void {
   }
 }
 
-// An UNEXPECTED close. If /ws never confirmed, the server has no /ws route (pre-restart) → fall back to
-// SSE for good. Otherwise it's a transient drop → reconnect on /ws with backoff (same robustness as SSE).
+// An UNEXPECTED close. If /ws never confirmed, the server has no /ws route (pre-restart), or a relayed
+// board's socket was away → fall back to SSE until a probe finds /ws answering. Otherwise it's a transient drop → reconnect on /ws with backoff (same robustness as SSE).
 function onDrop(): void {
   // The board and its seq are KEPT: the next socket's hello resumes from them, and the server replays
   // whatever was published in between.
@@ -250,11 +260,21 @@ function installHealth(): void {
   // Timers throttle in hidden tabs and stall across machine sleep, so a dead socket can sit unnoticed.
   // These wake signals force an immediate staleness check the moment the user is back.
   const wake = () => {
-    if (fellBack) return
-    if (!ws || Date.now() - lastMsg > HEARTBEAT_TIMEOUT) forceReconnect(true)
+    if (fellBack) {
+      // Back on the page: try /ws now rather than at the probe's next turn, a few seconds apart at most.
+      if (Date.now() - lastProbe > 5_000) probeWs()
+      return
+    }
+    // A socket that died without a close event (an iOS resume, a page restored from the back-forward
+    // cache) reads as closing or closed: reconnect at once rather than waiting out the heartbeat.
+    const dead = ws !== null && (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED)
+    if (!ws || dead || Date.now() - lastMsg > HEARTBEAT_TIMEOUT) forceReconnect(true)
   }
   window.addEventListener("focus", wake)
   window.addEventListener("online", wake)
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) wake()
+  })
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) wake()
   })
@@ -274,7 +294,8 @@ function forceReconnect(immediate = false): void {
   scheduleReconnect(immediate)
 }
 
-// A server with no /ws route (one from before the multiplex): hand the board to SSE for the session.
+// A server with no /ws route (one from before the multiplex): hand the board to SSE until /ws answers.
+let sseStarted = false
 function fallBackToSSE(): void {
   if (fellBack) return
   fellBack = true
@@ -284,8 +305,59 @@ function fallBackToSSE(): void {
   resume.reset()
   stream.reset()
   store.socketTranscripts = false // useTranscript resumes its 1.5s poll (today's behavior)
-  // Hand the board channel + notifications to the proven SSE path.
-  connectSSE(qc ?? undefined)
+  // Hand the board channel + notifications to the proven SSE path. A page that left the fallback once
+  // suspended the stream, and `connectSSE` alone would not open a suspended one.
+  if (sseStarted) rebindSSEProject()
+  else connectSSE(qc ?? undefined)
+  sseStarted = true
+  scheduleProbe()
+}
+
+/** The next try at /ws from the fallback, on a backoff. */
+function scheduleProbe(): void {
+  if (probeTimer || !fellBack) return
+  probeTimer = setTimeout(() => {
+    probeTimer = null
+    probeWs()
+  }, probeDelay)
+  probeDelay = Math.min(probeDelay * 2, PROBE_MAX_MS)
+}
+
+/** Open /ws once to see whether it answers now, and leave the fallback if it does. */
+function probeWs(): void {
+  if (probeTimer) {
+    clearTimeout(probeTimer)
+    probeTimer = null
+  }
+  if (!fellBack) return
+  lastProbe = Date.now()
+  // The Console holds its own feeds, so there is nothing of this page's to move; try again later.
+  if (isConsolePath() || feedProject === CONSOLE_FEED) return scheduleProbe()
+  const probe = new WebSocket(wsUrl())
+  probe.onerror = () => {}
+  probe.onclose = () => scheduleProbe()
+  probe.onopen = () => {
+    probe.onclose = null
+    try {
+      probe.close()
+    } catch {
+      // already closing
+    }
+    leaveFallback()
+  }
+}
+
+/** /ws answers again: hand the board back to it, as a project switch does (`rebindProject`). */
+function leaveFallback(): void {
+  if (!fellBack) return
+  suspendSSE()
+  fellBack = false
+  failures = 0
+  probeDelay = PROBE_FIRST_MS
+  stream.reset()
+  resume.reset()
+  resume.prefetch()
+  connect()
 }
 
 function handle(msg: SocketServerMsg): boolean {

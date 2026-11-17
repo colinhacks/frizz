@@ -9,6 +9,7 @@ import { RootErrorBoundary } from "./components/ErrorBoundary.tsx"
 import { RouterProvider } from "react-router"
 import { router } from "./routes.tsx"
 import { connectSync } from "./api/socket.ts"
+import { isUnreachableRpcError } from "./api/rpc.ts"
 import { initConsoleFeed } from "./api/consoleFeed.ts"
 import { initTranscriptLive } from "./api/transcript-live.ts"
 import { initSupervisorStatus } from "./api/supervisorStatus.ts"
@@ -30,6 +31,17 @@ import { innerPath } from "./lib/base-path.ts"
 import { projectScopedQueryKeyHash } from "./lib/queryKeyScope.ts"
 import { boundTranscriptCache } from "./lib/transcriptCacheBound.ts"
 import { parseStandaloneThreadPath, threadPageIsStandalone } from "./lib/standaloneThreadRoute.ts"
+
+// The entry module ran, so the boot watchdog in index.html stands down: a chunk that fails to load from
+// here on is retried where it is loaded (lib/lazyModule.ts), not by reloading the page under the reader.
+if (typeof window !== "undefined") {
+  ;(window as { frizzBooted?: boolean }).frizzBooted = true
+  try {
+    sessionStorage.removeItem("frizz-boot-retry")
+  } catch {
+    // Storage refused: the next failed boot backs off from where this one left it.
+  }
+}
 
 const settingsFixture = typeof window !== "undefined" && window.location.pathname.endsWith("/settings-formatting-fixture.html")
 // innerPath, not location.pathname: under a project prefix the deep link is `/project/nub/thread/x/full`.
@@ -59,8 +71,14 @@ if (!settingsFixture && (standaloneThreadSlug || threadParam(location.search) !=
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: false,
-      refetchOnWindowFocus: false,
+      // A read the board never answered (lib isUnreachableRpcError: the relay or the network, not the
+      // board refusing) is asked again on a short backoff, and when the page comes back into view: a board's
+      // connection drops and is back within seconds, and one such failure left the phone's Console on
+      // "Loading…", and the prompt box on "Profile unavailable", until a reload. Every other failure is
+      // the board's answer, and is shown at once as before.
+      retry: (failures, error) => failures < 4 && isUnreachableRpcError(error),
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 15_000),
+      refetchOnWindowFocus: (query) => query.state.status === "error" && isUnreachableRpcError(query.state.error),
       // Every cache entry is scoped to the project the page is showing — see lib/queryKeyScope.ts.
       // This is a client-level default rather than 19 hand-prefixed key shapes precisely so that the
       // twentieth is scoped too, without its author knowing this problem exists.

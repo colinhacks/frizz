@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import type { QuestionAnswer, ThreadView } from "@frizz/shared"
-import { isKeptDeliveryError, isRetryableRpcError, rpc } from "../api/rpc.ts"
+import { isKeptDeliveryError, isRetryableRpcError, isUnreachableRpcError, rpc } from "../api/rpc.ts"
 import { appendQueuedMessage, removeQueuedMessage } from "../hooks.ts"
 import { showToast, store, threadBySlug } from "../store.ts"
 import { markSteered, clearSteered, steeredAtNow, STEER_OPTIMISM_MS } from "./steering.ts"
@@ -145,9 +145,12 @@ export async function withDeliveryRetry(
     try {
       await send()
     } catch (error) {
-      // Only a REFUSAL the transport proved took no effect is replayable; an ambiguous failure
-      // (the text may already have reached the worker) falls straight through to the caller's rollback.
-      if (attempt >= DELIVERY_RETRY_BACKOFF_MS.length || !isRetryableRpcError(error)) throw error
+      // A REFUSAL the transport proved took no effect is replayable, and so is a send the board never
+      // answered (the relay's 504 when the board's connection dropped under it, or no answer at all): that
+      // one may have landed, but this attempt carries the same deliveryId, and the server answers a
+      // deliveryId it already accounts for as done without delivering it again (router.ts
+      // keepFailedFollowUp). Any other failure, an abort above all, falls through to the caller's rollback.
+      if (attempt >= DELIVERY_RETRY_BACKOFF_MS.length || !(isRetryableRpcError(error) || isUnreachableRpcError(error))) throw error
       reanchor(false)
       await sleep(DELIVERY_RETRY_BACKOFF_MS[attempt])
       continue

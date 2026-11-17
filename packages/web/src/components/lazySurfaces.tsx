@@ -2,6 +2,7 @@ import { Suspense, lazy, useState, type ComponentType, type ReactNode } from "re
 import { useSnapshot } from "valtio"
 import { store } from "../store.ts"
 import { FrizzLoader } from "./FrizzLoader.tsx"
+import { lazyModule } from "../lib/lazyModule.ts"
 
 // THE THREAD'S SURFACES LOAD AFTER THE BOARD, not with it.
 //
@@ -28,12 +29,14 @@ import { FrizzLoader } from "./FrizzLoader.tsx"
 type Surfaces = typeof import("./threadSurfaces.ts")
 
 let loaded: Surfaces | undefined
-let loading: Promise<Surfaces> | undefined
+// A FAILED LOAD IS NOT KEPT (lib/lazyModule.ts). The chunk reaches a phone through the relay, where one
+// request can fail and the next succeed, and a kept rejection showed "Importing a module script failed"
+// on every thread opened until a reload, with "Try again" throwing the same error again.
+const loadChunk = lazyModule(() => import("./threadSurfaces.ts"))
 
-/** Fetch and evaluate the chunk; one request however often it is asked. */
+/** Fetch and evaluate the chunk; one request however often it is asked, and another once one fails. */
 export function loadThreadSurfaces(): Promise<Surfaces> {
-  loading ??= import("./threadSurfaces.ts").then((m) => (loaded = m))
-  return loading
+  return loadChunk().then((m) => (loaded = m))
 }
 
 /** Whether the chunk is in. Exported for its test. */
@@ -46,16 +49,19 @@ let preloadScheduled = false
 export function preloadThreadSurfaces(): void {
   if (preloadScheduled || loaded) return
   preloadScheduled = true
-  const run = () => void loadThreadSurfaces().catch(() => { loading = undefined })
+  const run = () => void loadThreadSurfaces().catch(() => {})
   if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 2000 })
   else setTimeout(run, 200)
 }
 
 function lazySurface<K extends keyof Surfaces>(name: K, fallback: () => ReactNode): Surfaces[K] {
   type Props = Record<string, unknown>
-  const Lazy = lazy(async () => ({ default: (await loadThreadSurfaces())[name] as unknown as ComponentType<Props> }))
+  const load = () => lazy(async () => ({ default: (await loadThreadSurfaces())[name] as unknown as ComponentType<Props> }))
   function Surface(props: Props) {
     const [ready] = useState(() => loaded !== undefined)
+    // One per mount, not one per module: React.lazy keeps a rejection for good, so a module-level one
+    // that failed once failed every mount after it, and an error boundary's retry remounted into it.
+    const [Lazy] = useState(load)
     if (ready) {
       const Component = loaded![name] as unknown as ComponentType<Props>
       return <Component {...props} />

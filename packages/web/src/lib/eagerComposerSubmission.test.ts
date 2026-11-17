@@ -123,6 +123,21 @@ test("an AMBIGUOUS failure is never replayed — the text may already have reach
   assert.equal(calls, 1, "an unmarked failure must be surfaced, not re-sent")
 })
 
+test("a send the board never answered is replayed, under the same deliveryId the server dedups", async () => {
+  // The relay's 504 when the board's connection dropped under the send: it may have landed, and the
+  // server answers a replayed deliveryId as done without delivering it twice.
+  let calls = 0
+  await withDeliveryRetry(
+    async () => {
+      calls++
+      if (calls < 2) throw Object.assign(new Error("RPC followUp returned a non-JSON response (HTTP 504)"), { unreachableRpc: true })
+    },
+    () => {},
+    instant,
+  )
+  assert.equal(calls, 2)
+})
+
 test("retries are bounded — the composer gets the message back once they are exhausted", async () => {
   let calls = 0
   await assert.rejects(

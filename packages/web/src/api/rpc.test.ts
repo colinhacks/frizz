@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { queryPriority, assertMutationAllowedDuringControlPlaneTransition, CONTROL_PLANE_RESTARTING_MESSAGE, isKeptDeliveryError, isRetryableRpcError, parseRpcResponse, routeCall } from "./rpc.ts"
+import { queryPriority, assertMutationAllowedDuringControlPlaneTransition, CONTROL_PLANE_RESTARTING_MESSAGE, isKeptDeliveryError, isRetryableRpcError, isUnreachableRpcError, parseRpcResponse, routeCall } from "./rpc.ts"
 import { store } from "../store.ts"
 
 test("RPC response: a stale server's plain-text missing route asks for a server restart", async () => {
@@ -120,4 +120,16 @@ test("a Console call answered after the page left the Console still comes back k
     if (previousLocation) Object.defineProperty(globalThis, "location", previousLocation)
     else Reflect.deleteProperty(globalThis, "location")
   }
+})
+
+test("an answer the relay gave for a board it could not reach is marked unreachable, and the board's own failures are not", async () => {
+  // A board's connection drops and comes back within seconds, so these are worth asking again; one left a
+  // query failed for good under the app's no-retry defaults, and the phone's Console on "Loading…".
+  const failure = (res: Response) => parseRpcResponse(res, "projectsList").then(() => null, (e: unknown) => e)
+  for (const status of [502, 503, 504]) {
+    assert.equal(isUnreachableRpcError(await failure(new Response("The board did not answer: the board disconnected", { status }))), true, `${status}`)
+  }
+  assert.equal(isUnreachableRpcError(await failure(new Response("Internal Server Error", { status: 500 }))), false)
+  assert.equal(isUnreachableRpcError(await failure(new Response("refused", { status: 403 }))), false)
+  assert.equal(isUnreachableRpcError(await failure(new Response(JSON.stringify({ error: "no such thread" }), { status: 502 }))), false, "the board answered")
 })
