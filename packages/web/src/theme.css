@@ -257,11 +257,16 @@
      vivid than any hex (maintainer 2026-10-19: "Why does this look so saturated?"). One OKLCH lightness
      for all five — L 0.76 here, L 0.50 in light — at C 0.115 / 0.105 on the status hues, every value
      inside sRGB. Light's is a step darker than the dark set's mirror so each title holds 4.7:1 on its
-     own tinted header. IMPORTANT is the exception: at the violet status hue (303) it clashed with the
-     app's blue-grey neutrals, which all sit at hue 260-268 (maintainer 2026-10-29: "This color just
-     doesn't look good with the rest of the blues here"), so it is a blue-violet, H 288 at C 0.085
-     (0.078 in light) — inside the neutrals' family, and still well clear of NOTE's sky blue at 254. */
-  --frizz-callout-note: #7db5f9;
+     own tinted header. Two exceptions, both because the app's neutrals are blue-greys at hue 260-268:
+       - IMPORTANT clashed with them at the violet status hue (303) (maintainer 2026-10-29: "This color
+         just doesn't look good with the rest of the blues here"), so it is a blue-violet, H 288 at
+         C 0.085 (0.078 in light), inside the neutrals' family.
+       - NOTE, a sky blue at H 254 C 0.115, was the loudest of the five beside them, though it is the
+         least urgent type and the one agents write most (maintainer 2026-11-16: "still clearly too
+         blue. It sticks out like a sore thumb"). It is a slate blue now, H 258 at C 0.05 in both
+         palettes: the calmest of the set, still a blue, and clear of IMPORTANT's lavender. Picked by
+         eye from C 0.115 down to 0.035 beside the other four; 0.035 read as a disabled grey. */
+  --frizz-callout-note: #9eb3d1;
   --frizz-callout-tip: #72c78f;
   --frizz-callout-important: #aea9e5;
   --frizz-callout-warning: #d7a955;
@@ -441,7 +446,7 @@
   --frizz-attention-fill: #9a6700;
   --frizz-comment: rgb(250 214 60 / 0.3);
   --frizz-comment-active: rgb(250 204 21 / 0.55);
-  --frizz-callout-note: #35659d;
+  --frizz-callout-note: #526480;
   --frizz-callout-tip: #277447;
   --frizz-callout-important: #615c8d;
   --frizz-callout-warning: #825b00;
@@ -617,7 +622,7 @@
     --frizz-attention-fill: #9a6700;
     --frizz-comment: rgb(250 214 60 / 0.3);
     --frizz-comment-active: rgb(250 204 21 / 0.55);
-    --frizz-callout-note: #35659d;
+    --frizz-callout-note: #526480;
     --frizz-callout-tip: #277447;
     --frizz-callout-important: #615c8d;
     --frizz-callout-warning: #825b00;
