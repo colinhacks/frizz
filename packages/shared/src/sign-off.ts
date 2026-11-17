@@ -5,8 +5,35 @@
 // A shell command that runs `frizzctl done`, at its start or after anything that begins a new command
 // (a newline, `;`, `&&`, `||`, `|`, a subshell). The transcript projects every backend's shell call as
 // `Bash`, so one pattern reads Claude, Codex and ACP alike. Not a parse and not meant to be: it answers
-// "did this message sign off", where a false positive keeps one extra message unfolded.
-const RUNS_FRIZZCTL_DONE = /(?:^|[\n;&|(])\s*frizzctl\s+done(?=\s|$)/
+// "did this message sign off".
+//
+// WHAT FOLLOWS THE VERB IS ITS ARGUMENTS, and a heredoc's body is not a command (2026-11-17). A false
+// positive is not one extra message unfolded: the turn reads as signed off, the quiet park it ended on is
+// stamped, and the status line before that park becomes its "write-up". Workers log their own sign-off
+// into a notes file ("- signed off done (frizzctl done + fence)", "…; frizzctl done recorded.") and both
+// lines matched; they were 2 of 1,090 registrations across this machine's transcripts. So the verb must
+// be followed by what `frizzctl done` takes — a flag, an inline JSON object, a quote, a redirect, a
+// separator, or nothing — and a heredoc's body is left out before the pattern reads the command.
+const RUNS_FRIZZCTL_DONE = /(?:^|[\n;&|(])[ \t]*frizzctl[ \t]+done(?=[ \t]*(?:$|[\n\\\-'"{<>|;&)]))/
+const HEREDOC_OPENER = /(?<!<)<<(-?)[ \t]*(['"]?)([A-Za-z_][\w-]*)\2/g
+
+/** The command with every heredoc's body left out: the lines after a `<<WORD` opener, through its
+ *  closing `WORD` line, are what the command FEEDS a program, not what the shell runs. */
+export function withoutHeredocBodies(command: string): string {
+  if (!command.includes("<<")) return command
+  const kept: string[] = []
+  const pending: { word: string; tabs: boolean }[] = []
+  for (const line of command.split("\n")) {
+    if (pending.length > 0) {
+      const head = pending[0]
+      if ((head.tabs ? line.replace(/^\t+/, "") : line).trimEnd() === head.word) pending.shift()
+      continue
+    }
+    kept.push(line)
+    for (const m of line.matchAll(HEREDOC_OPENER)) pending.push({ word: m[3], tabs: m[1] === "-" })
+  }
+  return kept.join("\n")
+}
 
 /** The structural minimum of a message's tool calls the check reads. Whole transcript messages satisfy
  *  it: `command` is a shell call's raw text when it ran long or over several lines, `detail` its one-line
@@ -40,6 +67,6 @@ export function carriesDoneRegistration(m: DoneRegistrationLike): boolean {
     if (t.name === "mcp__frizz__done") return true
     if (t.name !== "Bash") return false
     const command = t.command ?? t.detail ?? ""
-    return command.includes("frizzctl") && RUNS_FRIZZCTL_DONE.test(command)
+    return command.includes("frizzctl") && RUNS_FRIZZCTL_DONE.test(withoutHeredocBodies(command))
   })
 }

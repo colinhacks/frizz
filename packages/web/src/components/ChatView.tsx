@@ -4,7 +4,7 @@ import { subscribe, useSnapshot } from "valtio"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual"
 import { AlertTriangle, ArrowDown, Bot, Check, ChevronRight, ChevronsUpDown, FileText, HelpCircle, Hourglass, KeyRound, ListChecks, Loader2, Radar, TerminalSquare, type LucideIcon, type LucideProps } from "lucide-react"
-import { awaitingFenceTitle, awaitingSteps, githubReadingStale, RETRY_FOLLOW_UP, stepsReportOf } from "@frizz/shared"
+import { awaitingFenceTitle, awaitingStatus, awaitingSteps, githubReadingStale, RETRY_FOLLOW_UP, stepsReportOf } from "@frizz/shared"
 import type { AskQuestion, AwaitingHint, BgShellView, PendingAsk, ProviderError, RegisteredQuestionView, SubAgentView, ThreadView as ThreadViewData, TranscriptEdit, TranscriptMessage, TranscriptPart, TranscriptTodo, TranscriptToolCall } from "@frizz/shared"
 import { store, threadBySlug, pushDrawer, pushSubAgentDrawer, pushBackgroundShellDrawer, showToast } from "../store.ts"
 import { useBackgroundShellLines, useProjectDir, useThreadSnapshot, useTranscript, type ChatMessage, type TranscriptData } from "../hooks.ts"
@@ -2125,10 +2125,17 @@ function blankText(m: ChatMessage, text: string, staleAwaiting?: boolean, restin
 function settledFenceDraws(hints: readonly AwaitingHint[]): boolean {
   return awaitingSteps(hints).length > 0
 }
-// …or the newest sign-off's, which draws its card, or only its prose where it names questions (renderText).
+// …or the newest sign-off's, which draws its card, or only its prose where it names questions or is a quiet
+// park (renderText).
 function signOffFenceDraws(m: ChatMessage, fence: { hints: readonly AwaitingHint[]; body: string }): boolean {
   if (!m.keptSignOff) return false
-  return !awaitingDefersToQuestions(fence.hints) || awaitingProseBlock(fence.body) !== null
+  return !(awaitingDefersToQuestions(fence.hints) || quietPark(fence.hints)) || awaitingProseBlock(fence.body) !== null
+}
+// A `status: working` or `watching` fence: the server keeps such a rest in view only for the words it carries
+// (server sign-offs.ts), and its wait was never the human's to read, so a kept one draws its prose alone.
+function quietPark(hints: readonly AwaitingHint[]): boolean {
+  const status = awaitingStatus(hints)
+  return status === "working" || status === "watching"
 }
 // The leading gap for the shimmer that tails a live transcript. The shimmer is a quiet single-line row
 // — the LIVE continuation of the very meta column that the reasoning rows and tool bands form above
@@ -4007,9 +4014,10 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, done
         // as the steps card above is — no live rows, no verb — while the thread is at rest
         // (ChatMessage.keptSignOff, lib/signOffs). Since 2026-11-16 every sign-off since then does: each
         // says what is new since the one before it, so an earlier card is no copy of the newest. A fence
-        // that names questions keeps only its prose, which is all it draws when it is live.
+        // that names questions keeps only its prose, which is all it draws when it is live, and so does a
+        // quiet park, kept since 2026-11-17 for its words alone (server sign-offs.ts).
         if (fseg.fenceKind === "awaiting" && staleAwaiting && !m.fenceRefused && !restingCardShown && m.keptSignOff) {
-          if (awaitingDefersToQuestions(fseg.hints)) {
+          if (awaitingDefersToQuestions(fseg.hints) || quietPark(fseg.hints)) {
             const prose = awaitingProseBlock(fseg.body)
             if (prose) push(<ProseHtml key={`${keyBase}-f${fi}`} md={prose} />)
           } else push(<AwaitingBackgroundCard key={`${keyBase}-f${fi}`} fence={{ body: fseg.body, hints: fseg.hints }} />)

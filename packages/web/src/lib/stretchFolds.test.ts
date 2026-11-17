@@ -30,9 +30,18 @@ test("while the thread runs, the newest stretch keeps its tail: that is the live
   assert.deepEqual(stretchFoldRanges(later, { running: true }), [{ from: 2, to: 3, lead: 1 }, { from: 5, to: 12 }])
 })
 
-test("a stretch with no sign-off folds nothing", () => {
+test("the newest stretch with no sign-off folds nothing", () => {
   assert.deepEqual(stretchFoldRanges([human("Go."), work("Working."), work("Still working."), park(), rest()], { running: false }), [])
   assert.deepEqual(stretchFoldRanges([], { running: false }), [])
+})
+
+test("an older stretch with no sign-off, typed past, keeps its lead and folds the rest", () => {
+  // Interrupted mid-turn, and parked quietly with nothing for the human: both are history once they typed.
+  const messages = [human("Go."), work("Starting on it."), work("Working."), work("Still working."), park(), rest(), human("Actually, stop."), work("Stopping.")]
+  assert.deepEqual(stretchFoldRanges(messages, { running: true }), [{ from: 2, to: 5, lead: 1 }])
+  // A page that opens inside one has no lead to keep, and a stretch of the lead alone hides nothing.
+  assert.deepEqual(stretchFoldRanges([work("Working."), work("Still working."), human("Stop."), work("Stopping.")], { running: false }), [{ from: 0, to: 1 }])
+  assert.deepEqual(stretchFoldRanges([human("Go."), work("On it."), human("Stop.")], { running: false }), [])
 })
 
 test("the lead is the first message with words: a bare park fence or a tool-only turn is not", () => {

@@ -51,6 +51,27 @@
 // line above an even terser sign-off. The last words before a sign-off are otherwise narration (a median of
 // 134 characters), which the rule leaves to the fold. Marking is additive: the afterword stays marked, so
 // nothing that was in view leaves it.
+//
+// TWO MORE KINDS OF MESSAGE ARE KEPT IN VIEW, THOUGH NEITHER SIGNS ITS TURN OFF (2026-11-17). Both were
+// found by running every Claude transcript on the maintainer's Mac (776 threads) through this pass and the
+// web's fold, after a stretch of ~45 messages showed unfolded (maintainer: "this is not collapsing
+// properly", then "Find any related/similar bugs. This is not acceptable"):
+//   • A QUIET PARK THAT ANSWERS THE HUMAN, OR SAYS AS MUCH AS A WRITE-UP. The contract asks for the fence
+//     alone, and 6,369 of 7,896 quiet parks are. Of the 1,527 that carry words, the ones that matter are the
+//     worker's REPLY — the first rest after the human came in: a reply to "I feel like you've lost the plot"
+//     parked `status: working` on a sub-agent and folded under "Spawning the Fable reviewer now." — and the
+//     230 of 400 characters or more ("Yes, deploy 3 is ready…"), the line the afterword rule measured a
+//     write-up by. The rest are the one-liners a wake with nothing new gets ("That review is my own reply
+//     to Pullfrog.", "No findings. Waiting on CI."), and keeping each in view would line a babysitting
+//     stretch with them again. A kept quiet park still signs nothing off: it does not queue, the afterword
+//     rule does not reach past it (169 of the 173 lines it would have kept were status lines), and as the
+//     answer to a reminder it still takes the bare rest back.
+//   • A HANDOFF WRITTEN MID-TURN. The contract tells a worker to ask the moment it finds a question and keep
+//     working, so a message that asks one — or ends on a ```done or a non-quiet ```awaiting — is often not
+//     the message its turn rests on. Unmarked, it folded, and where the turn then parked quietly the stretch
+//     had no sign-off at all and folded nothing: 143 messages on one thread, under four questions asked at
+//     its 81st. Such a message is kept on the same terms as a rest's: a fence alone, or the standing fence
+//     again, keeps nothing.
 import { awaitingStatus, awaitingSteps, BURIED_ANSWERS_HEADER, carriesDoneRegistration, SIGNOFF_NUDGE_MARKER, signalFenceOf, type TranscriptMessage } from "@frizz/shared"
 import { asksQuestion, parseSignalFence, restatesSignOff, signalFenceAlone, signalFenceText } from "./tailer.ts"
 
@@ -125,6 +146,10 @@ export function wordsSaid(text: string): number {
   return fold(outside) + fold(fence?.body ?? "") + steps
 }
 
+/** How much a message must say to be a write-up rather than narration: the line the afterword rule was
+ *  measured against (see the header). */
+const WRITE_UP_CHARS = 400
+
 /** The write-up an afterword follows: the last agent prose before `at` in its own turn — never past a
  *  delivery, whose words answered something else — when it says more than the message at `at` does (see
  *  the header). -1 when there is none. */
@@ -159,6 +184,10 @@ interface Rest {
   reading: RestReading
   /** The next turn opened on frizz's sign-off reminder about this rest. */
   nudged: boolean
+  /** A quiet park whose words are kept in view, though the rest signs nothing off (see the header). */
+  says: boolean
+  /** Handoffs written earlier in the turn, which the worker kept working past (see the header). */
+  midTurn: number[]
 }
 
 /** Every rest in the projection, oldest first, with what it said. */
@@ -167,10 +196,26 @@ export function readRests(messages: readonly TranscriptMessage[]): Rest[] {
   let turnStart = 0
   // The fence of the newest sign-off since the human last came in: what a rest repeating it leaves standing.
   let standing: string | undefined
+  // The human came in since the last rest: the next one is the worker's reply to them.
+  let answering = false
   for (let r = 0; r < messages.length; r++) {
     if (messages[r].boundary !== "rest") continue
-    for (let i = turnStart; i < r; i++) if (humanCameIn(messages[i])) standing = undefined
     const at = restedOnIndex(messages, turnStart, r)
+    // In order through the turn: the human coming in clears the standing fence, and a handoff written
+    // before the message the turn rested on is kept on the same terms as a rest's (its fence alone, or the
+    // standing one again, says nothing new), and becomes the fence a later one would repeat.
+    const midTurn: number[] = []
+    for (let i = turnStart; i < r; i++) {
+      const m = messages[i]
+      if (humanCameIn(m)) {
+        standing = undefined
+        answering = true
+      }
+      if (i === at || m.role !== "assistant" || m.kind || !m.text.trim() || readingOf(m) !== "signOff") continue
+      if (signalFenceAlone(m.text) || restatesSignOff(m.text, standing)) continue
+      midTurn.push(i)
+      standing = fenceOf(m)
+    }
     // A registration signs the turn off whatever prose follows it: workers append a pointer after
     // `frizzctl done` ("the write-up is above"), and that afterword is what the turn ends on.
     let registered = -1
@@ -182,7 +227,10 @@ export function readRests(messages: readonly TranscriptMessage[]): Rest[] {
     if (reading === "signOff" && !stands) standing = at >= 0 ? fenceOf(messages[at]) : undefined
     const marked = stands ? -1 : at >= 0 ? at : registered
     const writeUp = marked >= 0 ? writeUpBefore(messages, turnStart, marked) : -1
-    rests.push({ at: marked, writeUp, reading, nudged: nudgedAfter(messages, r) })
+    const said = reading === "quiet" && at >= 0 ? wordsSaid(messages[at].text) : 0
+    const says = said > 0 && (answering || said >= WRITE_UP_CHARS)
+    rests.push({ at: marked, writeUp, reading, nudged: nudgedAfter(messages, r), says, midTurn })
+    answering = false
     turnStart = r + 1
   }
   return rests
@@ -191,17 +239,20 @@ export function readRests(messages: readonly TranscriptMessage[]): Rest[] {
 /** The indices of every message a rest signed off on, oldest first (see the header for the rule). */
 export function signOffIndices(messages: readonly TranscriptMessage[]): number[] {
   const rests = readRests(messages)
-  const out: number[] = []
-  // Newest first, so a bare rest can read the answer to the reminder about it, which comes after it.
+  const out = new Set<number>()
+  // Newest first, so a bare rest can read the answer to the reminder about it, which comes after it. A
+  // quiet park that says something keeps its words in view, but as an answer to the reminder it still
+  // takes the bare rest back: it is not a sign-off.
   let next: boolean | undefined
   for (let k = rests.length - 1; k >= 0; k--) {
     const rest = rests[k]
     const signs = rest.reading === "bare" ? (rest.nudged && next !== undefined ? next : true) : rest.reading === "signOff"
     next = signs
-    if (signs && rest.at >= 0) out.push(rest.at)
-    if (signs && rest.writeUp >= 0) out.push(rest.writeUp)
+    if ((signs || rest.says) && rest.at >= 0) out.add(rest.at)
+    if (signs && rest.writeUp >= 0) out.add(rest.writeUp)
+    for (const i of rest.midTurn) out.add(i)
   }
-  return out.reverse()
+  return [...out].sort((a, b) => a - b)
 }
 
 /** Stamp `signOff` on each message a rest signed off on, and clear it from any other. COPY-ON-WRITE: the

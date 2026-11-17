@@ -16,9 +16,13 @@
 // wakes a quiet park came back to). The lead's own tool calls fold into the first hairline, as the card's
 // did. The sign-offs are the server's reading (`signOff`, server sign-offs.ts), EVERY ONE of the stretch
 // since 2026-11-16, less those whose questions were all withdrawn once a later one follows (lib/signOffs
-// stretchSignOffs). A stretch with no sign-off folds nothing: the worker is still going, or rested with
-// nothing for the human, and either way its work is what there is to read. Neither does the run after the
-// newest stretch's sign-off while the thread RUNS: that is the live work.
+// stretchSignOffs). The NEWEST stretch with no sign-off folds nothing: the worker is still going, or
+// rested with nothing for the human yet, and either way its work is what there is to read. Neither does the
+// run after the newest stretch's sign-off while the thread RUNS: that is the live work. An OLDER one the
+// human typed past keeps its lead and folds the rest (2026-11-17): they interrupted it mid-turn, or came
+// back to a quiet park, and its work is history like any other stretch's. Measured over the 776 Claude
+// transcripts on the maintainer's Mac, after the server kept mid-turn questions and quiet-park replies
+// (server sign-offs.ts): 152 such stretches, up to 63 status lines each, drew unfolded.
 //
 // Hiding the rest is safe because a sign-off is written for the human and the rest is not: narration
 // between tool calls, wakes, sub-agent returns, quiet parks. From 2026-11-11 to 2026-11-16 the fold kept
@@ -68,7 +72,19 @@ export function stretchFoldRanges(messages: readonly FoldMsg[], opts: { running:
   starts.forEach((start, k) => {
     const end = k + 1 < starts.length ? starts[k + 1] - 1 : messages.length - 1
     const kept = stretchSignOffs(messages.slice(0, end + 1), start, opts.closedOnly)
-    if (kept.length === 0) return
+    if (kept.length === 0) {
+      // Typed past with no sign-off in it: the lead, then one hairline over the rest (see the header).
+      if (k + 1 === starts.length) return
+      let lead = -1
+      if (start >= 0) {
+        for (let i = start + 1; i <= end; i++) {
+          if (hasWords(messages[i])) { lead = i; break }
+        }
+      }
+      const from = lead >= 0 ? lead + 1 : start + 1
+      if (from <= end) out.push({ from, to: end, ...(lead >= 0 ? { lead } : {}) })
+      return
+    }
     // The lead: the worker's first words after the human's turn, when they come before the sign-off. A page
     // that opens mid-stretch has no lead to show, since its first words are further up.
     let lead = -1

@@ -157,9 +157,11 @@ test("the newest sign-off's settled fence keeps its card, with no thread behind 
   assert.ok(keep < render.indexOf("(m.fenceRefused || staleAwaiting || restingCardShown)) continue"), "…ahead of the skip it excepts")
   assert.match(render, /staleAwaiting && !m\.fenceRefused && !restingCardShown && m\.keptSignOff\)/, "never for a refused fence, nor one the resting card states")
   const branch = render.slice(keep, render.indexOf("continue", keep + render.slice(keep).indexOf("} else push(")))
-  assert.match(branch, /if \(awaitingDefersToQuestions\(fseg\.hints\)\) \{\n\s*const prose = awaitingProseBlock\(fseg\.body\)\n\s*if \(prose\) push\(<ProseHtml /)
+  // …and so does a quiet park, which the server keeps only for its words (server sign-offs.ts).
+  assert.match(branch, /if \(awaitingDefersToQuestions\(fseg\.hints\) \|\| quietPark\(fseg\.hints\)\) \{\n\s*const prose = awaitingProseBlock\(fseg\.body\)\n\s*if \(prose\) push\(<ProseHtml /)
   assert.match(branch, /\} else push\(<AwaitingBackgroundCard key=\{`[^`]+`\} fence=\{\{ body: fseg\.body, hints: fseg\.hints \}\} \/>\)/, "no `thread`, so no rows and no verb")
-  assert.match(source, /function signOffFenceDraws\(m: ChatMessage, fence: \{ hints: readonly AwaitingHint\[\]; body: string \}\): boolean \{\n\s*if \(!m\.keptSignOff\) return false\n\s*return !awaitingDefersToQuestions\(fence\.hints\) \|\| awaitingProseBlock\(fence\.body\) !== null\n\}/)
+  assert.match(source, /function signOffFenceDraws\(m: ChatMessage, fence: \{ hints: readonly AwaitingHint\[\]; body: string \}\): boolean \{\n\s*if \(!m\.keptSignOff\) return false\n\s*return !\(awaitingDefersToQuestions\(fence\.hints\) \|\| quietPark\(fence\.hints\)\) \|\| awaitingProseBlock\(fence\.body\) !== null\n\}/)
+  assert.match(source, /function quietPark\(hints: readonly AwaitingHint\[\]\): boolean \{\n\s*const status = awaitingStatus\(hints\)\n\s*return status === "working" \|\| status === "watching"\n\}/)
 })
 
 // ONE CUT, SHARED. The renderer marks a fence settled by comparing its index against the last assistant

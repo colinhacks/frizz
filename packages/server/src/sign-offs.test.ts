@@ -59,7 +59,7 @@ test("a question in any opener the registrar reads is a sign-off, whatever park 
   const msgs = project(
     human("Answers to earlier questions:\n1. Merge them."),
     narrate("Both answers are in. Merging the crates."),
-    rest(WORKING),
+    rest(QUIET),
     wake("❌ CI FAILED on acme/app#391"),
     rest(ask(t4)),
   )
@@ -128,7 +128,7 @@ test("an afterword keeps the write-up before it marked; a sign-off longer than t
   const narrated = project(human("Fix it."), narrate("Committing, then stopping my stack."), toolResult(`t${ids}`), rest(writeUp))
   assert.deepEqual(marked(narrated), [writeUp])
   // Never past a delivery: the words before a wake belong to the rest before it, here a quiet park.
-  const woken = project(human("Run the bench."), rest(WORKING), wake("Bench finished"), rest("Done."))
+  const woken = project(human("Run the bench."), narrate("Starting the bench run."), rest(QUIET), wake("Bench finished"), rest("Done."))
   assert.deepEqual(marked(woken), ["Done."])
 })
 
@@ -200,4 +200,53 @@ test("projectSignOffs copies what it marks and clears a stale mark", () => {
   assert.equal(projected[1].signOff, true)
   assert.notEqual(projected[1], original)
   assert.equal(original.signOff, undefined, "a retained fold's message stays as the fold left it")
+})
+
+// Found by running every transcript on the maintainer's Mac through this pass (2026-11-17): a reply that
+// parked `status: working` on a sub-agent folded under the status line before it.
+test("a quiet park keeps its words in view when they answer the human or run to a write-up, and signs nothing off", () => {
+  const reply = `You're right, and the drift is mine. The plot is this: inline \`query!\` works on all three databases.\n\n${fence("awaiting", "agents: [a1]\nstatus: working\nfor: 2h")}`
+  const msgs = project(human("I feel like you've lost the plot."), narrate("Spawning the reviewer now."), rest(reply))
+  assert.deepEqual(marked(msgs), ["You're right, and the drift is mine. The plot is this: inline `query!` works on all three databases."])
+  // After a wake, a one-liner is the rest a wake with nothing new gets: it folds. A write-up's worth stays.
+  const news = `${"The run is back and the numbers moved: ".padEnd(420, "x")}\n\n${fence("awaiting", "prs: [acme/app#391]\nstatus: watching\nfor: 7d")}`
+  const later = project(human("Babysit acme/app#391."), rest(QUIET), wake("❌ CI FAILED on acme/app#391"), rest(`That review is my own reply.\n\n${QUIET}`), wake("✅ CI PASSED on acme/app#391"), rest(news))
+  assert.deepEqual(marked(later), ["The run is back and the numbers moved: " + "x".repeat(420 - 39)])
+  // The afterword rule does not reach past a quiet park: the status line before a reply stays narration.
+  const afterword = project(human("Run the bench."), narrate("Starting the bench run across all three arms now.", "bench"), toolResult(`t${ids}`), rest(WORKING))
+  assert.deepEqual(marked(afterword), ["Kicked off the bench."])
+  // Kept is not signed off: as the answer to a reminder, a quiet park still takes the bare rest back.
+  const taken = project(human("Fix the cache."), rest("Pushed; CI is running."), wake(SIGNOFF_NUDGE_MESSAGE), rest(news))
+  assert.deepEqual(marked(taken).map((t) => t.slice(0, 12)), ["The run is b"])
+})
+
+// The contract tells a worker to ask the moment it finds a question and keep working, so the ask is often not
+// what its turn rests on (sql-server-support…, 2026-11-16: four questions at message 81, three quiet parks,
+// and 143 unfolded messages under them).
+test("a handoff written mid-turn is kept, so a stretch that then parks quietly still folds around it", () => {
+  const ask = `Four calls are yours before the loader can take SQL Server.\n\n\`\`\`question\nid: url-scheme\nkind: choice\nquestion: Which URL scheme?\noptions:\n  - sqlserver://\n  - mssql://\n\`\`\``
+  const msgs = project(human("Add SQL Server support."), narrate("Mapping the dialect branches."), narrate(ask), toolResult(`t${ids}`), narrate("While those wait, reading the loader."), rest(QUIET), wake("Background task finished"), rest(QUIET))
+  assert.deepEqual(marked(msgs), ["Four calls are yours before the loader can take SQL Server."])
+  // A needs_input or done fence the worker kept working past is a handoff too…
+  const handed = project(human("Ship it."), narrate(NEEDS_INPUT), toolResult(`t${ids}`), rest(QUIET))
+  assert.deepEqual(marked(handed), ["The fix is on acme/app#391 and CI is green; the merge is yours."])
+  // …but a fence alone mid-turn, or the standing fence again, keeps nothing, as at a rest.
+  const bareNeeds = fence("awaiting", "prs: [acme/app#391]\nstatus: needs_input\nfor: 180d")
+  assert.deepEqual(marked(project(human("Ship it."), narrate(bareNeeds), toolResult(`t${ids}`), rest(QUIET))), [])
+  assert.deepEqual(marked(project(human("Ship it."), rest(NEEDS_INPUT), wake("✅"), narrate(NEEDS_INPUT.split("\n\n")[1]), toolResult(`t${ids}`), rest(QUIET))), ["The fix is on acme/app#391 and CI is green; the merge is yours."])
+  // A mid-turn sign-off sets the fence a rest repeating it leaves standing.
+  const repeated = project(human("Ship it."), narrate(NEEDS_INPUT), toolResult(`t${ids}`), rest(NEEDS_INPUT.split("\n\n")[1]))
+  assert.deepEqual(marked(repeated), ["The fix is on acme/app#391 and CI is green; the merge is yours."])
+})
+
+test("a `frizzctl done` quoted in a heredoc or in prose is no registration", () => {
+  const notes = "cat >> notes.md <<'EOF'\n- signed off done (frizzctl done + fence)\n- servers stopped; frizzctl done recorded.\nEOF"
+  const logged = project(human("Audit the drivers."), narrate("Now removing the upstream routes from the wiki.", notes), toolResult(`t${ids}`), rest(QUIET))
+  assert.deepEqual(marked(logged), [])
+  assert.deepEqual(marked(project(human("Go."), narrate("Done.", "git commit -m 'notes; frizzctl done recorded'"), toolResult(`t${ids}`), rest(QUIET))), [])
+  // The real command, in every shape a worker writes it, still is.
+  for (const command of ["frizzctl done --body-file - <<'EOF'\n- Fixed it.\nEOF", "cd /x && frizzctl done --title 'Fixed' --body-file body.md", "frizzctl done '{\"body\":\"- Fixed it.\"}'", "frizzctl done"]) {
+    const run = project(human("Fix it."), narrate("The cache keys on the normalized id now; `npm test` is green.", command), toolResult(`t${ids}`), rest("The write-up is above."))
+    assert.deepEqual(marked(run), ["The cache keys on the normalized id now; `npm test` is green.", "The write-up is above."], command)
+  }
 })
