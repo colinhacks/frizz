@@ -54,11 +54,14 @@ function clock() {
   }
 }
 
-interface Sock { key: string | null; n: number; socket: SocketLike; frames: Array<{ id: string; url: string; method: string }>; dead: boolean; closed?: number }
+interface Sock { key: string | null; n: number; socket: SocketLike; frames: Array<{ id: string; url: string; method: string }>; opens: Array<{ id: string; url: string }>; dead: boolean; closed?: number }
+interface Open { key: string | null; marker: string; settled: number; id?: string | null }
 interface Req {
   key: string | null; marker: string; method: string; stream: boolean; startedAt: number
   settled: number; outcome?: "ok" | "err"; body?: string; err?: string; settledAt?: number
-  headAt?: number; ended: boolean; chunks: string[]; streamedHead?: boolean
+  headAt?: number; ended: boolean; cut?: string; chunks: string[]; streamedHead?: boolean
+  /** Whether the board sent a clean `res-end` for it at all: nothing else may end its body as though whole. */
+  cleanEndSent?: boolean
 }
 
 const flush = () => new Promise<void>((r) => setImmediate(r))
@@ -71,16 +74,18 @@ async function run(seed: number) {
   const sockets: Sock[] = []
   let current: Sock | null = null
   const reqs: Req[] = []
+  const opens: Open[] = []
   const log: string[] = []
   let sockSeq = 0
   let lastKey: string | null = null
   const makeSocket = (key: string | null = null): Sock => {
-    const s: Sock = { key, n: ++sockSeq, frames: [], dead: false, socket: null as unknown as SocketLike }
+    const s: Sock = { key, n: ++sockSeq, frames: [], opens: [], dead: false, socket: null as unknown as SocketLike }
     s.socket = {
       send: (d) => {
         if (s.dead) throw new Error("dead")
         const f = parseFrame(d) as { t: string; id: string; url?: string; method?: string }
         if (f?.t === "req") s.frames.push({ id: f.id, url: f.url!, method: f.method! })
+        if (f?.t === "ws-open") s.opens.push({ id: f.id, url: f.url! })
       },
       close: (code) => { s.closed = code ?? 1000 },
     }
@@ -103,7 +108,7 @@ async function run(seed: number) {
       try {
         p = relay.request(
           { method, url: `https://ada.frizz.sh/x?m=${marker}`, headers: [], ...(method === "POST" ? { body: new TextEncoder().encode("{}") } : {}) },
-          stream ? { push: (b) => void r.chunks.push(new TextDecoder().decode(b)), end: () => { r.ended = true } } : undefined,
+          stream ? { push: (b) => void r.chunks.push(new TextDecoder().decode(b)), end: (cut) => { r.ended = true; r.cut = cut } } : undefined,
         )
       } catch (e) {
         p = Promise.reject(e)
@@ -136,23 +141,45 @@ async function run(seed: number) {
         const { s, f } = pick(all)
         const marker = markerOf(f.url)
         const streaming = reqOf(marker).stream && rnd() < 0.8
-        log.push(`answer ${f.id} (${marker}) on s${s.n}${streaming ? " head" : ""}`)
+        // Half arrive on the socket the request went down, half as though from whichever is current: a
+        // replaced socket's frames must be ignored, and an id from an old socket must not land either.
+        const from = rnd() < 0.5 ? s.socket : undefined
+        log.push(`answer ${f.id} (${marker}) ${from ? `on s${s.n}` : "on the current socket"}${streaming ? " head" : ""}`)
         relay.handleFrame(serializeFrame(streaming
           ? { t: "res", id: f.id, status: 200, headers: [], end: false }
-          : { t: "res", id: f.id, status: 200, headers: [], body: encodeBody(new TextEncoder().encode(marker)), end: true }))
+          : { t: "res", id: f.id, status: 200, headers: [], body: encodeBody(new TextEncoder().encode(marker)), end: true }), from)
       }
     } else if (roll < 0.78) {
       const all = sockets.flatMap((s) => s.frames.map((f) => ({ s, f })))
       if (all.length) {
-        const { f } = pick(all)
+        const { s, f } = pick(all)
         const marker = markerOf(f.url)
+        const from = rnd() < 0.5 ? s.socket : undefined
         if (rnd() < 0.7) {
-          log.push(`chunk ${f.id}`)
-          relay.handleFrame(serializeFrame({ t: "res-chunk", id: f.id, data: encodeBody(new TextEncoder().encode(marker)) }))
+          log.push(`chunk ${f.id}${from ? ` on s${s.n}` : ""}`)
+          relay.handleFrame(serializeFrame({ t: "res-chunk", id: f.id, data: encodeBody(new TextEncoder().encode(marker)) }), from)
         } else {
-          log.push(`end ${f.id}`)
-          relay.handleFrame(serializeFrame({ t: "res-end", id: f.id }))
+          const aborted = rnd() < 0.3
+          log.push(`end ${f.id}${aborted ? " aborted" : ""}${from ? ` on s${s.n}` : ""}`)
+          if (!aborted) reqOf(marker).cleanEndSent = true
+          relay.handleFrame(serializeFrame({ t: "res-end", id: f.id, ...(aborted ? { aborted: true } : {}) }), from)
         }
+      }
+    } else if (roll < 0.81) {
+      // A visitor's terminal or app socket.
+      const o: Open = { key: lastKey, marker: `o${opens.length}`, settled: 0 }
+      opens.push(o)
+      log.push(`open ${o.marker}`)
+      void relay.openWebSocket({ url: `https://ada.frizz.sh/ws?m=${o.marker}`, headers: [] }, { send: () => {}, close: () => {} })
+        .then((id) => { o.settled++; o.id = id })
+    } else if (roll < 0.83) {
+      // The board answers some terminal it was asked for, on any socket, possibly late.
+      const all = sockets.flatMap((s) => s.opens.map((f) => ({ s, f })))
+      if (all.length) {
+        const { s, f } = pick(all)
+        const ok = rnd() < 0.8
+        log.push(`ws-ack ${f.id} on s${s.n} ${ok}`)
+        relay.handleFrame(serializeFrame({ t: "ws-ack", id: f.id, ok }), s.socket)
       }
     } else if (roll < 0.85) {
       void relay.whenConnected()
@@ -176,6 +203,7 @@ async function run(seed: number) {
     if (r.settledAt! - r.startedAt > TIMEOUT) fail(`${r.marker} settled ${r.settledAt! - r.startedAt}ms after it asked, past the deadline`)
     for (const ch of r.chunks) if (ch !== r.marker) fail(`${r.marker} was streamed ${ch}'s chunk`)
     if (r.streamedHead && !r.ended) fail(`${r.marker}'s stream never ended`)
+    if (r.ended && r.cut === undefined && !r.cleanEndSent) fail(`${r.marker}'s stream was ended as though whole, with no clean end from the board`)
     const sends = sockets.flatMap((s) => s.frames).filter((f) => markerOf(f.url) === r.marker).length
     if (r.method === "POST" && sends > 1) fail(`POST ${r.marker} was sent ${sends} times`)
     if (sends > 3) fail(`${r.marker} was sent ${sends} times`)
@@ -183,7 +211,15 @@ async function run(seed: number) {
       if (markerOf(f.url) === r.marker && s.key !== r.key) fail(`${r.marker}, made for key ${r.key}, was sent to s${s.n} of key ${s.key}`)
     }
   }
-  const internals = relay as unknown as { pending: Map<string, unknown>; waiting: Set<unknown>; returning: Set<unknown>; timers: Map<string, unknown> }
+  for (const o of opens) {
+    if (o.settled !== 1) fail(`terminal ${o.marker} settled ${o.settled} times`)
+    const asked = sockets.flatMap((s) => s.opens.map((f) => ({ s, f }))).filter(({ f }) => markerOf(f.url) === o.marker)
+    if (asked.length > 3) fail(`terminal ${o.marker} was asked for ${asked.length} times`)
+    for (const { s } of asked) if (s.key !== o.key) fail(`terminal ${o.marker}, made for key ${o.key}, was asked of s${s.n} of key ${s.key}`)
+    if (o.id && !asked.some(({ f }) => f.id === o.id)) fail(`terminal ${o.marker} was linked to ${o.id}, which no board was asked to open`)
+  }
+  const internals = relay as unknown as { pending: Map<string, unknown>; waiting: Set<unknown>; returning: Set<unknown>; timers: Map<string, unknown>; reopening: Map<unknown, unknown> }
+  if (internals.reopening.size) fail(`${internals.reopening.size} terminals left waiting to reopen`)
   if (internals.pending.size) fail(`${internals.pending.size} entries left pending`)
   if (internals.waiting.size) fail(`${internals.waiting.size} entries left waiting`)
   if (internals.returning.size) fail(`${internals.returning.size} whenConnected callers left`)

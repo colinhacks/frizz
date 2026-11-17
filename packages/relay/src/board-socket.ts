@@ -29,11 +29,15 @@ export interface SocketLike {
 
 /** A visitor's WebSocket, waiting on or linked to one the board opened locally. */
 interface NestedSocket {
+  /** The id of its current opening. One opened again after a reconnect gets a new one. */
+  id: string
   visitor: SocketLike
   /** Resolves once the board says whether it could open its end. */
   settle?: (ok: boolean) => void
-  /** The end of the wait for that answer. */
+  /** The end of the wait for that answer. Armed once: opening it again does not restart it. */
   timer?: unknown
+  /** What the board is asked to open, until it answers, and how often it has been asked. */
+  open?: { url: string; headers: Array<[string, string]>; key: string | null; sends: number }
 }
 
 /**
@@ -171,6 +175,8 @@ export class BoardSocket {
   private readonly waiting = new Set<Pending>()
   /** Callers of `whenConnected` waiting for the same. */
   private readonly returning = new Set<(connected: boolean) => void>()
+  /** Terminals the board had not answered yet when its socket went, each with the end of its wait. */
+  private readonly reopening = new Map<NestedSocket, unknown>()
   /** When the board's socket last went, so a request in the gap waits for it instead of failing. */
   private lostAt: number | null = null
   private readonly nested = new Map<string, NestedSocket>()
@@ -272,6 +278,11 @@ export class BoardSocket {
       }
       this.dispatch(entry)
     }
+    for (const session of [...this.reopening.keys()]) {
+      this.stopReopening(session)
+      if (session.open?.key !== key) session.settle?.(false)
+      else this.sendOpen(session)
+    }
     for (const done of [...this.returning]) done(true)
   }
 
@@ -296,6 +307,10 @@ export class BoardSocket {
     for (const entry of [...this.waiting]) {
       this.finish(entry)
       entry.fail(reason)
+    }
+    for (const session of [...this.reopening.keys()]) {
+      this.stopReopening(session)
+      session.settle?.(false)
     }
   }
 
@@ -331,6 +346,13 @@ export class BoardSocket {
     for (const [id, session] of [...this.nested]) {
       this.nested.delete(id)
       this.inbound.forget(id)
+      // Not answered yet, so the visitor is still waiting on its upgrade and nothing was linked: it is
+      // asked for again on the next socket, as a page would be. The board closed its end when its socket
+      // went. A refused upgrade is worse than a page's 504: the app reads one as "this server has no /ws".
+      if (resend && session.settle && this.mayReopen(session)) {
+        this.waitToReopen(session)
+        continue
+      }
       this.options.clearTimer?.(session.timer)
       session.settle?.(false)
       try {
@@ -504,27 +526,62 @@ export class BoardSocket {
     visitor: SocketLike
   ): Promise<string | null> {
     if (!this.socket) return null
-    const id = this.nextId("w")
     return new Promise<string | null>((resolve) => {
-      const done = (ok: boolean) => resolve(ok ? id : null)
-      this.nested.set(id, { visitor, settle: done })
-      const sent = this.send({ t: "ws-open", id, url: input.url, headers: stripHopByHop(input.headers) })
-      if (!sent) {
-        this.nested.delete(id)
-        resolve(null)
-        return
+      const session: NestedSocket = { id: "", visitor, open: { url: input.url, headers: stripHopByHop(input.headers), key: this.key, sends: 0 } }
+      session.settle = (ok) => {
+        delete session.settle
+        delete session.open
+        // Cleared once the board answers: an armed timer keeps the Durable Object awake, and billed.
+        this.options.clearTimer?.(session.timer)
+        delete session.timer
+        this.stopReopening(session)
+        if (!ok && this.nested.get(session.id) === session) this.nested.delete(session.id)
+        resolve(ok ? session.id : null)
       }
       if (this.options.setTimer) {
-        // Cleared once the board answers: an armed timer keeps the Durable Object awake, and billed.
-        this.nested.get(id)!.timer = this.options.setTimer(() => {
-          const session = this.nested.get(id)
-          if (!session?.settle) return // already answered
-          this.nested.delete(id)
+        session.timer = this.options.setTimer(() => {
+          if (!session.settle) return // already answered
+          const asked = this.nested.get(session.id) === session
           session.settle(false)
-          this.cancel(id)
+          if (asked) this.cancel(session.id)
         }, this.options.requestTimeoutMs)
       }
+      this.sendOpen(session)
     })
+  }
+
+  /** Ask the board to open a terminal under a fresh id, or hold it for the board if the send fails. */
+  private sendOpen(session: NestedSocket): void {
+    const open = session.open!
+    session.id = this.nextId("w")
+    open.sends += 1
+    this.nested.set(session.id, session)
+    if (this.send({ t: "ws-open", id: session.id, url: open.url, headers: open.headers })) return
+    this.nested.delete(session.id)
+    if (this.mayReopen(session)) this.waitToReopen(session)
+    else session.settle?.(false)
+  }
+
+  private mayReopen(session: NestedSocket): boolean {
+    return (
+      session.open !== undefined &&
+      session.open.sends < REPLAY_LIMIT &&
+      this.options.setTimer !== undefined &&
+      this.options.boardReturnGraceMs > 0
+    )
+  }
+
+  private waitToReopen(session: NestedSocket): void {
+    this.reopening.set(session, this.options.setTimer!(() => {
+      if (!this.reopening.delete(session)) return
+      session.settle?.(false)
+    }, this.options.boardReturnGraceMs))
+  }
+
+  private stopReopening(session: NestedSocket): void {
+    if (!this.reopening.has(session)) return
+    this.options.clearTimer?.(this.reopening.get(session))
+    this.reopening.delete(session)
   }
 
   /** The visitor sent something. Forward it down to the board, in pieces if it is large. */

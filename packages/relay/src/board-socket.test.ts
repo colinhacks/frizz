@@ -859,3 +859,45 @@ test("a terminal the relay no longer knows is closed on the board", async () => 
   assert.ok(await opening)
   assert.equal(clock.armed(), 0)
 })
+
+test("a terminal the board had not answered when its socket went is opened again on the next one", async () => {
+  // A refused upgrade costs more than a page's 504: the app reads one as "this server has no /ws" and stays
+  // on its fallback feed for the rest of the page.
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  const first = fakeSocket()
+  relay.attach(first.socket, "key-a")
+  const opening = relay.openWebSocket({ url: "https://ada.frizz.sh/ws", headers: [] }, fakeVisitor().socket)
+  const firstId = first.lastId()
+  relay.detach(first.socket)
+
+  const second = fakeSocket()
+  relay.attach(second.socket, "key-a")
+  const again = parseFrame(second.sent[0]!) as { t: string; id: string; url: string }
+  assert.equal(again.t, "ws-open")
+  assert.equal(again.url, "https://ada.frizz.sh/ws")
+  assert.notEqual(again.id, firstId)
+  relay.handleFrame(serializeFrame({ t: "ws-ack", id: again.id, ok: true }))
+  assert.equal(await opening, again.id, "the visitor was linked to an id the board never opened")
+  assert.equal(clock.armed(), 0)
+})
+
+test("a terminal waiting for a board that does not come back, or comes back as another key, is refused", async () => {
+  const clock = fakeClock()
+  const relay = new BoardSocket(clock.options)
+  const board = fakeSocket()
+  relay.attach(board.socket, "key-a")
+  const lost = relay.openWebSocket({ url: "https://ada.frizz.sh/ws", headers: [] }, fakeVisitor().socket)
+  relay.detach(board.socket)
+  clock.advance(10_000)
+  assert.equal(await lost, null)
+
+  relay.attach(board.socket, "key-a")
+  const moved = relay.openWebSocket({ url: "https://ada.frizz.sh/ws", headers: [] }, fakeVisitor().socket)
+  relay.detach(board.socket)
+  const other = fakeSocket()
+  relay.attach(other.socket, "key-b")
+  assert.equal(await moved, null)
+  assert.deepEqual(other.sent, [], "a terminal asked for under one key was opened by another key's board")
+  assert.equal(clock.armed(), 0)
+})
