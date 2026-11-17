@@ -270,10 +270,10 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {/* List */}
+        {/* List. `relative` holds the empty and error states, which fill it rather than size it. */}
         <div
           ref={listRef}
-          className={`min-h-[240px] flex-1 overflow-y-auto rounded-lg border border-border/70 bg-bg/40 transition-opacity ${
+          className={`relative min-h-[240px] flex-1 overflow-y-auto rounded-lg border border-border/70 bg-bg/40 transition-opacity ${
             list.isPlaceholderData ? "opacity-40" : ""
           }`}
         >
@@ -679,6 +679,10 @@ function ListSkeleton() {
   )
 }
 
+// The empty and error states FILL the list rather than size it, so they sit at the skeleton's height and
+// the modal holds still when one replaces it. In flow with its own `min-h-[240px]`, this stood 2px taller
+// than the list's 240px, which counts the list's two 1px borders: on a repo with nothing open the
+// centred modal grew 2px as the list loaded, its header rising 1px and its footer dropping 1px.
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-1.5">{children}</div>
+  return <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">{children}</div>
 }

@@ -18,7 +18,7 @@ const baseUrl = process.env.FRIZZ_GITHUB_PICKER_RANGE_E2E_URL
 type Fixture = { dispatched: unknown[]; listRequests: number[] }
 const MORE = "[data-github-list-more]"
 
-async function open(query = "") {
+async function open(query = "", ready = '[data-row-number="412"]') {
   const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
   const browser = await launchHeadless()
   const page = await browser.newPage()
@@ -29,7 +29,7 @@ async function open(query = "") {
   page.on("pageerror", (error) => errors.push(String(error)))
   await page.setViewport({ width: 1100, height: 950, deviceScaleFactor: 1 })
   await page.goto(`${baseUrl}/github-picker-range-fixture.html${query}`, { waitUntil: "networkidle0" })
-  await page.waitForSelector('[data-row-number="412"]')
+  await page.waitForSelector(ready)
   return { browser, page, errors, notFound }
 }
 
@@ -163,6 +163,37 @@ test("a repo that fits in one fetch gets the totals line and nothing to load", {
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()
+  }
+})
+
+test("the modal holds still when the first fetch replaces the skeleton with rows, the empty state or the error", {
+  skip: !baseUrl,
+  timeout: 90_000,
+}, async () => {
+  // The picker is centred, so any change in the list's height moves its header and footer. The empty
+  // and error states once stood 2px taller than the skeleton's list, which is what a repo with nothing
+  // open showed every time the picker opened.
+  for (const [query, landed] of [
+    ["?rows=0", "No open issues"],
+    ["?rows=0&failPage=1", "Couldn't load issues."],
+    ["?rows=3", "Fixture issue 409"],
+  ]) {
+    const { browser, page, errors } = await open(`${query}&firstDelay=1500`, ".animate-pulse")
+    const modalBox = () => page.evaluate(() => {
+      const { top, bottom, left, right } = document.querySelector("h2")!.parentElement!.getBoundingClientRect()
+      return { top, bottom, left, right }
+    })
+    try {
+      // The repo link fills in the header from its own query; measure once it has.
+      await page.waitForSelector(".github-repo-link")
+      assert.ok(await page.$(".animate-pulse"), `${query}: the skeleton is still up when the loading box is read`)
+      const loading = await modalBox()
+      await page.waitForFunction((text: string) => !document.querySelector(".animate-pulse") && document.body.innerText.includes(text), { timeout: 5000 }, landed)
+      assert.deepEqual(await modalBox(), loading, `${query}: the modal's box is the same before and after the list loads`)
+      assert.deepEqual(errors, [])
+    } finally {
+      await browser.close()
+    }
   }
 })
 

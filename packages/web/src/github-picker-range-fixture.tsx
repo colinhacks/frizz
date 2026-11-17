@@ -16,8 +16,9 @@ import "./styles.css"
 // 74 rows at the picker's 30-per-fetch = three pages (30 / 30 / 14), so the e2e can prove that
 // scrolling loads the rest, that a range runs across a page seam, and that the batch is uncapped.
 // Query knobs, each for one path the list has to survive:
-//   ?rows=N          shortens the list (N ≤ 30 is the one-page case, with nothing more to load)
+//   ?rows=N          shortens the list (N ≤ 30 is the one-page case, with nothing more to load; 0 is empty)
 //   ?listDelay=N     holds every page after the first for N ms, so the loader row is observable
+//   ?firstDelay=N    holds the FIRST page for N ms, so the loading skeleton is observable
 //   ?failPage=N      fails page N's FIRST request, so the Retry row is observable
 //   ?drift=1         serves every later page one row early, as GitHub does when an issue is opened
 //                    between two fetches: each page's first row repeats the previous page's last
@@ -28,7 +29,7 @@ const PAGE_SIZE = 30
 const params = new URLSearchParams(location.search)
 const HEAD = [412, 409, 407, 400, 398, 395, 390, 388, 381, 377, 370, 366, 361, 359, 352, 348, 344, 340, 337, 333, 330, 328, 321, 318]
 const ALL = [...HEAD, ...Array.from({ length: 50 }, (_, i) => 314 - i * 3)]
-const NUMBERS = ALL.slice(0, Number(params.get("rows")) || ALL.length)
+const NUMBERS = ALL.slice(0, params.has("rows") ? Number(params.get("rows")) : ALL.length)
 
 const items: GithubItem[] = NUMBERS.map((number, i) => ({
   kind: "issue",
@@ -91,6 +92,7 @@ const settingsDelay = Number(params.get("settingsDelay") ?? 0)
 // needed.
 const listRequests: number[] = []
 const listDelay = Number(params.get("listDelay") ?? 0)
+const firstDelay = Number(params.get("firstDelay") ?? 0)
 const failPage = Number(params.get("failPage") ?? 0)
 let failedOnce = false
 const drift = params.get("drift") === "1"
@@ -115,6 +117,7 @@ window.fetch = async (input, init) => {
     const page = Math.min(Math.max(1, input.page ?? 1), pageCount)
     listRequests.push(page)
     if (page > 1 && listDelay > 0) await new Promise((resolve) => window.setTimeout(resolve, listDelay))
+    if (page === 1 && firstDelay > 0) await new Promise((resolve) => window.setTimeout(resolve, firstDelay))
     if (page === failPage && !failedOnce) {
       failedOnce = true
       return new Response(JSON.stringify({ error: "gh: API rate limit exceeded" }), { status: 500, headers: { "content-type": "application/json", "x-frizz-boot": "fixture" } })
