@@ -9,7 +9,7 @@ import { promisify } from "node:util"
 import { basename, join, win32 } from "node:path"
 import { homedir, tmpdir } from "node:os"
 import type { AskQuestion, AwaitingHint, CodexModel, LiveTool } from "@frizz/shared"
-import { awaitingStatus, awaitingStepItems, BURIED_ANSWERS_HEADER, DONE_FENCE_CORRECTION_LEAD, fenceWaitsOnHuman, isParkCorrection, SIGNOFF_CORRECTION_LEAD, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, signalFenceBlocks, signalFenceOf, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries } from "@frizz/shared"
+import { awaitingStatus, awaitingStepItems, BURIED_ANSWERS_HEADER, DONE_FENCE_CORRECTION_LEAD, fenceWaitsOnHuman, isParkCorrection, SIGNOFF_CORRECTION_LEAD, repliesStepsDone, humanTypedMessagesIn, insideFence, isAllInjectedNoise, isHumanTypedMessage, isInterruptMarker, mayHoldQuestionFence, parseAskUserQuestionInput, parseCrossSessionMessage, parseMergedWake, PermissionMode, QUESTION_FENCE_CORRECTION_LEAD, questionFenceBlocks, questionFencesLive, saysAllDone, signalFenceBlocks, signalFenceOf, splitAwaitingFrontmatter, splitDoneFrontmatter, splitWakeDeliveries, stepsReportOf, stripHumanGapNote } from "@frizz/shared"
 import type { Bus } from "./bus.ts"
 import { permMarkerPath, type Project } from "./project.ts"
 import { isBrokerClaudeRow, isHeadlessRow } from "./storage.ts"
@@ -1570,10 +1570,15 @@ function noteAssistantSignOff(state: FoldState, text: string): void {
   if (!state.lastAssistantFenceAlone && signsOffWithFence(text)) state.signOffFence = signalFenceText(text)
 }
 
-/** The human came in — typed, or answered a question — so the next sign-off answers them, and a fence it
- *  repeats from before is a reply rather than a restatement. Frizz's own deliveries leave it standing. */
+/** The human came in — typed, answered a question, or reported the steps they were handed done — so the
+ *  next sign-off answers them, and a fence it repeats from before is a reply rather than a restatement.
+ *  Frizz's own deliveries leave it standing. A bare "Done" is no TYPED message (isHumanTypedMessage: the
+ *  checklist is not the human's prose), but it is the human coming in, as sign-offs.ts humanCameIn and the
+ *  web's isHumanTurn read it; until 2026-11-17 this alone disagreed, on 117 steps reports across this
+ *  machine's transcripts. */
 function noteHumanTurnForSignOff(state: FoldState, text: string): void {
-  if (humanTypedMessagesIn(text).length > 0 || text.trimStart().startsWith(BURIED_ANSWERS_HEADER)) state.signOffFence = undefined
+  const reportsSteps = () => splitWakeDeliveries(text).some((part) => stepsReportOf(stripHumanGapNote(part)) !== null)
+  if (humanTypedMessagesIn(text).length > 0 || text.trimStart().startsWith(BURIED_ANSWERS_HEADER) || reportsSteps()) state.signOffFence = undefined
 }
 
 /** Is there nothing in this message but question fences and, at most, an empty signal fence? A message

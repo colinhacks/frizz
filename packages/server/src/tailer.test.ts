@@ -5843,3 +5843,20 @@ test("tailer: an ACP row past the discovery grace with no transcript yet is NOT 
   assert.equal(t.get("t")?.turn, "idle")
   assert.equal(t.get("t")?.lastAssistant, "DONE")
 })
+
+// The tailer, sign-offs.ts and the web must agree on when the human came in: a fence pasted back after a wake
+// says nothing new, and the same fence after the human reported their steps done is a reply to them.
+test("a steps report is the human coming in: the fence again after it is a reply, after a wake a restatement", () => {
+  const steps = "```awaiting\nstatus: needs_input\nfor: 1d\nsteps:\n  - Approve the npm sign-in.\n```"
+  const run = (between: string) => {
+    const s = newTailState("t", "s", "/x")
+    applyRecord(s, { type: "user", timestamp: "2026-11-17T10:00:00.000Z", message: { role: "user", content: "Publish it." } } as never)
+    applyRecord(s, { type: "assistant", timestamp: "2026-11-17T10:01:00.000Z", message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: `The release is staged.\n\n${steps}` }] } } as never)
+    applyRecord(s, { type: "user", timestamp: "2026-11-17T10:05:00.000Z", message: { role: "user", content: between } } as never)
+    applyRecord(s, { type: "assistant", timestamp: "2026-11-17T10:06:00.000Z", message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: steps }] } } as never)
+    return s.lastAssistantFenceAlone
+  }
+  assert.equal(run(`${shellDoneMessage({ taskId: "bzvt", label: "the suite", status: "completed" })}\n\n${wakeDeliveryToken("w1")}`), true, "after a wake: the sign-off before stands")
+  assert.equal(run("Done"), false, "after the human's Done: a reply")
+  assert.equal(run("Done 1 of 2:\n- [x] Approve the npm sign-in.\n- [ ] Merge it."), false, "a partial report too")
+})
