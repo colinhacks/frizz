@@ -32,6 +32,20 @@ interface NestedSocket {
   visitor: SocketLike
   /** Resolves once the board says whether it could open its end. */
   settle?: (ok: boolean) => void
+  /** The end of the wait for that answer. */
+  timer?: unknown
+}
+
+/**
+ * Where a streamed body goes. `end()` is the body finishing; `end(cut)` is it stopping SHORT, and the
+ * visitor's response must then fail rather than end. A board's answer carries no content-length through
+ * the relay (RELAY_STRIPPED_HEADERS), so a cleanly ended short body is indistinguishable from a whole one,
+ * and a browser keeps it: a script cut by a drop was cached with its ETag, revalidated to a 304 on the
+ * next load, and broke the board on every reload after.
+ */
+export interface RelayedStream {
+  push: (chunk: Uint8Array) => void
+  end: (cut?: string) => void
 }
 
 /**
@@ -56,7 +70,7 @@ interface Pending {
   settle: (response: RelayedResponse) => void
   fail: (reason: string) => void
   /** Present once a streamed body is underway. */
-  stream?: { push: (chunk: Uint8Array) => void; end: () => void }
+  stream?: RelayedStream
   frame: RequestFrame
   /**
    * The key of the board it was framed for. Its validators were filtered for that key and its answer is
@@ -121,12 +135,32 @@ const BOARD_EXPECTED_BACK_MS = 60_000
 /** How many times one visitor request may be sent. Enough for a reconnect or two, never a loop. */
 const REPLAY_LIMIT = 3
 
+/** How many ids the relay remembers telling the board to drop, so a stream it no longer wants is cancelled once, not per chunk. */
+const CANCELLED_MEMORY = 256
+
 /**
  * Methods the relay may send to the board again when the socket it went down died before an answer
  * came back. Whether the board saw the first one is unknowable, so only a request that is safe to repeat
  * is repeated (RFC 9110 §9.2.1): a page, an asset, an RPC query. A mutation is a POST, and fails as before.
  */
 const REPEATABLE_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"])
+
+/**
+ * Query parameters that make a GET single-use, so it is never sent twice. `frizz_code` is a sign-in link's
+ * code (ACCESS_CODE_PARAM in packages/server/src/restart-supervisor.ts), redeemed by the GET that carries it:
+ * the board redeems it, the socket drops before the redirect comes back, and a second sending is answered
+ * "This link was already used" by a board that has just signed the phone in.
+ */
+const SINGLE_USE_PARAMS: readonly string[] = ["frizz_code"]
+
+const singleUse = (url: string): boolean => {
+  try {
+    const params = new URL(url).searchParams
+    return SINGLE_USE_PARAMS.some((name) => params.has(name))
+  } catch {
+    return true
+  }
+}
 
 export class BoardSocket {
   private socket: SocketLike | null = null
@@ -143,6 +177,8 @@ export class BoardSocket {
   /** Rebuilds board messages that were too large for one frame. See RELAY_MAX_WS_CHUNK. */
   private readonly inbound = new WsMessageAssembler()
   private readonly timers = new Map<string, unknown>()
+  /** Ids the board was told to drop, request and terminal alike. See CANCELLED_MEMORY. */
+  private readonly cancelled = new Set<string>()
   private counter = 0
   /** Set by `nextId`. See there. */
   private idPrefix: string | null = null
@@ -215,6 +251,7 @@ export class BoardSocket {
     this.socket = socket
     this.key = key
     this.lostAt = null
+    this.cancelled.clear()
     if (previous) {
       // The old socket may simply be a stale reconnect from the same board. Nothing in flight on it
       // can be answered now: a request that is safe to repeat goes down the new socket instead, and
@@ -245,29 +282,56 @@ export class BoardSocket {
     this.failAll("the board disconnected")
   }
 
-  private failAll(reason: string): void {
+  /**
+   * Drop a board whose key no longer owns the name. Unlike `detach`, nothing waits for it to come back:
+   * what it had in flight, and what waits for it, was framed for its key and goes to no other board, and
+   * a visitor asking now is told at once that the name has no board rather than held for one that will
+   * not be let back in.
+   */
+  retire(socket: SocketLike, reason: string): void {
+    if (this.socket !== socket) return
+    this.socket = null
+    this.lostAt = null
+    this.failAll(reason, { resend: false })
+    for (const entry of [...this.waiting]) {
+      this.finish(entry)
+      entry.fail(reason)
+    }
+  }
+
+  /**
+   * The board's socket went while nothing here held it: the Durable Object was asleep, and the close is
+   * what woke it. Visitors in the gap wait for the board, as they would have had the object been awake.
+   */
+  noteLost(): void {
+    if (this.socket) return
+    this.lostAt = this.options.now()
+  }
+
+  private failAll(reason: string, { resend = true }: { resend?: boolean } = {}): void {
     for (const [id, entry] of [...this.pending]) {
       this.pending.delete(id)
       this.clear(id)
       // Not answered yet and safe to send again: hold it for the board to come back, which it nearly
       // always does within a second or two. See BOARD_RETURN_GRACE_MS.
-      if (this.mayResend(entry)) {
+      if (resend && this.mayResend(entry)) {
         this.wait(entry, reason)
         continue
       }
       this.finish(entry)
       entry.fail(reason)
       // A settled head cannot be failed — the promise already resolved — so a streaming response has
-      // to be ENDED here or it stays open with nothing left to feed it. Before this line, a board
-      // that disconnected left every visitor's SSE response open indefinitely, and those orphaned
-      // streams held the Durable Object awake (and billed) for days.
-      entry.stream?.end()
+      // to be CUT here or it stays open with nothing left to feed it. Before this line, a board that
+      // disconnected left every visitor's SSE response open indefinitely, and those orphaned streams
+      // held the Durable Object awake (and billed) for days. Cut, not ended: see RelayedStream.
+      entry.stream?.end(reason)
     }
     // A terminal is useless once the board it was typing into has gone. Closing tells the browser at
     // once, instead of leaving a dead pane that looks live until someone types into it.
     for (const [id, session] of [...this.nested]) {
       this.nested.delete(id)
       this.inbound.forget(id)
+      this.options.clearTimer?.(session.timer)
       session.settle?.(false)
       try {
         session.visitor.close(1001, reason)
@@ -293,11 +357,19 @@ export class BoardSocket {
       this.options.setTimer(() => {
         if (!this.pending.delete(id)) return
         this.timers.delete(id)
-        entry.stream?.end()
+        entry.stream?.end("the board stopped sending its answer")
         // The board's local request is still producing. Abort it, or it streams into the void forever.
-        this.send({ t: "req-cancel", id })
+        this.cancel(id)
       }, STREAM_IDLE_TIMEOUT_MS)
     )
+  }
+
+  /** Tell the board to drop what it is producing under `id`, once. */
+  private cancel(id: string): void {
+    if (this.cancelled.has(id)) return
+    this.cancelled.add(id)
+    if (this.cancelled.size > CANCELLED_MEMORY) this.cancelled.delete(this.cancelled.values().next().value!)
+    this.send(id.startsWith("w") ? { t: "ws-close", id } : { t: "req-cancel", id })
   }
 
   private send(frame: RelayDownFrame): boolean {
@@ -319,9 +391,16 @@ export class BoardSocket {
    */
   async request(
     input: { method: string; url: string; headers: Array<[string, string]>; body?: Uint8Array },
-    stream?: { push: (chunk: Uint8Array) => void; end: () => void }
+    stream?: RelayedStream,
+    /**
+     * The key of the board the request was framed for: its validators were filtered for that key and its
+     * answer will be tagged with it (visitor-headers.ts), so it goes to no board of another key. Defaults
+     * to the current board's.
+     */
+    key: string | null = this.key
   ): Promise<RelayedResponse> {
     if (!this.socket && !this.expectingBoard()) throw new Error("the board is not connected")
+    if (this.socket && key !== this.key) throw new Error("the board's key changed")
 
     return new Promise((resolve, reject) => {
       const entry: Pending = {
@@ -336,13 +415,15 @@ export class BoardSocket {
           ...(input.body && input.body.byteLength > 0 ? { body: encodeBody(input.body) } : {}),
         },
         sends: 0,
-        key: this.key,
+        key,
       }
       if (this.options.setTimer) {
         entry.deadline = this.options.setTimer(() => {
           if (this.pending.get(entry.id) === entry) {
             this.pending.delete(entry.id)
             this.clear(entry.id)
+            // The board has it and may still answer, or start a stream nobody will read.
+            this.cancel(entry.id)
           }
           this.finish(entry)
           entry.fail("the board did not answer in time")
@@ -360,6 +441,7 @@ export class BoardSocket {
       !entry.answered &&
       entry.sends < REPLAY_LIMIT &&
       REPEATABLE_METHODS.has(entry.frame.method.toUpperCase()) &&
+      !singleUse(entry.frame.url) &&
       this.options.setTimer !== undefined &&
       this.options.boardReturnGraceMs > 0
     )
@@ -433,11 +515,13 @@ export class BoardSocket {
         return
       }
       if (this.options.setTimer) {
-        this.options.setTimer(() => {
+        // Cleared once the board answers: an armed timer keeps the Durable Object awake, and billed.
+        this.nested.get(id)!.timer = this.options.setTimer(() => {
           const session = this.nested.get(id)
           if (!session?.settle) return // already answered
           this.nested.delete(id)
           session.settle(false)
+          this.cancel(id)
         }, this.options.requestTimeoutMs)
       }
     })
@@ -459,13 +543,22 @@ export class BoardSocket {
 
   /** The visitor's side closed. Tell the board so it can close its local end too. */
   closeWebSocket(id: string, code?: number): void {
+    const session = this.nested.get(id)
+    if (session) this.options.clearTimer?.(session.timer)
     this.nested.delete(id)
     this.inbound.forget(id)
     this.send({ t: "ws-close", id, ...(code !== undefined ? { code } : {}) })
   }
 
-  /** A frame arrived from the board. Unknown ids are ignored — a late answer is not an error. */
-  handleFrame(raw: string): void {
+  /**
+   * A frame arrived from the board, on `from`. Only the CURRENT board is heard: a socket the relay has
+   * replaced or dropped stays open until its far end answers the close, which a hostile old holder of the
+   * name need never do, and ids are sequential, so it could otherwise answer the next owner's visitors.
+   * Unknown ids are ignored — a late answer is not an error — except that whatever the board is still
+   * producing for one is cancelled, or it streams into this object, waking it, until the socket goes.
+   */
+  handleFrame(raw: string, from: SocketLike | null = this.socket): void {
+    if (from === null || from !== this.socket) return
     const frame = parseFrame(raw) as RelayUpFrame | null
     if (!frame) return
     const entry = this.pending.get(frame.id)
@@ -474,7 +567,11 @@ export class BoardSocket {
       case "res": {
         // A second head for one request is a board breaking the protocol. Taking it would drop the entry
         // while its stream is open, and leave the visitor's response, and the object, open for good.
-        if (!entry || entry.answered) return
+        if (!entry) {
+          if (!frame.end) this.cancel(frame.id)
+          return
+        }
+        if (entry.answered) return
         this.clear(frame.id)
         entry.answered = true
         this.finish(entry)
@@ -491,7 +588,10 @@ export class BoardSocket {
         return
       }
       case "res-chunk": {
-        if (!entry) return
+        if (!entry) {
+          this.cancel(frame.id)
+          return
+        }
         this.clear(frame.id)
         this.armIdleTimer(frame.id, entry)
         try {
@@ -501,8 +601,8 @@ export class BoardSocket {
           // keeps producing chunks for a reader that no longer exists — each one waking this object.
           this.pending.delete(frame.id)
           this.clear(frame.id)
-          entry.stream?.end()
-          this.send({ t: "req-cancel", id: frame.id })
+          entry.stream?.end("the visitor hung up")
+          this.cancel(frame.id)
         }
         return
       }
@@ -510,12 +610,20 @@ export class BoardSocket {
         if (!entry) return
         this.pending.delete(frame.id)
         this.clear(frame.id)
-        entry.stream?.end()
+        // `aborted`: the board's own response broke off, so the body is short. See RelayedStream.
+        entry.stream?.end(frame.aborted ? "the board's answer broke off" : undefined)
         return
       }
       case "ws-ack": {
         const session = this.nested.get(frame.id)
-        if (!session) return
+        if (!session) {
+          // A terminal the board opened for nobody: the visitor gave up waiting, or this object woke
+          // without it. Left open, it holds one of the board's RELAY_MAX_OPEN_SOCKETS for good.
+          if (frame.ok) this.cancel(frame.id)
+          return
+        }
+        this.options.clearTimer?.(session.timer)
+        delete session.timer
         const settle = session.settle
         delete session.settle
         if (!frame.ok) this.nested.delete(frame.id)
@@ -524,7 +632,10 @@ export class BoardSocket {
       }
       case "ws-msg": {
         const session = this.nested.get(frame.id)
-        if (!session) return
+        if (!session) {
+          this.cancel(frame.id)
+          return
+        }
         const whole = this.inbound.push(frame.id, frame.data, frame.more)
         if (whole === null) return
         try {

@@ -485,3 +485,34 @@ test("a malformed terminal frame is refused, and leaves nothing to keep", () => 
     assert.ok(session.failed);
   }
 });
+
+test("a streamed body the board breaks off part-way is reported as broken off, not as ended", async () => {
+  // The relay ends the visitor's copy the way the board ends its answer, and a short body ended cleanly
+  // reads as whole: a browser caches it, ETag and all.
+  const b = await board((_, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.write("first half;");
+    setTimeout(() => res.destroy(), 20);
+  });
+  const out = collect();
+  try {
+    await serveToEnd(
+      { t: "req", id: "1", method: "GET", url: `${b.origin}/`, headers: [] },
+      { origin: b.origin, send: out.send, publicOrigin: "https://ada.frizz.sh" },
+    );
+    assert.equal(text(out.frames), "first half;");
+    assert.deepEqual(out.frames.at(-1), { t: "res-end", id: "1", aborted: true });
+  } finally { await b.close(); }
+});
+
+test("a page load on a board that is down gets a page that loads the board again by itself", async () => {
+  const out = collect();
+  await serveToEnd(
+    { t: "req", id: "1", method: "GET", url: "http://127.0.0.1:1/", headers: [["sec-fetch-mode", "navigate"]] },
+    { origin: "http://127.0.0.1:1", send: out.send, publicOrigin: "https://ada.frizz.sh" },
+  );
+  const head = out.frames[0] as Extract<RelayUpFrame, { t: "res" }>;
+  assert.equal(head.status, 502);
+  assert.ok(head.headers.some(([name, value]) => name === "content-type" && value.startsWith("text/html")));
+  assert.match(text(out.frames), /location\.reload\(\)/);
+});

@@ -6,7 +6,9 @@ import {
   chunkWsMessage,
   decodeBody,
   encodeBody,
+  isNavigation,
   RELAY_MAX_FRAME_BODY,
+  relayUnavailablePage,
   serializeFrame,
   stripHopByHop,
   WsMessageAssembler,
@@ -155,8 +157,9 @@ export function serveRelayRequest(frame: Extract<RelayDownFrame, { t: "req" }>, 
             send({ t: "res-end", id: frame.id });
             resolve();
           });
+          // Broken off part-way: said so, or the relay ends the visitor's copy as though it were whole.
           res.on("error", () => {
-            send({ t: "res-end", id: frame.id });
+            send({ t: "res-end", id: frame.id, aborted: true });
             resolve();
           });
           return;
@@ -200,13 +203,21 @@ export function serveRelayRequest(frame: Extract<RelayDownFrame, { t: "req" }>, 
 
     req.on("error", (error) => {
       // The board is on the same machine, so this is almost always "it just went down". Answer rather
-      // than leaving the visitor to time out, and say something they can act on.
+      // than leaving the visitor to time out, and say something they can act on. A page load gets a page
+      // that loads the board again by itself, since Frizz is usually back within seconds of going down.
+      const page = isNavigation(frame.method, frame.headers);
+      const text = page
+        ? relayUnavailablePage("Frizz is not answering on this machine.", `${error.message}. This page tries again on its own.`)
+        : `Frizz is not answering on this machine: ${error.message}`;
       send({
         t: "res",
         id: frame.id,
         status: 502,
-        headers: [["content-type", "text/plain; charset=utf-8"]],
-        body: encodeBody(new TextEncoder().encode(`Frizz is not answering on this machine: ${error.message}`)),
+        headers: [
+          ["content-type", page ? "text/html; charset=utf-8" : "text/plain; charset=utf-8"],
+          ["cache-control", "no-store"],
+        ],
+        body: encodeBody(new TextEncoder().encode(text)),
         end: true,
       });
       resolve();
