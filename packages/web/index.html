@@ -42,16 +42,22 @@
     </script>
     <!-- BOOT WATCHDOG. A boot script or stylesheet that fails to load (a board's answer cut by the relay, a
          504) left a blank page that nothing retried, and a board opened from a phone's home screen has no
-         reload button: only killing the app brought it back. So a failed entry module, a failed preload
-         before main.tsx has run, or a failed stylesheet before the page has loaded puts up a line saying
-         so and loads the page again, on a backoff and when it comes back into view. Lazy chunks are not
-         its business: main.tsx sets `frizzBooted` once it runs, and lib/lazyModule retries those. -->
+         reload button: only killing the app brought it back. So a failed entry module or preload before
+         main.tsx has run, or a failed stylesheet before the page has loaded, puts up a line saying so and
+         loads the page again, on a backoff and when it comes back into view. Lazy chunks are not its
+         business: main.tsx sets `frizzBooted` once it runs, and lib/lazyModule retries those.
+         Only the board's own files count. Cloudflare injects its analytics beacon into every page served
+         through frizz.sh, as a module script from another origin that the page's script policy refuses,
+         and counting that one reloaded a booted board every two seconds, forever (2026-11-18): main.tsx
+         clears the backoff each time it boots. -->
     <script>
       addEventListener("error", (event) => {
         const el = event.target
         if (!el || el === window || window.frizzBootFailed) return
+        const url = el.src || el.href
+        if (typeof url !== "string" || !url.startsWith(location.origin + "/")) return
         const failed =
-          (el.tagName === "SCRIPT" && el.type === "module") ||
+          (el.tagName === "SCRIPT" && el.type === "module" && !window.frizzBooted) ||
           (el.tagName === "LINK" && el.rel === "modulepreload" && !window.frizzBooted) ||
           (el.tagName === "LINK" && el.rel === "stylesheet" && document.readyState !== "complete")
         if (!failed) return
