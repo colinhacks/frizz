@@ -22,6 +22,7 @@ import { showToast, store } from "../store.ts"
 import { STATUS_ROW_ACTION, STATUS_ROW_ICON } from "../lib/statusRow.ts"
 import { AnchoredLayer, type AnchorRect, type LayerSize, type Viewport } from "./ui/AnchoredLayer.tsx"
 import { BootSteps, bootViewFraction } from "./BootProgress.tsx"
+import { navigate } from "../lib/navigation.ts"
 
 // RefreshCw's arrowheads advance clockwise, matching Tailwind's clockwise animate-spin keyframes.
 // Keep this exported contract covered by the focused component test when either icon or animation changes.
@@ -525,7 +526,7 @@ export function useUpdateRestart() {
         window.dispatchEvent(new Event(FRIZZ_SUPERVISOR_STATUS_WAKE_EVENT))
         setBusy(false)
       } else {
-        window.location.replace(destination)
+        navigate(destination, { replace: true, reason: "Restart Frizz" })
       }
     } catch (caught) {
       if (quiet) {

@@ -26,6 +26,7 @@ test("each layer covers what it is declared to cover", () => {
     ["selectInPopover", "popover", "the agent-settings popover's Selects open over the popover"],
     ["toast", "selectInPopover", "a toast fired from inside a dialog or popover is readable over it"],
     ["restart", "toast", "the restart scrim covers the whole app"],
+    ["pageStopped", "restart", "a page that stopped reloading itself says so over everything, a restart included"],
   ]
   for (const [upper, lower, why] of covers) {
     const below = typeof lower === "number" ? lower : LAYER[lower]
@@ -43,10 +44,11 @@ test("each layer's class string names its number", () => {
     assert.match(cls, /^z-(\d+|\[\d+\])$/, `${name} must be one literal z utility, so Tailwind generates it`)
     assert.equal(Number(cls.replace(/\D/g, "")), LAYER[key], `${name} is ${cls}, but LAYER.${key} is ${LAYER[key]}`)
   }
-  // Every layer anything can be placed in has its class, except the drawer band, placed by drawerZ.
+  // Every layer anything can be placed in has its class, except the drawer band, placed by drawerZ, and
+  // the stopped-page panel, which index.html's inline script draws before any module has loaded.
   const named = new Set(classes.map(([name]) => camel(name)))
   for (const key of Object.keys(LAYER)) {
-    if (key === "drawer" || key === "drawerCeiling") continue
+    if (key === "drawer" || key === "drawerCeiling" || key === "pageStopped") continue
     assert.ok(named.has(key), `LAYER.${key} has no Z_ class`)
   }
 })

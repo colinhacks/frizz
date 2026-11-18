@@ -6,6 +6,7 @@ import { noteServerBootId } from "./boot.ts"
 import { basePath, projectSlug } from "../lib/base-path.ts"
 import { boardThreadHref } from "../lib/router.ts"
 import { expandBoardDelta } from "./wirePatch.ts"
+import { navigate } from "../lib/navigation.ts"
 
 // The transport-agnostic board/notify handler — the delta/seq/boot state machine, shared so BOTH
 // transports drive it identically: SSE (sse.ts, the fallback) and the /ws multiplex (socket.ts).
@@ -164,7 +165,7 @@ export function notify(event: Extract<ServerEvent, { type: "notify" }>): void {
     if (project === undefined || projectSlug() === project) {
       openThread(event.slug) // side drawer: chat, or the frizz doc for a never-spawned thread
     } else {
-      location.assign(boardThreadHref(event.slug, project))
+      navigate(boardThreadHref(event.slug, project), { reason: "a notification was clicked" })
     }
     n.close()
   }

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { rpc } from "../api/rpc.ts"
 import { projectHref } from "../lib/base-path.ts"
 import { standaloneThreadHref } from "../lib/standaloneThreadRoute.ts"
+import { navigate } from "../lib/navigation.ts"
 
 // The page a thread's own path draws when this project has no such thread: the board's pane on a desktop
 // (ThreadPane), the full-screen page on a phone (StandaloneThreadPage). One copy, so both go looking.
@@ -36,7 +37,7 @@ export function MissingThread({ slug }: { slug: string }) {
   })
   // Exactly one owner is the overwhelmingly common case, and there is nothing to choose between.
   useEffect(() => {
-    if (data?.length === 1) location.replace(standaloneHrefIn(data[0].projectSlug, slug))
+    if (data?.length === 1) navigate(standaloneHrefIn(data[0].projectSlug, slug), { replace: true, reason: "the thread lives in another project" })
   }, [data, slug])
 
   return (

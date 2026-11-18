@@ -7,6 +7,7 @@ import { disarmFullscreenMorph } from "./lib/fullscreenMorph.ts"
 import { closeDrawerAnimated, focusDrawer } from "./lib/overlays.ts"
 import { resolveThreadRoute } from "./lib/threadRouteState.ts"
 import { parseStandaloneThreadPath, standaloneThreadHref } from "./lib/standaloneThreadRoute.ts"
+import { navigate } from "./lib/navigation.ts"
 import { ownedByThisPage } from "./lib/projectOwnership.ts"
 import { innerPath, isConsolePath } from "./lib/base-path.ts"
 import { isMobileViewport } from "./lib/mobile.ts"
@@ -319,7 +320,7 @@ export function openThread(slugOrKey: string): void {
   const slug = consoleThreadKey(slugOrKey)
   // A bare slug the Console cannot place: its own project's full page finds it (MissingThread).
   if (slug === null) {
-    if (typeof location !== "undefined") location.assign(standaloneThreadHref(slugOrKey))
+    navigate(standaloneThreadHref(slugOrKey), { reason: "a thread the Console cannot place" })
     return
   }
   const t = store.board?.threads.find((x) => x.id === slug)
@@ -351,7 +352,7 @@ export function resolveRoutedThread(): void {
   // unprefixed full page, whose MissingThread asks the server which project owns it.
   const slug = consoleThreadKey(routed)
   if (slug === null) {
-    if (typeof location !== "undefined") location.replace(standaloneThreadHref(routed))
+    navigate(standaloneThreadHref(routed), { replace: true, reason: "a thread link the Console cannot place" })
     return
   }
   const route = resolveThreadRoute(store.board, slug, threadBySlug)
@@ -367,7 +368,7 @@ export function resolveRoutedThread(): void {
       showInPane(slug)
       return
     }
-    if (typeof location !== "undefined") location.replace(standaloneThreadHref(slug))
+    navigate(standaloneThreadHref(slug), { replace: true, reason: "a thread link this project does not have" })
     return
   }
   pushDrawer("thread", slug, { routed: true })

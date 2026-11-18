@@ -20,6 +20,7 @@ import {
 import { formatCompactElapsed } from "../lib/durationLabels.ts"
 import { RestartOverlay } from "./RestartOverlay.tsx"
 import type { BootView } from "@frizz/shared"
+import { navigate } from "../lib/navigation.ts"
 
 // THE FRAME BOTH PAGE SHELLS STAND IN: what a tab does about the SERVER it is talking to, whichever
 // page it is showing. The app has two shells — the board (App.tsx, the Console included) and the
@@ -113,7 +114,7 @@ function useControlPlane(): { restarting: boolean; message: string | null; hold:
         sessionStorage.removeItem(RELOAD_AFTER_UPDATE_RESTART)
         sessionStorage.removeItem(UPDATE_RESTART_FROM_VERSION)
         reloading.current = true
-        window.location.replace(destination)
+        navigate(destination, { replace: true, reason: "an update restart finished" })
         return
       }
       // Every OTHER tab: no destination was armed here, but the server answering is not the one that
@@ -121,7 +122,7 @@ function useControlPlane(): { restarting: boolean; message: string | null; hold:
       // the URL carries a fragment and would load nothing.
       if (shouldReloadForNewBuild(seenBuild.current, status)) {
         reloading.current = true
-        window.location.reload()
+        navigate(null, { reason: "the server is a newer build than this page" })
         return
       }
     }
