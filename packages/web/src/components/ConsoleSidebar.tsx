@@ -118,7 +118,9 @@ export function ConsoleSidebar() {
   const shelf: PinShelf = group === "status" ? "console" : "board"
   // `dated`: the row carries the rest-time column. Waiting rows do, and Snoozed rows too, as on a project's
   // board (Sidebar.tsx): a parked row says nothing else on the rail. Running and Done rows do not.
-  const row = (t: ThreadView, opts: { square: boolean; waiting: boolean; dated?: boolean }) => (
+  // `dot`: the yellow queue dot, for a waiting row with no Queue label over it — By project's blocks, which
+  // draw each project's waiting rows straight above its running ones. By status's Pinned band draws its own.
+  const row = (t: ThreadView, opts: { square: boolean; waiting: boolean; dated?: boolean; dot?: boolean }) => (
     <div key={t.id}>
       <ThreadRow
         t={t}
@@ -130,6 +132,7 @@ export function ConsoleSidebar() {
         restedAge={opts.dated ?? opts.waiting}
         leading={opts.square ? square(t) : undefined}
         shelf={shelf}
+        queueDot={opts.dot}
       />
       <SubAgentRows t={t} />
     </div>
@@ -211,7 +214,7 @@ export function ConsoleSidebar() {
                 <section key={block.project} aria-label={bySlug.get(block.project)?.name ?? block.project} data-console-project={block.project}>
                   {i > 0 && <hr className="my-3 border-border/50" />}
                   <ProjectHeader project={bySlug.get(block.project)} slug={block.project} />
-                  {block.waiting.map((t) => row(t, { square: false, waiting: true }))}
+                  {block.waiting.map((t) => row(t, { square: false, waiting: true, dot: true }))}
                   <RunningRows
                     project={block.project}
                     rows={block.running}

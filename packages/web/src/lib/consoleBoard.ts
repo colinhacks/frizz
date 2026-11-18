@@ -2,7 +2,7 @@ import { proxy, useSnapshot } from "valtio"
 import type { ThreadView } from "@frizz/shared"
 import { activeBandThread, boardQueuedThread } from "@frizz/shared"
 import { isConsolePinned, orderByInteraction, orderDone, orderQueue, orderRunning, queued, sectionOf } from "../groups.ts"
-import type { QueueDirection } from "../groups.ts"
+import type { PinShelf, QueueDirection } from "../groups.ts"
 import { isConsolePath } from "./base-path.ts"
 import { CONSOLE_BAND_SCOPE, readBandFolds, setBandFolded, type FoldingBand } from "./sidebarBands.ts"
 import type { PendingDispatchEntry } from "./pendingDispatch.ts"
@@ -123,6 +123,13 @@ export function showMoreOfBand(band: ConsoleFoldedBand): void {
 // there. "By project" lifts nothing, whichever pin a thread wears, so a report keeps its card.
 export function holdsCardOnConsole(t: ThreadView, group: ConsoleGroup): boolean {
   return queued(t) && !(group === "status" && t.plainReport === true && isConsolePinned(t))
+}
+
+/** Is a row on this Pinned shelf in the queue the pane steps through? A project board's shelf asks the
+ *  board's queue; the Console's shelf exists only on "By status", so it asks that view's. The row wears
+ *  the yellow queue dot when it is (Sidebar.tsx ThreadRow `queueDot`). */
+export function queuedOnShelf(t: ThreadView, shelf: PinShelf): boolean {
+  return shelf === "console" ? holdsCardOnConsole(t, "status") : boardQueuedThread(t)
 }
 
 /** Does this thread draw a queue card on the page on screen? `needsYou` says it is waiting to be read;

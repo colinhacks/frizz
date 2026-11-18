@@ -39,6 +39,7 @@ import { useProjectScope } from "../lib/projectScope.tsx"
 import { clampToSlots, edgeScrollVelocity, heldStep, moveItem, nearestSlot, shiftFor, type RowSlot } from "../lib/railReorder.ts"
 import { SIDEBAR_WIDTH_CLASS } from "../lib/boardColumns.ts"
 import { RailViewChips } from "./RailViewChips.tsx"
+import { queuedOnShelf } from "../lib/consoleBoard.ts"
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactElement, ReactNode, RefObject } from "react"
 
 // THE LEFT SIDEBAR — the thread list as a FLOATING column (no border, no fill: it floats in the
@@ -223,7 +224,8 @@ export function Sidebar() {
               row (PinnedBand). A row resting on a plain report has no card and no mark beyond its own status
               glyph and rest time (maintainer 2026-11-09, of an unread dot that lived here for three days: "if
               something comes to rest but it doesn't have anything actionable for the human, then why bother
-              giving it a dot?"); a row with an ask or a failure keeps its card.
+              giving it a dot?"); a row with an ask or a failure is in the queue, and wears the yellow queue
+              dot (ThreadRow `queueDot`, 2026-11-17), since no Queue label stands over it here.
               LABELED since 2026-09-19, like every band below it, and NOT collapsible (maintainer: the Pinned,
               Queue and Running labels "should not be collapsible"; Running became collapsible on
               2026-11-11) — the header is the static form of SectionHeader, so it lines up with the
@@ -577,7 +579,7 @@ export function PinnedBand({ threads, railRef, activeId, shelf = "board", leadin
             {/* Undated only while it SPINS: actively running and holding no queue card. A queued row with
                 live work out (an open question beside a running sub-agent) wears the queue's glyph, not a
                 spinner, and the cue would date it — so it is dated here too. */}
-            <ThreadRow t={t} active={activeId === t.id} shelf={shelf} leading={leading?.(t)} restedAge={t.needsYou === true || !isActivelyRunning(t)} />
+            <ThreadRow t={t} active={activeId === t.id} shelf={shelf} leading={leading?.(t)} restedAge={t.needsYou === true || !isActivelyRunning(t)} queueDot={queuedOnShelf(t, shelf)} />
             <SubAgentRows t={t} />
           </div>
         )
@@ -804,8 +806,12 @@ export const ThreadRow = memo(function ThreadRow({
   restedAge = false,
   leading,
   shelf = "board",
+  queueDot = false,
 }: {
   t: ThreadView
+  /** The yellow dot in the gutter: this thread is in the queue, and its row stands where no Queue label
+   *  says so — the Pinned shelf, or a project's block on the Console. See the dot below. */
+  queueDot?: boolean
   legacy?: boolean
   active?: boolean
   /** Show the right-justified rest-time column: the cue, Pinned, Snoozed and External rows — see RestedAge. */
@@ -866,6 +872,18 @@ export const ThreadRow = memo(function ThreadRow({
           while the fixed rail keeps it from shifting content or relying on clipped overflow. */}
       <span aria-hidden="true" data-sidebar-marker-rail className="pointer-events-none absolute inset-y-0 left-0 w-5">
         {active && <span data-sidebar-scroll-marker className="absolute inset-y-0 left-1 w-[2px] rounded-full bg-accent" />}
+        {/* THE QUEUE DOT (maintainer 2026-11-17: "we need an indicator when a thread that's in the queue
+            is awaiting human attention. Probably just a yellow dot"). A row in the Queue band needs none:
+            the band is the emphasis, which is why the "?" mark stays gray (sessionStateIndicatorFor). A
+            queued row anywhere else had nothing at all, so a pinned question read exactly like a pinned
+            timer park, and "10 threads are waiting on you" stood over a Queue band of 7. A pinned plain
+            report is not queued and stays unmarked (2026-11-09). The accent, because on the rail it
+            means "awaiting you" (styles.css).
+            MEASURED 2026-11-17 at a real 2x (--force-device-scale-factor; an emulated scale snaps the dot
+            to whole pixels and misread it by 0.5px), sans: its centre is the status box's to 0.00px and
+            0.25px above the title's cap band. Ink gaps: 3px from the pane's marker bar on the open row
+            (at 2px the two yellow marks ran together), 5.5px to the status box. */}
+        {queueDot && <span data-sidebar-queue-dot className="absolute left-[9px] top-[10.5px] size-1.5 rounded-full bg-accent" />}
       </span>
       <button
         // The board's pane shows it (store openThread → pushDrawer), queued or not.
@@ -873,6 +891,7 @@ export const ThreadRow = memo(function ThreadRow({
         aria-current={active ? "location" : undefined}
         className="min-w-0 flex-1 flex items-start gap-2 pb-1 pl-5 pr-1.5 pt-1 text-left"
       >
+        {queueDot && <span className="sr-only">In the queue. </span>}
         {leading}
         {/* h-[19px] so the indicator centers on the title's FIRST line, not the middle of a wrapped row. */}
         <span className="w-4 h-[19px] shrink-0 flex items-center justify-center">
