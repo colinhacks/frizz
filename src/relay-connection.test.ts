@@ -370,7 +370,8 @@ test("a frame nothing can make sense of costs that one frame, and the next is se
 test("one connection can only open so much, and past that each new one is refused cleanly", async () => {
   // A board that accepts and does not answer, so each request and terminal stays open until told.
   const heldTerminals: Array<import("node:http").ServerResponse> = [];
-  const server = createServer((req, res) => { if (req.url === "/ws") heldTerminals.push(res); });
+  let heldRequests = 0;
+  const server = createServer((req, res) => { if (req.url === "/ws") heldTerminals.push(res); else heldRequests++; });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as { port: number }).port;
   const h = harness({ boardOrigin: `http://127.0.0.1:${port}` });
@@ -400,6 +401,15 @@ test("one connection can only open so much, and past that each new one is refuse
     socket.fire("message", { data: serializeFrame({ t: "req-cancel", id: "r0" }) });
     request("next");
     assert.equal(answered().length, 1, "room was made, and the new request is in flight");
+
+    // Let the requests' connections land before the terminals dial. Every one above was dialed in the
+    // same tick, and macOS 27 resets a burst past the listen backlog (kern.ipc.somaxconn, 128) where
+    // earlier releases dropped the SYN for a retry, so 64 terminals dialed on top of 256 requests were
+    // all refused at connect (2026-11-18). A request the board refused is answered with a 502 instead.
+    await eventually(
+      () => heldRequests + answered().filter((f) => (f as { status?: number }).status !== 503).length >= RELAY_MAX_OPEN_REQUESTS,
+      "every request reached the board or was answered",
+    );
 
     for (let i = 0; i <= RELAY_MAX_OPEN_SOCKETS; i++) terminal(`w${i}`);
     assert.deepEqual(refusedTerminals(), [`w${RELAY_MAX_OPEN_SOCKETS}`]);
