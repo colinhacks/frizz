@@ -379,7 +379,10 @@ export function FocusRail({ thread, centred = false }: { thread: ThreadView; cen
     // `centred` is the one-thread pane's: there the maintainer wants the column centred in the
     // window again, lists included (2026-11-09, "I want it to be vertically centered"), by the same auto
     // margins, so a list taller than the window still opens at its top.
-    <aside data-focus-rail aria-label="Thread activity" className="flex h-full shrink-0 flex-col overflow-y-auto px-4 [view-transition-name:thread-rail]" style={{ width: RAIL_WIDTH }}>
+    //
+    // `--focus-rail-w` is the one-thread pane's rail as the reader dragged it (ThreadPane); /full sets none
+    // and keeps RAIL_WIDTH.
+    <aside data-focus-rail aria-label="Thread activity" className="flex h-full shrink-0 flex-col overflow-y-auto px-4 [view-transition-name:thread-rail]" style={{ width: `var(--focus-rail-w, ${RAIL_WIDTH}px)` }}>
       <div className={groups.length === 0 || centred ? "my-auto py-6" : "pb-6 pt-14"}>
         {groups.length === 0
           ? <div className="text-[11.5px] text-muted-50">Nothing running, watched or edited yet.</div>

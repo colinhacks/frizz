@@ -140,15 +140,30 @@ export function sendAndNext(canSend: boolean, submit: () => void): void {
 // screen brings the rail back.
 export const PANE_WIDE_MIN_PX = 1360
 export const PANE_THREAD_PX = 720
-export const PANE_SIDEBAR_MAX_PX = 480
-// The rail's 340 is FocusRail's RAIL_WIDTH, which this file sits under.
-const WIDEST_COLUMNS_PX = PANE_SIDEBAR_MAX_PX + PANE_THREAD_PX + 340
-const WIDEST_PAIR_PX = PANE_SIDEBAR_MAX_PX + PANE_THREAD_PX
 
-/** Where the sidebar's left edge stands, as a CSS length of the page: past the columns' greatest widths,
- *  the far left and far right share what is left over. `rail` is whether the rail stands beside them. */
-export function paneSidebarLeft(rail: boolean): string {
-  return `max(0px, calc((100% - ${rail ? WIDEST_COLUMNS_PX : WIDEST_PAIR_PX}px) / 2))`
+// THE SIDEBAR AND THE RAIL TAKE THE WIDTHS THE READER DRAGS THEM TO, AND THE THREAD TAKES THE REST. The
+// lines between the columns are resize handles (components/ThreadPane.tsx PaneResizeHandle); each width is
+// remembered per browser (lib/prefs.ts) and clamped here, so a value stored on another screen, or by hand,
+// still lays out. The defaults are the widths the columns held before they could be dragged: the sidebar's
+// old ceiling, 480, and FocusRail's RAIL_WIDTH, 340, which this file sits under.
+export const PANE_SIDEBAR_DEFAULT_PX = 480
+export const PANE_SIDEBAR_MAX_PX = 720
+export const PANE_RAIL_DEFAULT_PX = 340
+export const PANE_RAIL_MIN_PX = 280
+export const PANE_RAIL_MAX_PX = 640
+
+function clampWidth(stored: number | null, fallback: number, min: number, max: number): number {
+  return Math.round(Math.min(max, Math.max(min, stored ?? fallback)))
+}
+
+/** The sidebar's chosen width, before the window has its say (the pane's CSS clamp shrinks it to fit). */
+export function paneSidebarWidth(stored: number | null, min: number): number {
+  return clampWidth(stored, PANE_SIDEBAR_DEFAULT_PX, min, PANE_SIDEBAR_MAX_PX)
+}
+
+/** The artifact rail's chosen width beside a thread in the three columns. */
+export function paneRailWidth(stored: number | null): number {
+  return clampWidth(stored, PANE_RAIL_DEFAULT_PX, PANE_RAIL_MIN_PX, PANE_RAIL_MAX_PX)
 }
 const WIDE_QUERY = `(min-width: ${PANE_WIDE_MIN_PX}px)`
 

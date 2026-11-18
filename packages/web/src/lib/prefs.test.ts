@@ -63,3 +63,13 @@ test("Mark as done keeps a pin by default and only a stored boolean makes it unp
   assert.equal(parseStoredPrefs(JSON.stringify({ doneUnpins: true })).doneUnpins, true)
   assert.equal(parseStoredPrefs(JSON.stringify({ doneUnpins: "yes" })).doneUnpins, false)
 })
+
+test("the pane's dragged column widths default to null and keep only a finite number", () => {
+  assert.equal(parseStoredPrefs(null).paneSidebarWidth, null)
+  assert.equal(parseStoredPrefs(null).paneRailWidth, null)
+  const stored = parseStoredPrefs(JSON.stringify({ paneSidebarWidth: 560, paneRailWidth: 420 }))
+  assert.equal(stored.paneSidebarWidth, 560)
+  assert.equal(stored.paneRailWidth, 420)
+  assert.equal(parseStoredPrefs(JSON.stringify({ paneSidebarWidth: "560" })).paneSidebarWidth, null)
+  assert.equal(parseStoredPrefs(JSON.stringify({ paneRailWidth: null })).paneRailWidth, null)
+})

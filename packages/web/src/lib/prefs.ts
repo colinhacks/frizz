@@ -41,6 +41,15 @@ export interface Prefs {
   // take it off the pinned list too. Ticked in the done card's split button (ThreadLifecycle
   // DonePinChoice), and read by every completion in this browser (lib/completionPins.ts).
   doneUnpins: boolean
+  // The one-thread pane's sidebar and artifact rail widths in px, as the reader last dragged them on the
+  // lines between the columns; null is the pane's own default. Clamped where the pane reads them
+  // (lib/threadPane.ts paneSidebarWidth / paneRailWidth), so a stale or hand-edited value cannot break it.
+  paneSidebarWidth: number | null
+  paneRailWidth: number | null
+}
+
+function finiteOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null
 }
 
 function stringRecord(v: unknown): Record<string, string> {
@@ -67,6 +76,8 @@ export function parseStoredPrefs(raw: string | null): Prefs {
     wrapCode: true,
     mcpIgnored: {},
     doneUnpins: false,
+    paneSidebarWidth: null,
+    paneRailWidth: null,
   }
   try {
     if (!raw) return fallback
@@ -82,6 +93,8 @@ export function parseStoredPrefs(raw: string | null): Prefs {
       wrapCode: typeof stored.wrapCode === "boolean" ? stored.wrapCode : fallback.wrapCode,
       mcpIgnored: stringRecord(stored.mcpIgnored),
       doneUnpins: typeof stored.doneUnpins === "boolean" ? stored.doneUnpins : fallback.doneUnpins,
+      paneSidebarWidth: finiteOrNull(stored.paneSidebarWidth),
+      paneRailWidth: finiteOrNull(stored.paneRailWidth),
     }
   } catch {
     return fallback

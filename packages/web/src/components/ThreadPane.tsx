@@ -17,8 +17,9 @@ import { useOptimisticallySteered } from "../lib/steering.ts"
 import { keyProject } from "../lib/threadKey.ts"
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import {
-  advanceFrom, nextQueuedAfter, openFirstQueued, PANE_SIDEBAR_MAX_PX, PANE_THREAD_PX, paneAfterSend, paneProto, paneRailWanted, publishPaneQueue, reinstate,
-  setPaneFolded, setPaneRailShown, stepPane, takeComposerFocus, usePaneSplit, usePaneWide,
+  advanceFrom, nextQueuedAfter, openFirstQueued, PANE_RAIL_MAX_PX, PANE_RAIL_MIN_PX, PANE_SIDEBAR_MAX_PX, PANE_THREAD_PX, paneAfterSend, paneProto,
+  paneRailWanted, paneRailWidth, paneSidebarWidth, publishPaneQueue, reinstate, setPaneFolded, setPaneRailShown, stepPane, takeComposerFocus,
+  usePaneSplit, usePaneWide,
 } from "../lib/threadPane.ts"
 import { store } from "../store.ts"
 import { ErrorBoundary } from "./ErrorBoundary.tsx"
@@ -27,19 +28,22 @@ import { SidePane, ThreadView } from "./lazySurfaces.tsx"
 import { ThreadPageZone } from "./ThreadPageZone.tsx"
 import { LastActive } from "./LastActive.tsx"
 import { Tooltip } from "./Tooltip.tsx"
-import { LAYOUT_VARS, RAIL_WIDTH } from "../lib/fullLayout.ts"
+import { LAYOUT_VARS } from "../lib/fullLayout.ts"
 
 // THE ONE-THREAD PANE (see lib/threadPane.ts): the board as a sidebar and one thread at full
 // height. The thread is the same ThreadView the drawer and /full draw; everything a queue card did about
 // scrolling and fading is simply absent, because nothing here moves but the swap of one thread for another.
 
-// THE COLUMNS MEET EDGE TO EDGE, AND THE SIDEBAR TAKES THE SLACK UP TO A LIMIT (maintainer 2026-11-09: the
-// rail "just immediately up against the content window", "the same thing for the sidebar", and of a sidebar
-// with no limit, "That looks insane … some reasonable max width, and then, if there's extra horizontal
-// space, it should just be off to the far left and to the far right"). The thread and the rail hold their
-// widths, the sidebar grows to lib/threadPane.ts PANE_SIDEBAR_MAX_PX, and the group centres in what is
-// left. These are its minimums: 300 + the thread's 720 + the rail's 340 is the 1360 the three columns start
-// at (PANE_WIDE_MIN_PX). Its 16px insets are the peek's, so the two read alike.
+// THE COLUMNS MEET EDGE TO EDGE, THE SIDEBAR STANDS AGAINST THE LEFT OF THE WINDOW AND THE RAIL AGAINST ITS
+// RIGHT, AND THE THREAD TAKES WHATEVER IS BETWEEN THEM. The columns met edge to edge from 2026-11-09 (the
+// rail "just immediately up against the content window", "the same thing for the sidebar") but held fixed
+// widths and centred as a group, which left the slack as two empty strips at the far left and far right;
+// on 2026-11-17 the thread took that slack instead, and the lines between the columns became resize
+// handles (PaneResizeHandle), so the sidebar and the rail are as wide as the reader drags them
+// (lib/threadPane.ts paneSidebarWidth / paneRailWidth) and the thread is the rest. When the window runs
+// short the sidebar gives way first, down to its minimum, before the thread drops below its 720 measure.
+// These are the minimums: 300 + the thread's 720 + the rail's 340 is the 1360 the three columns start at
+// (PANE_WIDE_MIN_PX). The sidebar's 16px insets are the peek's, so the two read alike.
 const WIDE_SIDEBAR_PX = 300
 const NARROW_SIDEBAR_PX = 272
 
@@ -83,13 +87,23 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
   const folded = proto.folded && (slug !== null || snap.routeThreadSlug !== null)
   const threeColumns = wide && !folded
   const railShown = threeColumns && paneRailWanted(proto.artifacts, wide)
-  // A file wants more room than the rail's 340, so while one is open the thread and the file take the page
+  const widths = useSnapshot(prefs)
+  const sidebarMin = wide ? WIDE_SIDEBAR_PX : NARROW_SIDEBAR_PX
+  const sidebarWidth = paneSidebarWidth(widths.paneSidebarWidth, sidebarMin)
+  const railWidth = paneRailWidth(widths.paneRailWidth)
+  // A file wants more room than the rail, so while one is open the thread and the file take the page
   // (PaneThread) and the sidebar gives up what they need of it: the file gets the thread's 720 before the
   // sidebar stands above its minimum.
   const fileBeside = threeColumns && snap.filePanels.length > 0
-  const sidebarFlex = fileBeside
-    ? `0 0 clamp(${WIDE_SIDEBAR_PX}px, calc(100% - ${2 * PANE_THREAD_PX}px), ${PANE_SIDEBAR_MAX_PX}px)`
-    : "1 1 0"
+  // The sidebar is the width the reader chose until the thread beside it would drop below its measure, and
+  // then gives way down to its minimum: the clamp's upper bound is what the thread (and the rail) leave it.
+  // The thread is the workpane's `flex-1`, the rest of the row.
+  const threadRoom = fileBeside
+    ? `${2 * PANE_THREAD_PX}px`
+    : threeColumns
+      ? railShown ? `${PANE_THREAD_PX}px - var(--pane-rail-w)` : `${PANE_THREAD_PX}px`
+      : `min(${PANE_THREAD_PX}px, 62vw)`
+  const sidebarFlex = `0 0 clamp(${sidebarMin}px, calc(100% - ${threadRoom}), var(--pane-sidebar-w))`
   const [peek, setPeek] = useState(false)
   if (!folded && peek) setPeek(false)
   // The sidebar keeps 12px clear above and below what it centres (a board's 52px top was the line the first
@@ -129,7 +143,10 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
   return (
     <div
       data-pane-layout={folded ? "folded" : wide ? "wide" : "narrow"}
-      className={`flex h-dvh w-full overflow-hidden ${folded || fileBeside ? "" : "justify-center"}`}
+      className="flex h-dvh w-full overflow-hidden"
+      // The two widths the resize handles move. A drag writes these on this element directly, frame by frame,
+      // and stores the result in prefs once it ends, so the thread is not re-rendered on every pointer move.
+      style={{ "--pane-sidebar-w": `${sidebarWidth}px`, "--pane-rail-w": `${railWidth}px` } as CSSProperties}
     >
       {/* The sidebar never unmounts across the wide line: the same docked column at every width. Full
           screen it waits off the left edge, and a pointer at that edge peeks it over the thread. */}
@@ -137,7 +154,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
         <div
           data-pane-sidebar
           className={`h-full px-4 [view-transition-name:pane-sidebar] [&>aside]:!w-full ${CENTRED_SIDEBAR} ${boardTop}`}
-          style={{ flex: sidebarFlex, minWidth: wide ? WIDE_SIDEBAR_PX : NARROW_SIDEBAR_PX, maxWidth: PANE_SIDEBAR_MAX_PX }}
+          style={{ flex: sidebarFlex, minWidth: sidebarMin, maxWidth: PANE_SIDEBAR_MAX_PX }}
         >
           {sidebar}
         </div>
@@ -159,16 +176,11 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
           </div>
         </>
       )}
-      <main
-        id="workpane"
-        className="h-full min-w-0"
-        // Narrow, the thread shrinks once the sidebar is down to its minimum. It did not until 2026-11-10, so
-        // beside the project rail's 57px at 820px the sidebar's 272 and the thread's 62vw overran the window
-        // by 17px, half of it under the rail and half past the right edge.
-        style={{
-          flex: folded || fileBeside ? "1 1 0" : threeColumns ? `0 1 ${PANE_THREAD_PX + (railShown ? RAIL_WIDTH : 0)}px` : `0 1 min(${PANE_THREAD_PX}px, 62vw)`,
-        }}
-      >
+      {/* The rest of the row, at every width. Narrow, that is also what makes the thread shrink once the
+          sidebar is down to its minimum: before 2026-11-10 it held 62vw, and beside the project rail's 57px
+          at 820px the sidebar's 272 and the thread overran the window by 17px. */}
+      <main id="workpane" className="relative h-full min-w-0 flex-1">
+        {!folded && !fileBeside && <PaneResizeHandle column="sidebar" value={sidebarWidth} min={sidebarMin} wide={wide} />}
         {slug ? <PaneThread key={slug} slug={slug} folded={folded} wide={wide} /> : <PaneEmpty parked={snap.routeThreadSlug !== null} queue={queue} />}
       </main>
     </div>
@@ -178,6 +190,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
 function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wide: boolean }) {
   const snap = useSnapshot(store)
   const { artifacts } = useSnapshot(paneProto)
+  const prefsWidths = useSnapshot(prefs)
   const split = usePaneSplit()
   const board = useBoard()
   const thread = useThreadSnapshot(slug)
@@ -274,9 +287,10 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
         className={`flex h-full w-full transition-transform duration-200 ease-out motion-reduce:transition-none ${threeColumns ? "" : sidePane ? "justify-center split:justify-start" : "justify-center"}`}
         style={{
           ...LAYOUT_VARS,
-          // In the three columns and at rest the side pane is the rail alone; with a file it is /full's
-          // pane, the half of the room right of the sidebar that the thread (--full-thread) does not take.
-          ...(threeColumns && !fileBeside ? { "--full-pane": `${RAIL_WIDTH}px` } : null),
+          // In the three columns and at rest the side pane is the rail alone, as wide as the reader dragged it
+          // (PaneLayout's --pane-rail-w); with a file it is /full's pane, the half of the room right of the
+          // sidebar that the thread (--full-thread) does not take.
+          ...(threeColumns && !fileBeside ? { "--full-pane": "var(--pane-rail-w)", "--focus-rail-w": "var(--pane-rail-w)" } : null),
           transform: fileOpen ? "translateX(calc(-1 * var(--full-gutter)))" : undefined,
         } as CSSProperties}
       >
@@ -285,9 +299,10 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
         <div
           className={`relative h-full min-w-0 ${
             threeColumns
-              // 720 is the drawer's width (lib/sheet.ts SHEET_BASE_WIDTH), the measure every thread surface
-              // keeps. It gives way only to the opt-in project rail, whose 57px the 1360 does not count.
-              ? fileBeside ? "w-[var(--full-thread)] shrink-0" : "w-[720px] shrink"
+              // Everything between the sidebar and the rail. PaneLayout keeps it at 720 or more, the drawer's
+              // width (lib/sheet.ts SHEET_BASE_WIDTH) and the measure every thread surface keeps, except beside
+              // the opt-in project rail, whose 57px the 1360 does not count, or a rail dragged wide.
+              ? fileBeside ? "w-[var(--full-thread)] shrink-0" : "flex-1"
               : folded
                 ? sidePane ? "w-[var(--full-thread-narrow)] shrink-0 split:w-[var(--full-thread)]" : "w-[var(--full-thread-narrow)] shrink-0"
                 : "w-full shrink-0"
@@ -319,6 +334,7 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
             )}
           </div>
           <PaneEdgeToggle side="left" hidden={folded} onToggle={() => setPaneFolded(!folded)} />
+          {threeColumns && railBeside && !fileBeside && <PaneResizeHandle column="rail" value={paneRailWidth(prefsWidths.paneRailWidth)} min={PANE_RAIL_MIN_PX} wide={wide} />}
           {/* Wherever the rail could stand, and not while a file stands over it: the file has its own ×. Beside
               the sidebar on a window too narrow for both, it shows the rail in the sidebar's place. */}
           {split && snap.filePanels.length === 0 && (
@@ -361,6 +377,108 @@ function PaneEdgeToggle({ side, hidden, onToggle }: { side: "left" | "right"; hi
         </span>
       </button>
     </Tooltip>
+  )
+}
+
+// THE LINES BETWEEN THE COLUMNS ARE ALSO RESIZE HANDLES (2026-11-17). A 9px strip centred on the line, the
+// full height of the column, under the toggle's knob (z-10 over this z-[5]), so the knob still takes a click
+// at the line's middle and the rest of the line drags. Dragging moves the column on its far side: the
+// sidebar's width on the left line, the rail's on the right, and the thread takes the difference. A drag
+// never pushes the thread below its 720 measure (or, narrow, the 62vw it shrinks to), and a double-click
+// puts the column back to its default. The width is written as PaneLayout's CSS variable on every move
+// and stored in prefs when the drag ends, so the transcript is not re-rendered frame by frame. Arrow keys
+// move a focused handle 16px at a time, 64 with Shift.
+const RESIZE_VAR = { sidebar: "--pane-sidebar-w", rail: "--pane-rail-w" } as const
+const RESIZE_PREF = { sidebar: "paneSidebarWidth", rail: "paneRailWidth" } as const
+
+function PaneResizeHandle({ column, value, min, wide }: { column: "sidebar" | "rail"; value: number; min: number; wide: boolean }) {
+  const [dragging, setDragging] = useState(false)
+  const max = column === "sidebar" ? PANE_SIDEBAR_MAX_PX : PANE_RAIL_MAX_PX
+  // The column on the far side of the line grows as the pointer moves away from the thread.
+  const outward = column === "sidebar" ? 1 : -1
+  const label = column === "sidebar" ? "Resize sidebar" : "Resize artifacts"
+
+  // The column's width as drawn, and the most it can take: what the row has once the thread keeps its
+  // measure and the column on the other side keeps its width. Never less than it already has, so a window
+  // that has squeezed the thread does not make the handle jump on the first move.
+  function measure(handle: HTMLElement) {
+    const root = handle.closest<HTMLElement>("[data-pane-layout]")
+    if (!root) return null
+    const width = (selector: string) => root.querySelector(selector)?.getBoundingClientRect().width ?? 0
+    const sidebar = width("[data-pane-sidebar]")
+    const rail = width("[data-side-pane]")
+    const own = column === "sidebar" ? sidebar : rail
+    const threadFloor = wide ? PANE_THREAD_PX : Math.min(PANE_THREAD_PX, 0.62 * window.innerWidth)
+    const room = root.clientWidth - threadFloor - (column === "sidebar" ? rail : sidebar)
+    return { root, own, hi: Math.max(min, own, Math.min(max, room)) }
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return
+    const m = measure(e.currentTarget)
+    if (!m) return
+    e.preventDefault()
+    const handle = e.currentTarget
+    handle.setPointerCapture(e.pointerId)
+    const startX = e.clientX
+    let next: number | null = null
+    const root = document.documentElement
+    const before = { cursor: root.style.cursor, userSelect: root.style.userSelect }
+    root.style.cursor = "col-resize"
+    root.style.userSelect = "none"
+    setDragging(true)
+    const move = (ev: PointerEvent) => {
+      next = Math.round(Math.min(m.hi, Math.max(min, m.own + outward * (ev.clientX - startX))))
+      m.root.style.setProperty(RESIZE_VAR[column], `${next}px`)
+    }
+    const end = () => {
+      handle.removeEventListener("pointermove", move)
+      handle.removeEventListener("pointerup", end)
+      handle.removeEventListener("pointercancel", end)
+      root.style.cursor = before.cursor
+      root.style.userSelect = before.userSelect
+      setDragging(false)
+      // A press that never moved stores nothing, so a click (or the double-click that resets) does not pin
+      // whatever width the window had squeezed the column to.
+      if (next !== null) prefs[RESIZE_PREF[column]] = next
+    }
+    handle.addEventListener("pointermove", move)
+    handle.addEventListener("pointerup", end)
+    handle.addEventListener("pointercancel", end)
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0
+    if (step === 0) return
+    const m = measure(e.currentTarget)
+    if (!m) return
+    e.preventDefault()
+    prefs[RESIZE_PREF[column]] = Math.round(Math.min(m.hi, Math.max(min, m.own + outward * step * (e.shiftKey ? 64 : 16))))
+  }
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      aria-valuenow={value}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      tabIndex={0}
+      data-pane-resize={column}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => { prefs[RESIZE_PREF[column]] = null }}
+      // The column's border is its outermost pixel, so the line's centre is half a pixel inside its edge.
+      className={`group absolute inset-y-0 z-[5] w-[9px] cursor-col-resize touch-none outline-none ${column === "sidebar" ? "-left-[4px]" : "-right-[4px]"}`}
+    >
+      <span
+        aria-hidden
+        className={`pointer-events-none absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 transition-colors duration-150 ${
+          dragging ? "bg-accent/70" : "bg-transparent group-hover:bg-border-strong group-focus-visible:bg-accent/70"
+        }`}
+      />
+    </div>
   )
 }
 
