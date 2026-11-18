@@ -6,7 +6,8 @@ import test from "node:test"
 // thread after Done) and the counts, and puts no mark on its row (an unread dot did, from 2026-11-06 to
 // 2026-11-09). Its row still opens it in the pane, as every row on a desktop board does. A question or a
 // `steps:` list stays in the queue, and its pinned row wears the yellow queue dot (2026-11-17), since no
-// Queue label stands over it; a row in the Queue band wears none. A report leaves the queue only where a pinned row shows it instead, so
+// Queue label stands over it, until the human opens it; a row in the Queue band wears none, and neither
+// does the row the pane has open. A report leaves the queue only where a pinned row shows it instead, so
 // the Console's two views answer for themselves: By status reads the Console's own pin, and By project
 // lifts nothing. Until 2026-11-09 the queue was a column of cards, and this read the cards.
 //
@@ -44,9 +45,10 @@ test("a pinned thread queues only its asks, and its report waits on the row unma
     }
     assert.fail(`timed out: ${label}`)
   }
-  const dispatch = async (title: string, ending: string) =>
+  // An ask's later turns end on the same ask, so a follow-up makes a fresh one (the queue dot's checks).
+  const dispatch = async (title: string, ending: string, reply = "needs") =>
     ((await api.mutate("dispatch", {
-      prompt: `[script ending=${ending} paras=1 think=50 reply=needs replyparas=1 replythink=2500] ${title}`,
+      prompt: `[script ending=${ending} paras=1 think=50 reply=${reply} replyparas=1 replythink=2500] ${title}`,
       title,
       backend: "claude",
       model: "haiku",
@@ -55,8 +57,8 @@ test("a pinned thread queues only its asks, and its report waits on the row unma
   const report = await dispatch("Pinned report: a needs_input handoff", "needs")
   const done = await dispatch("Pinned report: a done sign-off", "done")
   const bare = await dispatch("Pinned report: a bare rest", "bare")
-  const question = await dispatch("Pinned ask: a question", "question")
-  const steps = await dispatch("Pinned ask: a steps list", "steps")
+  const question = await dispatch("Pinned ask: a question", "question", "question")
+  const steps = await dispatch("Pinned ask: a steps list", "steps", "steps")
   const reports = [report, done, bare]
   const asks = [question, steps]
   const everyone = [...reports, ...asks]
@@ -130,7 +132,12 @@ test("a pinned thread queues only its asks, and its report waits on the row unma
     const openRow = async (slug: string) => {
       await page.click(`[data-sidebar-item="${slug}"] button`)
     }
-    // THE QUEUE DOT: the rail rows wearing it, polled until they are exactly `want`.
+    const send = async (slug: string, message: string) => {
+      const t = await thread(slug)
+      await api.mutate("followUp", { slug, sessionId: t?.sessionId ?? "", message })
+    }
+    // THE QUEUE DOT: the rail rows wearing it, polled until they are exactly `want`. The walks above open
+    // every thread they step through, which reads it, so a dot only shows on a rest that lands after.
     const dotted = () => page.$$eval("[data-sidebar-rail] [data-sidebar-queue-dot]", (dots) => dots.map((d) => d.closest("[data-sidebar-item]")!.getAttribute("data-sidebar-item")!))
     const waitDots = async (want: readonly string[], label: string) => {
       let got: string[] = []
@@ -157,8 +164,33 @@ test("a pinned thread queues only its asks, and its report waits on the row unma
     await page.waitForSelector(`section[aria-label='Pinned'] [data-pinned-row="${report}"]`, { timeout: 10_000 })
     const shelf = await page.$$eval("section[aria-label='Pinned'] [data-pinned-row]", (rows) => rows.map((r) => r.getAttribute("data-pinned-row")!))
     assert.deepEqual([...shelf].sort(), [...everyone].sort())
-    // The shelf mixes the two, so the dot says which of its rows are waiting: the asks, not the reports.
-    await waitDots(asks, "on the shelf, the asks wear the queue dot and the reports do not")
+    await waitDots([], "the walk opened both asks, so neither is unread")
+
+    // 2b. THE QUEUE DOT. A fresh ask on each, with nobody looking: the shelf mixes queued threads with ones
+    // that are not, so the dot says which rows are waiting, the asks and not the reports.
+    for (const slug of asks) {
+      const before = (await thread(slug))?.lastAssistantAt ?? ""
+      await send(slug, "Another, with nobody looking")
+      await until(`${slug} rested on a fresh ask`, async () => {
+        const t = await thread(slug)
+        return t?.needsYou === true && t.runtime === "turn-idle" && (t.lastAssistantAt ?? "") > before
+      })
+    }
+    await waitDots(asks, "on the shelf, an unread ask wears the queue dot and a report does not")
+    // Opening one clears its dot at once, so the dot and the pane's marker never share a row.
+    const both = () => page.$$eval("[data-sidebar-item]", (rows) => rows.filter((r) => r.querySelector("[data-sidebar-queue-dot]") && r.querySelector("[data-sidebar-scroll-marker]")).map((r) => r.getAttribute("data-sidebar-item")))
+    await openRow(question)
+    await page.waitForSelector(inPane(question), { timeout: 10_000 })
+    assert.deepEqual(await both(), [], "the open row draws no dot beside the marker")
+    await waitDots([steps], "opening the question cleared its dot")
+    // Moving on leaves it read: its dot does not come back.
+    await openRow(steps)
+    await page.waitForSelector(inPane(steps), { timeout: 10_000 })
+    assert.deepEqual(await both(), [])
+    await waitDots([], "opening the steps list cleared its dot, and the question's stayed gone")
+    await page.goto(boardUrl, { waitUntil: "networkidle2" })
+    await page.waitForSelector(`[data-sidebar-item="${question}"]`, { timeout: 20_000 })
+    await waitDots([], "the reads are the server's, so a reload keeps both clear")
 
     // 3. A report's row opens it in the PANE. Its resting card is drawn there.
     const seenBefore = (await thread(report))?.seenAt ?? ""
@@ -181,10 +213,6 @@ test("a pinned thread queues only its asks, and its report waits on the row unma
     await noDrawer("a queued thread's row opens no drawer either")
 
     // 5. A NEW REST, with nobody looking, still draws no card.
-    const send = async (slug: string, message: string) => {
-      const t = await thread(slug)
-      await api.mutate("followUp", { slug, sessionId: t?.sessionId ?? "", message })
-    }
     const restedSince = async (slug: string, since: string | undefined) => {
       await until(`${slug} came to rest on a newer report`, async () => {
         const t = await thread(slug)
@@ -200,7 +228,7 @@ test("a pinned thread queues only its asks, and its report waits on the row unma
     await api.mutate("setThreadPinned", { slug: done, sessionId: (await thread(done))?.sessionId ?? "", pinned: false })
     await waitQueue(boardUrl, [...asks, done], "unpinned, a report queues again")
     assert.equal(await queued(), 3)
-    await waitDots(asks, "unpinned, it rows in the Queue band, which needs no dot")
+    await waitDots([], "unpinned, it rows in the Queue band, which needs no dot")
     await api.mutate("setThreadPinned", { slug: done, sessionId: (await thread(done))?.sessionId ?? "", pinned: true })
     await waitQueue(boardUrl, asks, "pinned again")
 
@@ -235,7 +263,14 @@ test("a pinned thread queues only its asks, and its report waits on the row unma
     await page.waitForSelector('[data-rail-view-option="project"]')
     await page.click('[data-rail-view-option="project"]')
     await waitQueue(consoleUrl, everyone.map(k), "By project lifts nothing, so a report stays in the queue")
-    await waitDots(everyone.map(k), "By project has no Queue label, so every waiting row wears the dot")
+    // By project has no Queue label, so a waiting row wears the dot there, once a rest lands unread.
+    const beforeConsole = (await thread(question))?.lastAssistantAt ?? ""
+    await send(question, "One for By project, with nobody looking")
+    await until("the question rested again", async () => {
+      const t = await thread(question)
+      return t?.needsYou === true && t.runtime === "turn-idle" && (t.lastAssistantAt ?? "") > beforeConsole
+    })
+    await waitDots([k(question)], "By project, the unread waiting row wears the dot, and the ones the walk read do not")
     await api.mutate("setThreadConsolePinned", { slug: report, sessionId: (await thread(report))?.sessionId ?? "", pinned: false })
 
     assert.deepEqual(errors, [])

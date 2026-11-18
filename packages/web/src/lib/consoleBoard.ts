@@ -127,7 +127,7 @@ export function holdsCardOnConsole(t: ThreadView, group: ConsoleGroup): boolean 
 
 /** Is a row on this Pinned shelf in the queue the pane steps through? A project board's shelf asks the
  *  board's queue; the Console's shelf exists only on "By status", so it asks that view's. The row wears
- *  the yellow queue dot when it is (Sidebar.tsx ThreadRow `queueDot`). */
+ *  the yellow queue dot when it is, until the human opens it (Sidebar.tsx ThreadRow `queueDot`). */
 export function queuedOnShelf(t: ThreadView, shelf: PinShelf): boolean {
   return shelf === "console" ? holdsCardOnConsole(t, "status") : boardQueuedThread(t)
 }
