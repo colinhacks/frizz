@@ -1,5 +1,6 @@
 {
   "buildCommand": "node sitemap.mjs && rm sitemap.mjs",
+  "outputDirectory": ".",
   "cleanUrls": true,
   "trailingSlash": false,
   "headers": [
