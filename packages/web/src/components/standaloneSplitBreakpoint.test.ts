@@ -5,6 +5,9 @@ import { readFileSync } from "node:fs"
 // component tree, which node cannot load. The two width constants that govern this morph live together
 // there anyway — the drawer's own base width and the width the fullscreen page splits at.
 import { SHEET_BASE_WIDTH, SPLIT_MIN_PX } from "../lib/sheet.ts"
+import type { CSSProperties } from "react"
+import { layoutVars, THREAD_WIDTH_PX } from "../lib/fullLayout.ts"
+import { parseStoredPrefs } from "../lib/prefs.ts"
 
 // WHERE /full BECOMES TWO COLUMNS IS ONE NUMBER, AND IT LIVES IN TWO PLACES.
 //
@@ -18,7 +21,6 @@ const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8")
 // The page's lengths live in lib/fullLayout.ts (beside the rail's width), which the page and the board's
 // pane both read, since the page itself is a lazy chunk (components/lazySurfaces.tsx).
 const page = readFileSync(new URL("./StandaloneThreadPage.tsx", import.meta.url), "utf8")
-const layout = readFileSync(new URL("../lib/fullLayout.ts", import.meta.url), "utf8")
 
 test("the CSS breakpoint and the file-click gate are the SAME width", () => {
   const declared = css.match(/--breakpoint-split:\s*(\d+)px/)
@@ -30,19 +32,21 @@ test("the CSS breakpoint and the file-click gate are the SAME width", () => {
   )
 })
 
-test("below the split, the fullscreen column is the DRAWER's width", () => {
+test("below the split, the fullscreen column is the DRAWER's width at the default thread width", () => {
   // This is what makes the expand a pure translate rather than a rescale: the board's drawer and the
   // fullscreen column are the same size, so the shared-element morph has no size to animate. It is
   // also what the maintainer asked after on 2026-09-02 ("the chat column widths are always the same
   // in both views?"). Above the split the 50/50 rule takes the column down to half the page — 600 at
   // the 1200 it was specified for — so the two agree again only from 1440 up. That divergence is the
   // 50/50 rule working as instructed, not a drift, which is why only the NARROW half is pinned here.
-  assert.match(
-    layout,
-    new RegExp(String.raw`"--full-thread-narrow":\s*` + "`" + String.raw`min\(\$\{SHEET_BASE_WIDTH\}px, 100%\)` + "`"),
-    "the single-column width must be capped by SHEET_BASE_WIDTH itself, not by a copy of the number",
-  )
-  assert.equal(SHEET_BASE_WIDTH, 720, "and that cap is the drawer's own base width")
+  // A wider Thread width setting (2026-11-18) raises the column's cap and not the drawer's, so the
+  // morph rescales for whoever picks one; the default is what holds the two together.
+  assert.equal(THREAD_WIDTH_PX.standard, SHEET_BASE_WIDTH, "Standard is the drawer's own base width, not a copy of the number")
+  assert.equal(parseStoredPrefs(null).threadWidth, "standard", "and Standard is what a browser with no choice gets")
+  assert.equal(SHEET_BASE_WIDTH, 720)
+  for (const px of Object.values(THREAD_WIDTH_PX)) {
+    assert.equal(layoutVars(px)["--full-thread-narrow" as keyof CSSProperties], `min(${px}px, 100%)`, "the single-column width is the cap itself, under the page")
+  }
 })
 
 test("the split is drawn by the `split:` variant alone — no stray `md:` on the layout row", () => {

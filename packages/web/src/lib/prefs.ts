@@ -41,6 +41,17 @@ export interface Prefs {
   // take it off the pinned list too. Ticked in the done card's split button (ThreadLifecycle
   // DonePinChoice), and read by every completion in this browser (lib/completionPins.ts).
   doneUnpins: boolean
+  // The most a thread's column grows to when the window has room for it, set in Settings (maintainer
+  // 2026-11-18, closing colinhacks/frizz#77: "There is no value in having the pane be that wide … it just
+  // still has a somewhat opinionated max width"). Three fixed steps, never a dragged width: the px are in
+  // lib/fullLayout.ts THREAD_WIDTH_PX. Per browser, because the right width is the screen's.
+  threadWidth: ThreadWidth
+}
+
+export type ThreadWidth = "standard" | "wide" | "widest"
+
+export function isThreadWidth(v: unknown): v is ThreadWidth {
+  return v === "standard" || v === "wide" || v === "widest"
 }
 
 function stringRecord(v: unknown): Record<string, string> {
@@ -67,6 +78,7 @@ export function parseStoredPrefs(raw: string | null): Prefs {
     wrapCode: true,
     mcpIgnored: {},
     doneUnpins: false,
+    threadWidth: "standard",
   }
   try {
     if (!raw) return fallback
@@ -82,6 +94,7 @@ export function parseStoredPrefs(raw: string | null): Prefs {
       wrapCode: typeof stored.wrapCode === "boolean" ? stored.wrapCode : fallback.wrapCode,
       mcpIgnored: stringRecord(stored.mcpIgnored),
       doneUnpins: typeof stored.doneUnpins === "boolean" ? stored.doneUnpins : fallback.doneUnpins,
+      threadWidth: isThreadWidth(stored.threadWidth) ? stored.threadWidth : fallback.threadWidth,
     }
   } catch {
     return fallback

@@ -63,3 +63,15 @@ test("Mark as done keeps a pin by default and only a stored boolean makes it unp
   assert.equal(parseStoredPrefs(JSON.stringify({ doneUnpins: true })).doneUnpins, true)
   assert.equal(parseStoredPrefs(JSON.stringify({ doneUnpins: "yes" })).doneUnpins, false)
 })
+
+test("the thread width is Standard by default and only a known step is kept", () => {
+  assert.equal(parseStoredPrefs(null).threadWidth, "standard")
+  assert.equal(parseStoredPrefs("not-json").threadWidth, "standard")
+  // A blob stored before the setting existed carries no key, and reads as the default.
+  assert.equal(parseStoredPrefs(JSON.stringify({ queueOrder: "lifo" })).threadWidth, "standard")
+  assert.equal(parseStoredPrefs(JSON.stringify({ threadWidth: "wide" })).threadWidth, "wide")
+  assert.equal(parseStoredPrefs(JSON.stringify({ threadWidth: "widest" })).threadWidth, "widest")
+  // Never a width of its own: a dragged number, or a step from a build that had more, falls back.
+  assert.equal(parseStoredPrefs(JSON.stringify({ threadWidth: 1100 })).threadWidth, "standard")
+  assert.equal(parseStoredPrefs(JSON.stringify({ threadWidth: "full" })).threadWidth, "standard")
+})

@@ -25,12 +25,16 @@ export const SHEET_PANEL_CLASS =
 // is a "flip surface" of the chat drawer for the same thread, not a genuine extra layer, so it must
 // render at the width of the drawer beneath it (depth-1) rather than one step narrower.
 // The depth-0 panel width, exported because the fullscreen page's thread column caps at the SAME
-// width — the maintainer wants /full to read like the drawer, not wider (2026-08-31).
+// width — the maintainer wants /full to read like the drawer, not wider (2026-08-31). That is the
+// Thread width setting's Standard (lib/fullLayout.ts THREAD_WIDTH_PX). The drawer does not follow a
+// wider choice: it is a layer over another page — the phone's thread, a thread opened over a status
+// list — so its width is how much of that page it covers, and every drawer in a stack steps down
+// from this one number (the curve below, and ThreadDrawer's doc at the width of the chat beneath it).
 export const SHEET_BASE_WIDTH = 720
 
 /**
  * WHERE THE PAGE BECOMES TWO COLUMNS. Below this it is one thread column at the drawer's own width;
- * at and above it the 50/50 rule in StandaloneThreadPage's LAYOUT_VARS takes over.
+ * at and above it the 50/50 rule in lib/fullLayout.ts layoutVars takes over.
  *
  * It is 1200 because 1200 is the width the split was SPECIFIED at — "600px of content, and then the
  * file takes up 600px" (maintainer 2026-08-30) — so switching exactly there keeps that reading intact

@@ -4,7 +4,7 @@ import { ArrowLeft, Check, ChevronRight, Copy } from "lucide-react"
 import { type Settings } from "@frizz/shared"
 import { store, type ConnectionState } from "../store.ts"
 import { copyTextToClipboard } from "../lib/clipboard.ts"
-import { prefs } from "../lib/prefs.ts"
+import { isThreadWidth, prefs } from "../lib/prefs.ts"
 import { getThemeSnapshot, setThemePreference, subscribeTheme, type ThemePreference } from "../lib/theme.ts"
 import { registerSettingsClose } from "../lib/overlays.ts"
 import { SETTINGS_HELP } from "../lib/settingsHelp.ts"
@@ -139,6 +139,11 @@ export function SettingsDrawer({ offerUpdate = false }: {
           {/* Browser appearance remains usable even while server settings are unavailable. */}
           <SettingsField label="Appearance" help={SETTINGS_HELP.appearance}>
             <AppearanceControl />
+          </SettingsField>
+          {/* Client-only too (localStorage prefs proxy), so it does not wait for the draft either. Not in the
+              phone's settings below: a phone's thread is narrower than the narrowest choice. */}
+          <SettingsField label="Thread width" help={SETTINGS_HELP.threadWidth}>
+            <ThreadWidthControl />
           </SettingsField>
           {!draft ? (
             <div className="text-[13px] text-muted">Loading server settings…</div>
@@ -535,6 +540,24 @@ function AppearanceControl() {
       options={[{ value: "system", label: "System" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]}
       indicatorPosition="right"
       ariaLabel="Appearance"
+    />
+  )
+}
+
+// The most a thread's column grows to (lib/fullLayout.ts THREAD_WIDTH_PX): client-only, and live — the pane
+// and full screen read the proxy, so every open thread takes the new width the instant it changes.
+function ThreadWidthControl() {
+  const { threadWidth } = useSnapshot(prefs)
+  return (
+    <Select
+      variant="bordered"
+      value={threadWidth}
+      onValueChange={(value) => {
+        if (isThreadWidth(value)) prefs.threadWidth = value
+      }}
+      options={[{ value: "standard", label: "Standard" }, { value: "wide", label: "Wide" }, { value: "widest", label: "Widest" }]}
+      indicatorPosition="right"
+      ariaLabel="Thread width"
     />
   )
 }

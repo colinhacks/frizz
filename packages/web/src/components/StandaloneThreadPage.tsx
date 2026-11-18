@@ -6,7 +6,8 @@ import { rpc } from "../api/rpc.ts"
 import { displayTitle } from "../groups.ts"
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import { setFaviconBadge } from "../lib/faviconBadge.ts"
-import { SHEET_BASE_WIDTH, SPLIT_MIN_PX } from "../lib/sheet.ts"
+import { SPLIT_MIN_PX } from "../lib/sheet.ts"
+import { prefs } from "../lib/prefs.ts"
 import { trackQueueDock } from "../lib/queueDockInset.ts"
 import { boardQueuedThread, type ThreadView } from "@frizz/shared"
 import { ThreadView as ThreadViewSurface } from "./lazySurfaces.tsx"
@@ -20,15 +21,15 @@ import { ThreadPageZone } from "./ThreadPageZone.tsx"
 import { exitFullscreen } from "./CollapseThreadLink.tsx"
 import { TooltipProvider } from "./Tooltip.tsx"
 
-// THE WHOLE GEOMETRY OF /full lives in lib/fullLayout.ts (LAYOUT_VARS), beside the rail's width: the board's
+// THE WHOLE GEOMETRY OF /full lives in lib/fullLayout.ts (layoutVars), beside the rail's width: the board's
 // pane lays its thread out with the same lengths, and imports them from there so this page — a lazy chunk
 // since 2026-11-10 (components/lazySurfaces.tsx) — does not ride into the board's entry with them.
-import { LAYOUT_VARS } from "../lib/fullLayout.ts"
-export { LAYOUT_VARS }
+import { layoutVars, THREAD_WIDTH_PX } from "../lib/fullLayout.ts"
 
 export function StandaloneThreadPage({ slug }: { slug: string }) {
   const snap = useSnapshot(store)
   const fileOpen = snap.filePanels.some((panel) => !panel.closing)
+  const threadPx = THREAD_WIDTH_PX[useSnapshot(prefs).threadWidth]
   const board = useBoard()
   // Its thread through its own subscription, not looked up on the tracked board (hooks.ts
   // useThreadSnapshot): this page re-renders on every delta of a thread that is working.
@@ -112,14 +113,16 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
             rail sit together as ONE CENTERED PAIR — "the combination of the agent pane and the
             artifact readout should be centered on the page, and there should be some reasonable
             maximum width on the agent pane" — with the file viewer sliding in over the rail when a
-            file opens (see SidePane). The column's ceiling is the DRAWER's own width
+            file opens (see SidePane). The column's ceiling is the Thread width setting
+            (lib/fullLayout.ts THREAD_WIDTH_PX), whose Standard is the DRAWER's own width
             (lib/sheet.ts SHEET_BASE_WIDTH; maintainer 2026-08-31: "the same width as the regular
-            drawer width" — an earlier 960px "still lets the chat go too wide").
+            drawer width" — an earlier fixed 960px "still lets the chat go too wide"). 960 came back
+            on 2026-11-18 as a choice, Widest, never as the default.
 
             NOTHING HERE IS SIZED BY WHAT IS BESIDE IT (maintainer 2026-09-01: "you should not be
             resizing the chat transcript column … you also should never resize the code panes that
             slide in. Otherwise, it's going to be re-flowing in a way that just takes unnecessary
-            CPU"). Both columns are pure functions of the PAGE width — see LAYOUT_VARS — so opening
+            CPU"). Both columns are pure functions of the PAGE width — see layoutVars — so opening
             or closing a file changes no width anywhere and neither the transcript nor the file
             re-wraps. What moves is the ROW, by one transform, from centered to hard left; a
             transform is composited, so the whole open costs no layout at all. The flex-grow /
@@ -133,8 +136,8 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
             frame around the row), which is what lets its width be a constant.
 
             A window NARROWER THAN THE SPLIT gets one column — the rail and the viewer need the width
-            they hide under, so below SPLIT_MIN_PX the thread column takes the page under its 720 cap,
-            which is exactly the drawer's width. */}
+            they hide under, so below SPLIT_MIN_PX the thread column takes the page under its cap, which at
+            Standard is exactly the drawer's width. */}
         {/* The page is this one thread's, so a file dropped ANYWHERE on it — the gutter, the rail, an
             open file — goes into the thread's prompt box (ThreadPageZone). The drawer stack below is
             outside it: a file dropped on a drawer is that drawer's. */}
@@ -147,7 +150,7 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
             // frame) and centring it would drag that overflow back into view — so the split state
             // takes `justify-start`, which is what it has always had.
             className="flex h-full w-full justify-center transition-transform duration-200 ease-out motion-reduce:transition-none split:justify-start"
-            style={{ ...LAYOUT_VARS, transform: fileOpen ? "translateX(calc(-1 * var(--full-gutter)))" : undefined }}
+            style={{ ...layoutVars(threadPx), transform: fileOpen ? "translateX(calc(-1 * var(--full-gutter)))" : undefined }}
           >
             <div className="hidden w-[var(--full-gutter)] shrink-0 split:block" aria-hidden="true" />
             <main

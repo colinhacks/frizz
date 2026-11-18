@@ -28,7 +28,7 @@ import { SidePane, ThreadView } from "./lazySurfaces.tsx"
 import { ThreadPageZone } from "./ThreadPageZone.tsx"
 import { LastActive } from "./LastActive.tsx"
 import { Tooltip } from "./Tooltip.tsx"
-import { LAYOUT_VARS, RAIL_WIDTH } from "../lib/fullLayout.ts"
+import { layoutVars, RAIL_WIDTH, THREAD_WIDTH_PX } from "../lib/fullLayout.ts"
 
 // THE ONE-THREAD PANE (see lib/threadPane.ts): the board as a sidebar and one thread at full
 // height. The thread is the same ThreadView the drawer and /full draw; everything a queue card did about
@@ -37,10 +37,13 @@ import { LAYOUT_VARS, RAIL_WIDTH } from "../lib/fullLayout.ts"
 // THE COLUMNS MEET EDGE TO EDGE, AND THE SIDEBAR TAKES THE SLACK UP TO A LIMIT (maintainer 2026-11-09: the
 // rail "just immediately up against the content window", "the same thing for the sidebar", and of a sidebar
 // with no limit, "That looks insane … some reasonable max width, and then, if there's extra horizontal
-// space, it should just be off to the far left and to the far right"). The thread and the rail hold their
-// widths, the sidebar grows to lib/threadPane.ts PANE_SIDEBAR_MAX_PX, and the group centres in what is
-// left. These are its minimums: 300 + the thread's 720 + the rail's 340 is the 1360 the three columns start
-// at (PANE_WIDE_MIN_PX). Its 16px insets are the peek's, so the two read alike.
+// space, it should just be off to the far left and to the far right"). As the window grows the sidebar takes
+// the slack first, up to lib/threadPane.ts PANE_SIDEBAR_MAX_PX; then the thread grows to the Thread width
+// setting (lib/fullLayout.ts THREAD_WIDTH_PX), and the group centres in what is left. The setting is only
+// that cap (maintainer 2026-11-18, closing colinhacks/frizz#77, which let the thread fill the row: "There is
+// no value in having the pane be that wide"), so nothing below changes with it: these are the sidebar's
+// minimums, and 300 + the thread's 720 + the rail's 340 is the 1360 the three columns start at at every
+// setting (PANE_WIDE_MIN_PX). Its 16px insets are the peek's, so the two read alike.
 const WIDE_SIDEBAR_PX = 300
 const NARROW_SIDEBAR_PX = 272
 
@@ -76,6 +79,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
   const proto = useSnapshot(paneProto, { sync: true })
   const wide = usePaneWide()
   const queue = usePaneQueue()
+  const threadPx = THREAD_WIDTH_PX[useSnapshot(prefs).threadWidth]
   publishPaneQueue(queue.map((t) => t.id))
   const slug = snap.paneSlug
   // With nothing selected there is nothing to be full screen about. A thread whose address is still settling
@@ -85,12 +89,18 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
   const threeColumns = wide && !folded
   const railShown = threeColumns && paneRailWanted(proto.artifacts, wide)
   // A file wants more room than the rail's 340, so while one is open the thread and the file take the page
-  // (PaneThread) and the sidebar gives up what they need of it: the file gets the thread's 720 before the
+  // (PaneThread) and the sidebar gives up what they need of it: the file gets the thread's width before the
   // sidebar stands above its minimum.
   const fileBeside = threeColumns && snap.filePanels.length > 0
+  // Otherwise the sidebar is whatever the window has past the thread's own minimum and the rail, between its
+  // limits, and the thread takes the rest up to its cap (`main` below). The minimum is the 720 the 1360 line
+  // counts, and narrow the 62vw a thread kept beside the sidebar before the cap could be raised.
+  const railPx = railShown ? RAIL_WIDTH : 0
+  const threadFloor = threeColumns ? `${PANE_THREAD_PX}px` : `min(${PANE_THREAD_PX}px, 62vw)`
+  const sidebarMin = wide ? WIDE_SIDEBAR_PX : NARROW_SIDEBAR_PX
   const sidebarFlex = fileBeside
-    ? `0 0 clamp(${WIDE_SIDEBAR_PX}px, calc(100% - ${2 * PANE_THREAD_PX}px), ${PANE_SIDEBAR_MAX_PX}px)`
-    : "1 1 0"
+    ? `0 0 clamp(${WIDE_SIDEBAR_PX}px, calc(100% - ${2 * threadPx}px), ${PANE_SIDEBAR_MAX_PX}px)`
+    : `0 0 clamp(${sidebarMin}px, calc(100% - ${threadFloor} - ${railPx}px), ${PANE_SIDEBAR_MAX_PX}px)`
   const [peek, setPeek] = useState(false)
   if (!folded && peek) setPeek(false)
   // The sidebar keeps 12px clear above and below what it centres (a board's 52px top was the line the first
@@ -138,7 +148,7 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
         <div
           data-pane-sidebar
           className={`h-full px-4 [view-transition-name:pane-sidebar] [&>aside]:!w-full ${CENTRED_SIDEBAR} ${boardTop}`}
-          style={{ flex: sidebarFlex, minWidth: wide ? WIDE_SIDEBAR_PX : NARROW_SIDEBAR_PX, maxWidth: PANE_SIDEBAR_MAX_PX }}
+          style={{ flex: sidebarFlex, minWidth: sidebarMin, maxWidth: PANE_SIDEBAR_MAX_PX }}
         >
           {sidebar}
         </div>
@@ -163,20 +173,19 @@ export function PaneLayout({ sidebar }: { sidebar: ReactNode }) {
       <main
         id="workpane"
         className="h-full min-w-0"
-        // Narrow, the thread shrinks once the sidebar is down to its minimum. It did not until 2026-11-10, so
-        // beside the project rail's 57px at 820px the sidebar's 272 and the thread's 62vw overran the window
-        // by 17px, half of it under the rail and half past the right edge.
-        style={{
-          flex: folded || fileBeside ? "1 1 0" : threeColumns ? `0 1 ${PANE_THREAD_PX + (railShown ? RAIL_WIDTH : 0)}px` : `0 1 min(${PANE_THREAD_PX}px, 62vw)`,
-        }}
+        // Everything the sidebar leaves, up to the thread's cap and the rail beside it; past that the row's
+        // `justify-center` puts the rest at the far left and right. Below the sidebar's minimum the thread is
+        // what shrinks: beside the project rail's 57px at 820px, the sidebar's 272 and a thread that kept its
+        // 62vw overran the window by 17px until 2026-11-10, half under the rail and half past the right edge.
+        style={{ flex: "1 1 0", maxWidth: folded || fileBeside ? undefined : threadPx + railPx }}
       >
-        {slug ? <PaneThread key={slug} slug={slug} folded={folded} wide={wide} /> : <PaneEmpty parked={snap.routeThreadSlug !== null} queue={queue} />}
+        {slug ? <PaneThread key={slug} slug={slug} folded={folded} wide={wide} threadPx={threadPx} /> : <PaneEmpty parked={snap.routeThreadSlug !== null} queue={queue} />}
       </main>
     </div>
   )
 }
 
-function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wide: boolean }) {
+function PaneThread({ slug, folded, wide, threadPx }: { slug: string; folded: boolean; wide: boolean; threadPx: number }) {
   const snap = useSnapshot(store)
   const { artifacts } = useSnapshot(paneProto)
   const split = usePaneSplit()
@@ -265,7 +274,7 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
   // ONE TREE IN EVERY LAYOUT, each slot a fixed element whose classes change, so crossing the wide line
   // or folding never remounts the thread: the transcript keeps its scroll and the prompt box its focus.
   //   [gutter] [thread] [side pane]
-  // The gutter is /full's centring (LAYOUT_VARS), full screen only and only beside a side pane: in the
+  // The gutter is /full's centring (layoutVars), full screen only and only beside a side pane: in the
   // three columns the thread stands hard against the sidebar and the rail, and alone it is simply centred.
   // The whole block is the thread's drop zone, as /full's page is (ThreadPageZone): a file dropped on the rail
   // or in full screen's gutter is this thread's too. Only the sidebar beside it is the board's.
@@ -274,7 +283,7 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
       <ThreadPageZone
         className={`flex h-full w-full transition-transform duration-200 ease-out motion-reduce:transition-none ${threeColumns ? "" : sidePane ? "justify-center split:justify-start" : "justify-center"}`}
         style={{
-          ...LAYOUT_VARS,
+          ...layoutVars(threadPx),
           // In the three columns and at rest the side pane is the rail alone; with a file it is /full's
           // pane, the half of the room right of the sidebar that the thread (--full-thread) does not take.
           ...(threeColumns && !fileBeside ? { "--full-pane": `${RAIL_WIDTH}px` } : null),
@@ -286,13 +295,15 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
         <div
           className={`relative h-full min-w-0 ${
             threeColumns
-              // 720 is the drawer's width (lib/sheet.ts SHEET_BASE_WIDTH), the measure every thread surface
-              // keeps. It gives way only to the opt-in project rail, whose 57px the 1360 does not count.
-              ? fileBeside ? "w-[var(--full-thread)] shrink-0" : "w-[720px] shrink"
+              // The Thread width setting's cap, which `main` holds room for beside the rail once the window
+              // has it, and gives way below that: to the 720 every setting keeps at 1360, and under it only
+              // to the opt-in project rail, whose 57px the 1360 does not count.
+              ? fileBeside ? "w-[var(--full-thread)] shrink-0" : "shrink"
               : folded
                 ? sidePane ? "w-[var(--full-thread-narrow)] shrink-0 split:w-[var(--full-thread)]" : "w-[var(--full-thread-narrow)] shrink-0"
                 : "w-full shrink-0"
           }`}
+          style={threeColumns && !fileBeside ? { width: threadPx } : undefined}
         >
           <div
             data-pane-thread
