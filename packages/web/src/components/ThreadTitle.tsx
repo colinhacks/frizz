@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import type { ThreadView } from "@frizz/shared"
-import { rpc } from "../api/rpc.ts"
 import { showToast } from "../store.ts"
-import { displayTitle } from "../groups.ts"
+import { renameThread, useShownTitle } from "../lib/pendingRename.ts"
 import { THREAD_TITLE_MAX_LENGTH, manualThreadTitleSeed, threadTitleToCommit } from "../lib/threadTitle.ts"
 import { AiRenameButton } from "./AiRenameButton.tsx"
 
@@ -23,7 +22,8 @@ import { AiRenameButton } from "./AiRenameButton.tsx"
 // refresh mark makes its own call (AiRenameButton) and hides while the editor is open.
 export function ThreadTitle({ thread, className = "" }: { thread: ThreadView; className?: string }) {
   const slug = thread.id
-  const renameTitle = useMutation({ mutationFn: (title: string) => rpc.renameThread({ slug, title }) })
+  // The new name shows from the Enter, not from the board delta that confirms it (lib/pendingRename).
+  const renameTitle = useMutation({ mutationFn: (title: string) => renameThread(slug, title) })
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
@@ -44,7 +44,7 @@ export function ThreadTitle({ thread, className = "" }: { thread: ThreadView; cl
   // Manual rename is registry metadata for either backend; the AI rename is Claude-only and gated
   // inside AiRenameButton.
   const canRename = thread.kind === "session" && thread.foreign !== true
-  const shown = displayTitle(thread)
+  const shown = useShownTitle(thread)
   function cancel(): void {
     setEditing(false)
     setDraft("")

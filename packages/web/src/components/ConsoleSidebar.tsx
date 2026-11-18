@@ -8,6 +8,7 @@ import { prefs } from "../lib/prefs.ts"
 import { toggleBandFold, useBandFolds } from "../lib/sidebarBands.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
 import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
+import { useOptimisticallyPinned } from "../lib/optimisticPin.ts"
 import { useConsoleProjectList } from "../lib/consoleProjects.ts"
 import {
   RUNNING_CAP,
@@ -83,7 +84,7 @@ function RowSquare({ project }: { project: ProjectCard | undefined }) {
 
 export function ConsoleSidebar() {
   // Untracked, like the project rail's (hooks.ts useBoardThreads): this board is EVERY project's.
-  const all = useOptimisticallyArchived(useOptimisticallySteered(useBoardThreads()))
+  const all = useOptimisticallyPinned(useOptimisticallyArchived(useOptimisticallySteered(useBoardThreads())))
   const direction = useSnapshot(prefs).queueOrder
   const group = useConsoleGroup()
   // "By status"'s Running fold, remembered for the Console like a project's own (lib/sidebarBands.ts).

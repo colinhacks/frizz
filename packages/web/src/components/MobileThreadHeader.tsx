@@ -3,7 +3,7 @@ import { ArrowLeft, MoreHorizontal } from "lucide-react"
 import { useThreadSnapshot, useTranscript } from "../hooks.ts"
 import { appPushedCurrentEntry } from "../lib/router.ts"
 import { leaveFiledThread } from "../lib/mobileTriage.ts"
-import { displayTitle } from "../groups.ts"
+import { useShownTitle } from "../lib/pendingRename.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { MOBILE_STATE_WORD, mobileThreadAge, mobileThreadState, turnStartedAt } from "../lib/mobileThread.ts"
 import { ThreadActionsSheet, useModelEffortLabel } from "./MobileThreadActionsSheet.tsx"
@@ -39,6 +39,7 @@ import { ThreadActionsSheet, useModelEffortLabel } from "./MobileThreadActionsSh
 // (ThreadActionsSheet).
 export function MobileThreadHeader({ slug, onClose }: { slug: string; onClose: () => void }) {
   const thread = useThreadSnapshot(slug)
+  const title = useShownTitle(thread)
   const [sheetOpen, setSheetOpen] = useState(false)
   const now = useNowMs()
   const running = thread?.runtime === "running" || thread?.runtime === "spawning"
@@ -51,7 +52,6 @@ export function MobileThreadHeader({ slug, onClose }: { slug: string; onClose: (
   const state = mobileThreadState(thread)
   const age = mobileThreadAge(thread, state, turnStart, now)
   const stateClass = state === "needs-you" ? "font-semibold text-accent" : state === "working" ? "font-semibold text-live" : ""
-  const title = displayTitle(thread)
   return (
     <header
       data-thread-header

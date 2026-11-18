@@ -10,6 +10,7 @@ import { isConsolePath } from "../lib/base-path.ts"
 import { consoleCardOrder, useConsoleGroup } from "../lib/consoleBoard.ts"
 import { useConsoleProjectList } from "../lib/consoleProjects.ts"
 import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
+import { useOptimisticallyPinned } from "../lib/optimisticPin.ts"
 import { prefs } from "../lib/prefs.ts"
 import { ProjectScope } from "../lib/projectScope.tsx"
 import { SPLIT_MIN_PX } from "../lib/sheet.ts"
@@ -60,7 +61,7 @@ export function usePaneQueue(): readonly ThreadRow[] {
   const order = useSnapshot(prefs).queueOrder
   // What had a card, not everything queued: a pinned thread's plain report is read off its pinned row and
   // never queues (lib/consoleBoard holdsCardHere), so the pane neither counts it as waiting nor steps onto it.
-  const overlaid = useOptimisticallyArchived(useOptimisticallySteered(useQueueCards()))
+  const overlaid = useOptimisticallyPinned(useOptimisticallyArchived(useOptimisticallySteered(useQueueCards())))
   const slugs = projects.projects.map((p) => p.slug).join("\n")
   return useMemo(() => {
     const items = orderQueue(overlaid.filter(queued), order)

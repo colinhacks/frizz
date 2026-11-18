@@ -1,17 +1,18 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { QueryClientContext, useQueryClient } from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useSnapshot } from "valtio"
 import { AlarmClock, Check, ChevronRight, CircleDashed, Ellipsis, Github, Hourglass, Loader2, Pin, PinOff, Radio, RotateCcw, Timer } from "lucide-react"
 import { hasLiveSubAgents, type BoardSnapshot, type ThreadView } from "@frizz/shared"
 import { store, openThread, pushSubAgentDrawer, showToast } from "../store.ts"
 import { rpc } from "../api/rpc.ts"
-import { useBoardThreads, useChildThreads } from "../hooks.ts"
+import { useBoardThreads, useChildThreads, warmTranscript } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
 import { toggleBandFold, useBandFolds } from "../lib/sidebarBands.ts"
 import { subAgentProfileCell } from "../lib/subAgentProfile.ts"
+import { useShownTitle } from "../lib/pendingRename.ts"
 import type { PinShelf } from "../groups.ts"
-import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning, unreadRest } from "../groups.ts"
+import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning, unreadRest } from "../groups.ts"
 import { ageSpan, relativeAge, limitResumeClock } from "../lib/activityTime.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { BoxSpinner, STATUS_BOX } from "./BoxSpinner.tsx"
@@ -33,6 +34,7 @@ import { formatCompactElapsed } from "../lib/durationLabels.ts"
 import { awaitingProse, awaitingWaitClause } from "../lib/awaitingPresentation.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
 import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
+import { setPinned, useOptimisticallyPinned } from "../lib/optimisticPin.ts"
 import { unlandedDispatches, usePendingDispatches, type PendingDispatchEntry } from "../lib/pendingDispatch.ts"
 import { STACKED_RAIL_ANCHOR_CLASS, stackedRailAnchor } from "../lib/stackedRailAnchor.ts"
 import { useProjectScope } from "../lib/projectScope.tsx"
@@ -113,15 +115,16 @@ export function Sidebar() {
   // spun while still sitting in the queue-ordered rested band, below the rule, and hopped up to the
   // running band seconds later — measured at 2.0s here with an instantaneous fixture worker, longer in
   // production. See lib/steering.ts.
-  // Both optimistic overlays, composed: a just-sent steer pulls a row into Active, a just-clicked
-  // Mark-as-done drops it into Done — each folded in BEFORE any band is derived, so the row's
-  // appearance and its POSITION always land together instead of one waiting on a round-trip the other
-  // already skipped (lib/steering.ts, lib/optimisticArchive.ts).
+  // The optimistic overlays, composed: a just-sent steer pulls a row into Active, a just-clicked
+  // Mark-as-done drops it into Done, a just-clicked pin lifts it onto the shelf — each folded in BEFORE
+  // any band is derived, so the row's appearance and its POSITION always land together instead of one
+  // waiting on a round-trip the other already skipped (lib/steering.ts, lib/optimisticArchive.ts,
+  // lib/optimisticPin.ts).
   // The threads are read UNTRACKED and everything derived from them is memoized on their identity
   // (hooks.ts useBoardThreads): the rail sections and sorts every thread, and most of a long-lived
   // board is the Done band. Walking it through useBoard()'s tracking view on every render was most of
   // what a send's click handler spent on a board of 1,000 Done threads.
-  const all = useOptimisticallyArchived(useOptimisticallySteered(useBoardThreads()))
+  const all = useOptimisticallyPinned(useOptimisticallyArchived(useOptimisticallySteered(useBoardThreads())))
   const queueOrder = useSnapshot(prefs).queueOrder
   const sections = useMemo(() => sectionThreads(all, queueOrder), [all, queueOrder])
   // Its own partition, deliberately NOT a SectionKey: sectionThreads drops external rows entirely, and
@@ -824,6 +827,10 @@ export const ThreadRow = memo(function ThreadRow({
    *  shelf (groups.ts isConsolePinned). One row shows ONE shelf's pin, never both. */
   shelf?: PinShelf
 }) {
+  // Through the context, not useQueryClient, which throws where no provider is mounted: the rail's render
+  // tests and fixture pages draw a row alone (ExpandThreadLink reads it the same way).
+  const queryClient = useContext(QueryClientContext)
+  const title = useShownTitle(t)
   const foreign = !legacy && t.foreign === true
   // Snoozed rows are uniformly grayed as a whole; provisional titles retain their local dim treatment.
   // A thread awaiting its OWN live sub-agent/Monitor is not Snoozed and stays fully active — unless its
@@ -904,6 +911,16 @@ export const ThreadRow = memo(function ThreadRow({
       <button
         // The board's pane shows it (store openThread → pushDrawer), queued or not.
         onClick={() => openThread(t.id)}
+        // THE READ STARTS AT THE PRESS, not the click. A thread this tab has not read opens on "Loading…"
+        // until its transcript arrives, and the click comes a hand's press-and-release after the button went
+        // down: 34-376ms of "Loading…" on every cold open of a 400-message thread before this (eight opens,
+        // a scripted stack, 2026-11-18). It is the read the click makes anyway, only sooner, so it costs the
+        // server nothing; a mouse only, because a touch that lands on a row is as often a scroll, and a read
+        // of an old thread can stall the server for seconds (hooks.ts warmTranscript does nothing for a
+        // thread already in the cache).
+        onPointerDown={(e) => {
+          if (queryClient && e.pointerType === "mouse" && e.button === 0) void warmTranscript(queryClient, t.id)
+        }}
         aria-current={active ? "location" : undefined}
         className="min-w-0 flex-1 flex items-start gap-2 pb-1 pl-5 pr-1.5 pt-1 text-left"
       >
@@ -924,7 +941,7 @@ export const ThreadRow = memo(function ThreadRow({
               12px is a gutter, and it costs the title 4px it does not miss. */}
           <span className="flex min-w-0 items-baseline gap-3">
             <span className={`min-w-0 flex-1 break-words text-[13px] leading-[19px] ${dimLabel ? "text-provisional" : dim ? "text-fg/75" : "text-fg/90"}`}>
-              <TitleWithTrailers title={displayTitle(t)}>
+              <TitleWithTrailers title={title}>
                 {!legacy && <ProviderMark backend={t.backend} model={t.model} className="ml-1" />}
                 {/* MEASURED 2026-08-19, the first time this tag ever rendered (it was written for a
                     foreign row and no foreign row reached the rail until the External band). Readings
@@ -1116,34 +1133,26 @@ const PIN_COPY: Record<PinShelf, { pin: string; unpin: string; pinLabel: string;
   },
 }
 
-function setPinnedOn(t: ThreadView, shelf: PinShelf, pinned: boolean): Promise<void> {
-  const input = { slug: t.id, sessionId: t.sessionId ?? "", pinned }
-  return shelf === "console" ? rpc.setThreadConsolePinned(input) : rpc.setThreadPinned(input)
-}
-
+// The click moves the row and flips this button at once (lib/optimisticPin); a refusal moves it back.
 function RowPinButton({ t, shelf, className = "" }: { t: ThreadView; shelf: PinShelf; className?: string }) {
   const pinned = pinnedOn(t, shelf)
   const copy = PIN_COPY[shelf]
-  const [busy, setBusy] = useState(false)
   return (
     <Tooltip label={pinned ? copy.unpin : copy.pin}>
       <button
         data-sidebar-pin={t.id}
         data-pin-shelf={shelf}
         aria-label={pinned ? copy.unpinLabel : copy.pinLabel}
-        disabled={busy}
         // Same two guards as Retry: keep DOM focus off the button so the hover reveal doesn't outlive
         // the pointer, and stop the press from reaching the row (which would also open the thread).
         onMouseDown={(e) => e.preventDefault()}
         onClick={(e) => {
           e.stopPropagation()
-          setBusy(true)
-          setPinnedOn(t, shelf, !pinned)
+          setPinned(t, shelf, !pinned)
             .catch((error: unknown) => showToast(`${pinned ? "Unpin" : "Pin"} failed: ${String(error instanceof Error ? error.message : error).slice(0, 80)}`))
-            .finally(() => setBusy(false))
         }}
         // `className` carries a layout trim the strip decides per position (see ThreadRow's readings).
-        className={`${ROW_ACTION_CLASS} disabled:opacity-50 ${className}`}
+        className={`${ROW_ACTION_CLASS} ${className}`}
       >
         {pinned ? <PinOff size={12} fill="currentColor" /> : <Pin size={12} />}
       </button>

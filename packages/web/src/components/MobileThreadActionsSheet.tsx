@@ -6,7 +6,8 @@ import { SNOOZE_PROMPT_MAX, type ThreadLinkView, type ThreadView } from "@frizz/
 import { rpc } from "../api/rpc.ts"
 import { showToast, store, threadBySlug } from "../store.ts"
 import type { BoardSnapshot } from "@frizz/shared"
-import { displayTitle, futureSnoozedUntil, offersRetry } from "../groups.ts"
+import { futureSnoozedUntil, offersRetry } from "../groups.ts"
+import { renameThread, useShownTitle } from "../lib/pendingRename.ts"
 import { prefs } from "../lib/prefs.ts"
 import {
   SNOOZE_PRESETS,
@@ -81,8 +82,8 @@ export function ThreadActionsSheet({ slug, onClose, onArchived, initialView = "a
   useEffect(() => {
     if (snap.board && !thread) dismiss()
   }, [snap.board, thread, dismiss])
+  const title = useShownTitle(thread)
   if (!thread) return null
-  const title = displayTitle(thread)
   return (
     <MobileBottomSheet title={`Thread actions: ${title}`} onRequestClose={() => dismiss()} dataAttr="data-thread-actions-sheet">
       {view === "actions" ? (
@@ -408,11 +409,13 @@ function displayPath(path: string, projectDir: string | undefined): string {
 // The header's click-to-type rename (ThreadTitle), as a field: the same seed, the same no-op rules for
 // an empty or unchanged name, the same RPC and toasts. Claude's rename rides along where the header
 // offers it on hover — a phone has no hover, so here it is a row.
+//
+// Save closes the sheet at once, onto a row and header already wearing the new name (lib/pendingRename),
+// as Enter closes the header's editor: the old name put back is how a refusal shows, with its toast.
 function RenameView({ thread, back, dismiss }: { thread: ThreadView; back: () => void; dismiss: (then?: () => void) => void }) {
-  const shown = displayTitle(thread)
+  const shown = useShownTitle(thread)
   const [draft, setDraft] = useState(() => manualThreadTitleSeed(shown, thread.id))
   const input = useRef<HTMLInputElement>(null)
-  const rename = useMutation({ mutationFn: (title: string) => rpc.renameThread({ slug: thread.id, title }) })
   const aiRename = useMutation({ mutationFn: () => rpc.aiRenameThread({ slug: thread.id }) })
   const ai = aiRenameAvailability(thread)
   useEffect(() => {
@@ -425,10 +428,14 @@ function RenameView({ thread, back, dismiss }: { thread: ThreadView; back: () =>
   const commit = () => {
     const title = threadTitleToCommit(draft, shown)
     if (!title) return back()
-    rename.mutate(title, {
-      onSuccess: () => dismiss(() => showToast("Thread renamed")),
-      onError: (error) => showToast(error instanceof Error ? error.message : "Could not rename thread"),
-    })
+    // Not a useMutation: the sheet unmounts before the server answers, and a mutation's own callbacks
+    // die with the component that made it.
+    const renamed = renameThread(thread.id, title)
+    dismiss()
+    renamed.then(
+      () => showToast("Thread renamed"),
+      (error: unknown) => showToast(error instanceof Error ? error.message : "Could not rename thread"),
+    )
   }
   return (
     <form data-thread-actions-rename onSubmit={(event) => { event.preventDefault(); commit() }}>
@@ -446,10 +453,8 @@ function RenameView({ thread, back, dismiss }: { thread: ThreadView; back: () =>
         />
         <button
           type="submit"
-          disabled={rename.isPending}
-          className="flex h-[46px] items-center justify-center gap-2 rounded-xl bg-fg text-[15.5px] font-semibold text-bg outline-none disabled:opacity-45"
+          className="flex h-[46px] items-center justify-center rounded-xl bg-fg text-[15.5px] font-semibold text-bg outline-none"
         >
-          {rename.isPending && <Loader2 size={16} className="animate-spin" />}
           Save
         </button>
       </div>

@@ -7,7 +7,6 @@ import { useBoard, useBoardThreads, useChildThreads } from "../hooks.ts"
 import { childThreadState } from "../lib/childThreads.ts"
 import { prefs } from "../lib/prefs.ts"
 import {
-  displayTitle,
   lastActiveLabelAt,
   restIsWorking,
   sectionThreads,
@@ -17,6 +16,7 @@ import { ageSpan, spanUntil } from "../lib/activityTime.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
 import { clearArchived, markArchived, useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
+import { useOptimisticallyPinned } from "../lib/optimisticPin.ts"
 import { rpc } from "../api/rpc.ts"
 import { showToast } from "../store.ts"
 import { snoozePresetInstant, snoozePresetLabel } from "../lib/snooze.ts"
@@ -31,6 +31,7 @@ import { useSupervisorStatus } from "../api/supervisorStatus.ts"
 import { settleCompletion } from "../lib/completionPins.ts"
 import { captureReaderPin, restoreReaderPin, type ReaderPin } from "../lib/readerPin.ts"
 import { Z_CHROME } from "../lib/layers.ts"
+import { useShownTitle } from "../lib/pendingRename.ts"
 
 // THE PHONE'S BOARD — a header, four text tabs, ONE list, and a "New thread" button.
 //
@@ -279,6 +280,7 @@ function MobileThreadRow({
   onLongPress: () => void
 }) {
   const press = useLongPress(onLongPress)
+  const title = useShownTitle(t)
   const snoozePreset = useSnapshot(prefs).snoozePreset
   const now = useNowMs()
   const kind = sessionIndicatorKind(t)
@@ -351,7 +353,7 @@ function MobileThreadRow({
         <span className="flex min-w-0 flex-1 flex-col gap-px">
           <span className="flex min-w-0 items-baseline gap-2.5">
             <span className="min-w-0 flex-1 truncate text-[15.5px] font-medium leading-[21px] tracking-[-0.005em] text-fg">
-              {displayTitle(t)}
+              {title}
             </span>
             {right ? (
               <span data-mobile-row-right className="shrink-0 text-[12px] leading-[21px] tabular-nums text-faint">{right}</span>
@@ -475,7 +477,7 @@ export function MobileBoard() {
   // running reading and a just-clicked Mark-as-done drops it into Done, each folded in BEFORE any band
   // is derived — so a row's appearance and its band always land together.
   // Untracked, like the desktop rail's (hooks.ts useBoardThreads): the bands below walk every thread.
-  const all = useOptimisticallyArchived(useOptimisticallySteered(useBoardThreads()))
+  const all = useOptimisticallyPinned(useOptimisticallyArchived(useOptimisticallySteered(useBoardThreads())))
   const queueOrder = useSnapshot(prefs).queueOrder
   const sections = useMemo(() => sectionThreads(all, queueOrder), [all, queueOrder])
 

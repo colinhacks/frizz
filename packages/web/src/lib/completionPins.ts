@@ -1,5 +1,5 @@
 import type { ThreadView } from "@frizz/shared"
-import { rpc } from "../api/rpc.ts"
+import { setPinned } from "./optimisticPin.ts"
 import { showToast, type ToastAction } from "../store.ts"
 import { prefs } from "./prefs.ts"
 
@@ -28,12 +28,13 @@ export function completionUnpins(thread: Pick<ThreadView, "pinnedAt" | "consoleP
 
 type PinnedThread = Pick<ThreadView, "id" | "sessionId" | "pinnedAt" | "consolePinnedAt">
 
-// Lift the pin from every shelf the thread was on, so "unpin" means off the pinned list everywhere.
+// Lift the pin from every shelf the thread was on, so "unpin" means off the pinned list everywhere. The
+// row leaves the shelf on the click (lib/optimisticPin), and the toast waits for the server.
 async function unpin(thread: PinnedThread): Promise<void> {
-  const slug = thread.id
-  const sessionId = thread.sessionId ?? ""
-  if (typeof thread.pinnedAt === "string") await rpc.setThreadPinned({ slug, sessionId, pinned: false })
-  if (typeof thread.consolePinnedAt === "string") await rpc.setThreadConsolePinned({ slug, sessionId, pinned: false })
+  await Promise.all([
+    typeof thread.pinnedAt === "string" ? setPinned(thread, "board", false) : undefined,
+    typeof thread.consolePinnedAt === "string" ? setPinned(thread, "console", false) : undefined,
+  ])
 }
 
 // The completion toast's "Unpin" action, offered when the completion kept the pin.

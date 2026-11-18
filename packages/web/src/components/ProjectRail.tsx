@@ -13,6 +13,7 @@ import { PROJECTS_HREF } from "../lib/homeView.ts"
 import { useDevicePixelRatio } from "../lib/devicePixelRatio.ts"
 import { projectIconKey, rememberProjectIcon, seenProjectIcon } from "../lib/projectIconSeen.ts"
 import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
+import { useOptimisticallyPinned } from "../lib/optimisticPin.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
 import { dropIndex, edgeScrollVelocity, moveItem, shiftFor } from "../lib/railReorder.ts"
 import { AddProjectDialog } from "./AddProjectDialog.tsx"
@@ -518,11 +519,11 @@ function useRailCounts(currentSlug: string | undefined, projects: readonly Proje
   // thread, Done ones included, are three walks nothing needs recorded.
   const board = useBoardLoaded()
   const all = useBoardThreads()
-  // THE SAME TWO OVERLAYS THE SIDEBAR FOLDS IN (Sidebar.tsx), so the square's counts and the rows beside
+  // THE SAME OVERLAYS THE SIDEBAR FOLDS IN (Sidebar.tsx), so the square's counts and the rows beside
   // it change on the same click: a just-sent steer leaves Queue for Running, a just-clicked Mark as done
   // leaves both. Read off the raw board instead, the badge kept the old count for the whole round-trip
   // while the sidebar had already moved. Hooks cannot be conditional, hence the empty list.
-  const overlaid = useOptimisticallyArchived(useOptimisticallySteered(all))
+  const overlaid = useOptimisticallyPinned(useOptimisticallyArchived(useOptimisticallySteered(all)))
   const threads = currentSlug !== undefined && board ? overlaid : undefined
   const live = threads && { queued: threads.filter(boardQueuedThread).length, running: threads.filter(activeBandThread).length, asks: threads.filter(boardAskThread).length }
   const currentId = currentSlug === undefined ? undefined : projects.find((project) => project.slug === currentSlug)?.id
