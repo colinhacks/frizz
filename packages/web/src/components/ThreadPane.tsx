@@ -41,7 +41,9 @@ import { LAYOUT_VARS } from "../lib/fullLayout.ts"
 // on 2026-11-17 the thread took that slack instead, and the lines between the columns became resize
 // handles (PaneResizeHandle), so the sidebar and the rail are as wide as the reader drags them
 // (lib/threadPane.ts paneSidebarWidth / paneRailWidth) and the thread is the rest. When the window runs
-// short the sidebar gives way first, down to its minimum, before the thread drops below its 720 measure.
+// short the sidebar gives way first, down to its minimum, then the rail, down to its own (PaneThread's
+// --full-pane), before the thread drops below its 720 measure. That holds at every window width, not only
+// at the moment of a drag: a width stored on a wide screen gives way on a narrow one.
 // These are the minimums: 300 + the thread's 720 + the rail's 340 is the 1360 the three columns start at
 // (PANE_WIDE_MIN_PX). The sidebar's 16px insets are the peek's, so the two read alike.
 const WIDE_SIDEBAR_PX = 300
@@ -288,9 +290,17 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
         style={{
           ...LAYOUT_VARS,
           // In the three columns and at rest the side pane is the rail alone, as wide as the reader dragged it
-          // (PaneLayout's --pane-rail-w); with a file it is /full's pane, the half of the room right of the
-          // sidebar that the thread (--full-thread) does not take.
-          ...(threeColumns && !fileBeside ? { "--full-pane": "var(--pane-rail-w)", "--focus-rail-w": "var(--pane-rail-w)" } : null),
+          // (PaneLayout's --pane-rail-w) until the thread would drop below its measure; with a file it is
+          // /full's pane, the half of the room right of the sidebar that the thread (--full-thread) does not
+          // take. The rail gives way second: the `100%` is this block, the row less the sidebar, and the
+          // sidebar's own clamp leaves the thread its 720 beside the full rail until the sidebar is down to its
+          // minimum, so only then does `100% - 720px` fall below the rail's width. A width stored on a wider
+          // screen therefore cannot squeeze the thread on a narrower one. The `%` resolves where the variable
+          // is used, the side pane's width, whose containing block is this one; the rail inside the side pane
+          // simply fills it.
+          ...(threeColumns && !fileBeside
+            ? { "--full-pane": `clamp(${PANE_RAIL_MIN_PX}px, calc(100% - ${PANE_THREAD_PX}px), var(--pane-rail-w))`, "--focus-rail-w": "100%" }
+            : null),
           transform: fileOpen ? "translateX(calc(-1 * var(--full-gutter)))" : undefined,
         } as CSSProperties}
       >
@@ -299,9 +309,10 @@ function PaneThread({ slug, folded, wide }: { slug: string; folded: boolean; wid
         <div
           className={`relative h-full min-w-0 ${
             threeColumns
-              // Everything between the sidebar and the rail. PaneLayout keeps it at 720 or more, the drawer's
-              // width (lib/sheet.ts SHEET_BASE_WIDTH) and the measure every thread surface keeps, except beside
-              // the opt-in project rail, whose 57px the 1360 does not count, or a rail dragged wide.
+              // Everything between the sidebar and the rail. The two of them give way to keep it at 720 or more,
+              // the drawer's width (lib/sheet.ts SHEET_BASE_WIDTH) and the measure every thread surface keeps,
+              // until both are at their minimums, which happens only beside the opt-in project rail, whose 57px
+              // the 1360 does not count.
               ? fileBeside ? "w-[var(--full-thread)] shrink-0" : "flex-1"
               : folded
                 ? sidePane ? "w-[var(--full-thread-narrow)] shrink-0 split:w-[var(--full-thread)]" : "w-[var(--full-thread-narrow)] shrink-0"
