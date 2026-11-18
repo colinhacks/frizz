@@ -4668,8 +4668,9 @@ export const ThreadView = z.object({
   // sent (and therefore pending/readable) without remaining a hard gate that disables Snooze.
   // Optional keeps rolling client/server reloads compatible; current servers always emit the bit.
   actionableInteraction: z.boolean().optional(),
-  // ISO8601 read/seen telemetry (threadSeen RPC — recorded when the human opens the thread). Kept for
-  // compatibility and analytics only; viewing never acknowledges or removes a queue handoff.
+  // ISO8601 read/seen telemetry (threadSeen RPC — recorded when the human opens the thread). It clears
+  // the rail's queue dot (web groups.ts unreadRest) and nothing else: viewing never acknowledges or removes
+  // a queue handoff.
   seenAt: z.string().optional(),
   // Which agent backend runs this thread (Codex-support epic, Phase 3) — drives the subtle per-row
   // rail badge. Optional so a legacy/foreign/pre-restart row parses; absent OR "claude" ⇒ no badge

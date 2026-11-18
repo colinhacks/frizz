@@ -14,12 +14,14 @@ import "./styles.css"
 // Browser QA for THE QUEUE DOT (Sidebar.tsx ThreadRow `queueDot`): the real <Sidebar/> over a board shaped
 // like the one it was asked for on (maintainer 2026-11-17) — a Pinned shelf where two questions and a
 // queued timer park are waiting on the human, beside a pinned done report, a pinned handoff and a
-// pinned timer park that are not, over a Queue band and a Running row.
+// pinned timer park that are not, over a Queue band and a Running row. The queued timer park has been opened
+// since it rested, so it draws no dot, and `&pane=pilot-books` (the default) opens one of the questions,
+// whose row then draws the marker and no dot.
 //
 //   /queue-dot-fixture.html                              — a project's board
 //   /queue-dot-fixture.html?surface=console&group=status — the Console's Pinned shelf (its own pins)
 //   /queue-dot-fixture.html?surface=console&group=project — the Console's project blocks
-//   &pane=<slug>                                          — the pane's marker on that row, beside its dot
+//   &pane=<slug>                                          — the pane's marker on that row (`none` for no pane)
 //   &theme=light                                          — the light theme
 
 const T0 = Date.now() - 6 * 3_600_000
@@ -69,7 +71,8 @@ setThemePreference(params.get("theme") === "light" ? "light" : "dark")
 // [project, slug, title, rested minutes, overrides, pinned]
 const ROWS: [string, string, string, number, Partial<ThreadView>, boolean][] = [
   ["alpha", "releaser", "Releaser", 359, { ...timer, ...notQueued }, true],
-  ["alpha", "leak-watcher", "Leak watcher", 300, timer, true],
+  // Queued, and opened since it rested: no dot until its next rest.
+  ["alpha", "leak-watcher", "Leak watcher", 300, { ...timer, seenAt: at(301) }, true],
   ["beta", "hiring", "Hiring candidates", 338, doneReport, true],
   ["alpha", "issue-watcher", "Issue watcher", 343, handoff, true],
   ["beta", "new-user-watcher", "New-user watcher", 327, question, true],
@@ -95,8 +98,8 @@ if (surface === "console") {
 }
 store.board = { projectDir: "/fixture/alpha", threads } as BoardSnapshot
 store.drawers = []
-const pane = params.get("pane")
-if (pane) store.paneSlug = surface === "console" ? threadKey(pane === "smart-guidance" || pane === "pilot-books" ? "alpha" : "beta", pane) : pane
+const pane = params.get("pane") ?? "pilot-books"
+if (pane !== "none") store.paneSlug = surface === "console" ? threadKey(pane === "smart-guidance" || pane === "pilot-books" ? "alpha" : "beta", pane) : pane
 
 const json = (result: unknown) => new Response(JSON.stringify({ result }), { headers: { "content-type": "application/json" } })
 const nativeFetch = window.fetch.bind(window)

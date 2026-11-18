@@ -120,6 +120,7 @@ export function ConsoleSidebar() {
   // board (Sidebar.tsx): a parked row says nothing else on the rail. Running and Done rows do not.
   // `dot`: the yellow queue dot, for a waiting row with no Queue label over it — By project's blocks, which
   // draw each project's waiting rows straight above its running ones. By status's Pinned band draws its own.
+  // Either way the row draws it only until the thread is opened (ThreadRow).
   const row = (t: ThreadView, opts: { square: boolean; waiting: boolean; dated?: boolean; dot?: boolean }) => (
     <div key={t.id}>
       <ThreadRow

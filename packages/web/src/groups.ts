@@ -78,6 +78,17 @@ export function lastActiveLabelAt(t: Pick<ThreadView, "runtime" | "lastActivityA
   return t.lastAssistantAt ?? t.lastActivityAt ?? t.spawnedAt
 }
 
+/** Has this thread come to rest since the human last opened it? The rest is `lastActiveLabelAt`, the instant
+ *  the row's rest time reads. `seenAt` is written by opening the thread (router threadSeen) in the pane, a
+ *  drawer or its full page, and again each time a rest lands while one of them is open, so a rest read as it
+ *  arrives is never unread. A thread nobody has opened is. It clears the rail's queue dot (Sidebar.tsx
+ *  ThreadRow), and nothing else: reading a rest never takes it out of the queue. */
+export function unreadRest(t: Pick<ThreadView, "runtime" | "lastActivityAt" | "lastAssistantAt" | "spawnedAt" | "seenAt">): boolean {
+  if (!t.seenAt) return true
+  const rested = lastActiveLabelAt(t)
+  return rested !== undefined && Date.parse(rested) > Date.parse(t.seenAt)
+}
+
 // The listing DIRECTION the queue/rested band orders by (a per-browser view preference — see
 // lib/prefs.ts). FIFO (default) surfaces the longest-waiting item first so the human cycles through
 // all work; LIFO surfaces the most-recently-active first.

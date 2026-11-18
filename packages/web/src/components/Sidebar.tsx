@@ -11,7 +11,7 @@ import { prefs } from "../lib/prefs.ts"
 import { toggleBandFold, useBandFolds } from "../lib/sidebarBands.ts"
 import { subAgentProfileCell } from "../lib/subAgentProfile.ts"
 import type { PinShelf } from "../groups.ts"
-import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning } from "../groups.ts"
+import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, displayTitle, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning, unreadRest } from "../groups.ts"
 import { ageSpan, relativeAge, limitResumeClock } from "../lib/activityTime.ts"
 import { useNowMs } from "../lib/liveClock.ts"
 import { BoxSpinner, STATUS_BOX } from "./BoxSpinner.tsx"
@@ -225,7 +225,8 @@ export function Sidebar() {
               glyph and rest time (maintainer 2026-11-09, of an unread dot that lived here for three days: "if
               something comes to rest but it doesn't have anything actionable for the human, then why bother
               giving it a dot?"); a row with an ask or a failure is in the queue, and wears the yellow queue
-              dot (ThreadRow `queueDot`, 2026-11-17), since no Queue label stands over it here.
+              dot until the human opens it (ThreadRow `queueDot`, 2026-11-17), since no Queue label stands
+              over it here.
               LABELED since 2026-09-19, like every band below it, and NOT collapsible (maintainer: the Pinned,
               Queue and Running labels "should not be collapsible"; Running became collapsible on
               2026-11-11) — the header is the static form of SectionHeader, so it lines up with the
@@ -810,7 +811,8 @@ export const ThreadRow = memo(function ThreadRow({
 }: {
   t: ThreadView
   /** The yellow dot in the gutter: this thread is in the queue, and its row stands where no Queue label
-   *  says so — the Pinned shelf, or a project's block on the Console. See the dot below. */
+   *  says so — the Pinned shelf, or a project's block on the Console. It draws only until the human opens
+   *  the rest, and never on the open row. See the dot below. */
   queueDot?: boolean
   legacy?: boolean
   active?: boolean
@@ -844,6 +846,8 @@ export const ThreadRow = memo(function ThreadRow({
   const canRestart = !legacy && offersRetry(t)
   // A pinned row places the unpin verb rightmost in the hover strip, where its rest time sits at rest.
   const pinned = !legacy && pinnedOn(t, shelf)
+  // The queue dot, while the rest it marks is unread and its thread is not the one open (see the dot below).
+  const showsQueueDot = queueDot && !active && unreadRest(t)
   // A ROW IS ITS TITLE, AND NOTHING ELSE (maintainer 2026-08-19: "there should never ever be any fucking
   // thing in the sidebar except for the fucking title"). There is no subtitle line on any row, in any
   // state: not the fence's PR ref, not a snooze, not the legacy `.frizz` activity gloss, not a sub-agent
@@ -879,11 +883,15 @@ export const ThreadRow = memo(function ThreadRow({
             timer park, and "10 threads are waiting on you" stood over a Queue band of 7. A pinned plain
             report is not queued and stays unmarked (2026-11-09). The accent, because on the rail it
             means "awaiting you" (styles.css).
+            OPENING THE THREAD CLEARS IT (maintainer, the same day: "As soon as you click on a thread, the
+            dot goes away, which means that you should never see the dot and the sort of left yellow
+            border at the same time … it looks like shit when they're both showing"). So it is UNREAD: it
+            stands until the human opens the rest it marks (groups.ts unreadRest), and the open row never
+            draws it, which also covers the round trip before the server has recorded the read.
             MEASURED 2026-11-17 at a real 2x (--force-device-scale-factor; an emulated scale snaps the dot
             to whole pixels and misread it by 0.5px), sans: its centre is the status box's to 0.00px and
-            0.25px above the title's cap band. Ink gaps: 3px from the pane's marker bar on the open row
-            (at 2px the two yellow marks ran together), 5.5px to the status box. */}
-        {queueDot && <span data-sidebar-queue-dot className="absolute left-[9px] top-[10.5px] size-1.5 rounded-full bg-accent" />}
+            0.25px above the title's cap band, and its ink stands 6.5px clear of the box. */}
+        {showsQueueDot && <span data-sidebar-queue-dot className="absolute left-[8px] top-[10.5px] size-1.5 rounded-full bg-accent" />}
       </span>
       <button
         // The board's pane shows it (store openThread → pushDrawer), queued or not.
@@ -891,7 +899,7 @@ export const ThreadRow = memo(function ThreadRow({
         aria-current={active ? "location" : undefined}
         className="min-w-0 flex-1 flex items-start gap-2 pb-1 pl-5 pr-1.5 pt-1 text-left"
       >
-        {queueDot && <span className="sr-only">In the queue. </span>}
+        {showsQueueDot && <span className="sr-only">Unread, in the queue. </span>}
         {leading}
         {/* h-[19px] so the indicator centers on the title's FIRST line, not the middle of a wrapped row. */}
         <span className="w-4 h-[19px] shrink-0 flex items-center justify-center">
