@@ -114,6 +114,17 @@ test("a comment on a passage waits as a highlight, survives a reload, and the ne
     assert.match(await page.$eval("[data-comment-popover]", (el) => el.textContent ?? ""), /Why key on the name alone here\?/)
     const popover = await page.$eval("[data-comment-popover]", (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })
     await shot("3-hover", { x: popover.x - 40, y: popover.y - 70, width: popover.width + 80, height: popover.height + 90 })
+    // The pointer can travel from the passage onto the card and use it: leaving the prose for the card
+    // once closed it under every pointer on its way to Edit.
+    const edit = await page.$eval('[data-comment-popover] button[aria-label="Edit comment"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })
+    await page.mouse.move(edit.x, edit.y, { steps: 8 })
+    await new Promise((r) => setTimeout(r, 600))
+    assert.ok(await page.$("[data-comment-popover]"), "the card stays open under a pointer that came from its passage")
+    await page.mouse.click(edit.x, edit.y)
+    await page.waitForSelector("[data-comment-editor] textarea", { visible: true, timeout: 5000 })
+    assert.equal(await page.$eval("[data-comment-editor] textarea", (el) => (el as HTMLTextAreaElement).value), "Why key on the name alone here?", "Edit opens the comment's words")
+    await page.keyboard.press("Escape")
+    await page.waitForSelector("[data-comment-editor]", { hidden: true, timeout: 5000 })
     await page.mouse.move(5, 450)
     await page.waitForSelector("[data-comment-popover]", { hidden: true, timeout: 5000 })
 

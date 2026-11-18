@@ -330,10 +330,17 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
   const setFocus = controller?.setFocus
   const focusRef = useRef(focus)
   focusRef.current = focus
+  // THE POINTER ON ITS WAY TO THE CARD leaves the surface, and the close that leaving schedules must not
+  // fire once it has arrived. The card's own onPointerEnter cannot be what cancels it: React makes that
+  // event out of the browser's `pointerout`, which comes BEFORE the surface's native `pointerleave`, so
+  // the cancel ran first and the surface then scheduled a close nothing cancelled — the card vanished
+  // under every pointer heading for Edit (2026-11-18, 20 of 20 sweeps). So the close itself asks whether
+  // the card is under the pointer.
+  const cardRef = useRef<HTMLDivElement>(null)
   const scheduleClose = useCallback(() => {
     clearTimeout(closeTimer.current)
     closeTimer.current = setTimeout(() => {
-      if (!focusRef.current.pinned) setFocus?.(NO_FOCUS)
+      if (!focusRef.current.pinned && !cardRef.current?.matches(":hover")) setFocus?.(NO_FOCUS)
     }, HOVER_CLOSE_MS)
   }, [setFocus])
   const cancelClose = useCallback(() => clearTimeout(closeTimer.current), [])
@@ -491,6 +498,7 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
         <PopoverAnchor virtualRef={focusAnchor} />
         {open && (
           <PopoverContent
+            ref={cardRef}
             side="bottom"
             align="start"
             sideOffset={6}
