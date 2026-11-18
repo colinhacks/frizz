@@ -11,9 +11,9 @@ import { SHEET_PANEL_CLASS, SHEET_SCRIM_CLASS, sheetWidth } from "../lib/sheet.t
 import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import { handleDialogEscape } from "../lib/selectOverlay.ts"
 import { DrawerInitialScrollCoordinator } from "../lib/drawerInitialScroll.ts"
+import { opensAtRest } from "../lib/openLanding.ts"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { ThreadView } from "./lazySurfaces.tsx"
-import { useIsMobile } from "../lib/mobile.ts"
 import { drawerZ } from "../lib/layers.ts"
 
 // One THREAD layer of the side-drawer stack: a right sheet (same slide/backdrop family as settings)
@@ -37,7 +37,6 @@ export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id
   const isTopDrawer = useIsTopDrawer(id)
   const holdsScrollLock = useHoldsScrollLock(id)
   const narrow = useNarrowDrawer()
-  const isMobile = useIsMobile()
   // Sheets are store/route-mounted rather than opened by RadixDialog.Trigger. Preserve the focused
   // row/button (or the control in the layer below) so closing this stack layer restores it exactly.
   const openerRef = useRef<HTMLElement | null>(
@@ -78,13 +77,15 @@ export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id
     rpc.threadSeen({ slug }).catch(() => {})
   }, [slug, atRestNow, activityAt])
 
-  // THE PHONE LANDS A RESTED THREAD ON ITS LAST MESSAGE, NOT ITS TAIL. The transcript does that itself
-  // (VirtualizedThreadTranscript's `openAtLastMessage`, which ChatView sets for exactly this case), so
-  // the tail-settling below must stand down or it would haul the reader back to the bottom on every
-  // layout change for the first few hundred milliseconds. Decided once, at open, like the landing is.
-  const phoneOpensAtMessageRef = useRef<boolean | null>(null)
-  if (phoneOpensAtMessageRef.current === null && t) {
-    phoneOpensAtMessageRef.current = isMobile && t.runtime !== "running" && t.runtime !== "spawning"
+  // A THREAD AT REST LANDS ON THE HUMAN'S LATEST MESSAGE AND THE SIGN-OFF UNDER IT, NOT ITS TAIL
+  // (lib/openLanding). The transcript does that itself (VirtualizedThreadTranscript's `openAtRest`, which
+  // ChatView sets for exactly this case), so the tail-settling below must stand down or it would haul the
+  // reader back to the bottom on every layout change for the first few hundred milliseconds. Decided once,
+  // at open, like the landing is. The phone's alone until 2026-11-18, when a desktop drawer still opened
+  // on its tail.
+  const opensAtRestRef = useRef<boolean | null>(null)
+  if (opensAtRestRef.current === null && t) {
+    opensAtRestRef.current = opensAtRest(t)
   }
 
   // Initial tail focus is a one-shot settling phase. The sheet's direct flex child stays viewport-
@@ -104,7 +105,7 @@ export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id
         scroller.scrollTop = scroller.scrollHeight
         return true
       },
-      preserveAnchor: () => location.hash.length > 1 || phoneOpensAtMessageRef.current === true,
+      preserveAnchor: () => location.hash.length > 1 || opensAtRestRef.current === true,
     })
     initialScrollRef.current = coordinator
 

@@ -126,9 +126,9 @@ test("a question's free-text letter sits over its box and under the thread's sti
     for (const [name, { url, selector }] of Object.entries(surfaces)) {
       await page.goto(url, { waitUntil: "networkidle2" })
       const box = await page.waitForSelector(`${selector} textarea[data-surface="questionAnswer"]`, { timeout: 30_000 })
-      // Scroll as a READER first. A thread that opens at the top of its window (the pane's queued
-      // thread, ChatView `openAtTop`) holds it there against programmatic scrolls until a reader's own
-      // gesture claims the transcript, so `read` setting scrollTop alone was undone about half the time.
+      // Scroll as a READER first. A thread at rest opens on its landing (ChatView `openAtRest`,
+      // lib/openLanding) and holds it there against programmatic scrolls until a reader's own gesture
+      // claims the transcript, so `read` setting scrollTop alone was undone about half the time.
       const at = (await box!.boundingBox())!
       await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2)
       await page.mouse.wheel({ deltaY: 40 })
