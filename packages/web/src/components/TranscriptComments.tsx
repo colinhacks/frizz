@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react"
-import { ChevronDown, ChevronUp, MessageSquare, MessageSquarePlus, Pencil, Trash2 } from "lucide-react"
-import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
+import { ChevronDown, ChevronUp, MessageSquare, MessageSquarePlus } from "lucide-react"
+import { Popover, PopoverAnchor, PopoverContent, POPOVER_COLLISION_PADDING } from "./ui/Popover.tsx"
 import { draftKey, draftStore, useDraft, useProjectDir } from "../lib/drafts.ts"
 import {
   COMMENT_UI_ATTR,
@@ -20,9 +20,10 @@ import {
 } from "../lib/transcriptComments.ts"
 
 // INLINE COMMENTS, DRAWN. lib/transcriptComments.ts says what a comment is and what a send carries; this
-// draws them on a thread's surface: the Comment button over a selection in an agent message, the editor,
-// the highlight each pending comment leaves on its passage, the popover that shows its words, the count
-// on the line above the prompt box, and the quotes in a sent bubble.
+// draws them on a thread's surface: the Comment button over a selection in an agent message, the highlight
+// each pending comment leaves on its passage, the card that writes a comment and shows and edits one left
+// (a note in the margin where there is room), the count on the line above the prompt box, and the quotes
+// in a sent bubble.
 //
 // ONE CONTROLLER PER SURFACE (useTranscriptCommentsController, called by useThreadSurface), so the pane,
 // the drawer and the full-screen page each get it from the shell (ThreadSurface.tsx). The comments
@@ -152,8 +153,7 @@ function messageIn(root: HTMLElement, sourceId: string): Element | null {
   return root.querySelector(`[${COMMENTABLE_ATTR}][data-frizz-msg="${CSS.escape(sourceId)}"]`)
 }
 
-/** A passage being written on: where it is, and the comment it edits when it is not a new one. */
-interface Draft { sourceId: string; start: number; end: number; quote: string; editing?: string; initial: string }
+/** A passage a new comment is being written on. */
 type Selected = { sourceId: string; start: number; end: number; quote: string }
 
 /**
@@ -197,16 +197,99 @@ const COARSE = typeof window !== "undefined" && typeof window.matchMedia === "fu
 const HOVER_CLOSE_MS = 180
 const FLASH_MS = 1600
 
+// THE CARD IS A NOTE IN THE MARGIN where the window has room for one: beside the passage, right of the
+// thread's column, over the artifacts rail when that is showing (maintainer 2026-11-18: "floating to the
+// right, if there's room for that, as a marginal note. It can go over the top of the artifact right
+// sidebar"). The pane's 720 column leaves the rail's 340 at 1440, room for the card; at 1280, and in the
+// drawer, the column runs to the window's edge, and the card opens under the passage instead.
+const CARD_WIDTH = 300
+const MARGIN_GAP = 16
+const BELOW_GAP = 6
+// The card's first line of words sits this far below its top edge (its 1px border, 10px padding and half
+// its 19px line), so in the margin that line is centred on the passage's first line.
+const CARD_FIRST_LINE_CENTRE = 20.5
+
+type Placement = "margin" | "below"
+function placementIn(root: HTMLElement): Placement {
+  if (COARSE) return "below"
+  const room = window.innerWidth - POPOVER_COLLISION_PADDING - (root.getBoundingClientRect().right + MARGIN_GAP)
+  return room >= CARD_WIDTH ? "margin" : "below"
+}
+
+/**
+ * The card's anchor in the margin: the passage's first line, run out to the column's edge, so the card
+ * stands right of the column on the passage's line. Its edge stays a pixel inside the column, and its
+ * height is the line's: Radix hides a card whose anchor is clipped away, and a rect on the scroller's own
+ * edge, or above the line, read as clipped while the passage was in view.
+ */
+function marginRect(range: Range, root: HTMLElement): DOMRect {
+  const line = range.getClientRects()[0] ?? range.getBoundingClientRect()
+  const top = line.top + line.height / 2 - CARD_FIRST_LINE_CENTRE
+  const right = root.getBoundingClientRect().right - 1
+  return new DOMRect(line.left, top, Math.max(1, right - line.left), line.bottom - top)
+}
+
+/** The card's virtual anchor: its passage, or the passage's line out to the column's edge in the margin.
+ *  The layer sets `placement` on each render; Radix reads the rect every frame. */
+function useCardAnchor(root: HTMLElement | null, read: () => Range | null) {
+  const live = useRef({ root, read })
+  live.current = { root, read }
+  const [anchor] = useState(() => {
+    const self = {
+      placement: "below" as Placement,
+      current: {
+        getBoundingClientRect: (): DOMRect => {
+          const range = live.current.read()
+          if (!range) return new DOMRect()
+          return self.placement === "margin" && live.current.root ? marginRect(range, live.current.root) : range.getBoundingClientRect()
+        },
+        get contextElement() {
+          return elementOf(live.current.read()?.startContainer ?? null) ?? undefined
+        },
+      },
+    }
+    return self
+  })
+  return anchor
+}
+
+/** Points on the way from a passage to its card, so the pointer can cross the prose between them. */
+function convexHull(points: [number, number][]): [number, number][] {
+  const sorted = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  const cross = (o: [number, number], a: [number, number], b: [number, number]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+  const half = (list: [number, number][]) => {
+    const out: [number, number][] = []
+    for (const p of list) {
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop()
+      out.push(p)
+    }
+    out.pop()
+    return out
+  }
+  return [...half(sorted), ...half([...sorted].reverse())]
+}
+function onTheWay(x: number, y: number, rects: DOMRect[]): boolean {
+  const corners = rects.flatMap((r): [number, number][] => [[r.left - 2, r.top - 2], [r.right + 2, r.top - 2], [r.right + 2, r.bottom + 2], [r.left - 2, r.bottom + 2]])
+  const hull = convexHull(corners)
+  if (hull.length < 3) return false
+  for (let i = 0; i < hull.length; i++) {
+    const [ax, ay] = hull[i]
+    const [bx, by] = hull[(i + 1) % hull.length]
+    if ((bx - ax) * (y - ay) - (by - ay) * (x - ax) < 0) return false
+  }
+  return true
+}
+
 /**
  * THE LAYER, one per surface, mounted by ThreadSurface inside its root. It owns no comment: it reads the
- * surface's controller, paints, and draws the three popovers.
+ * surface's controller, paints, and draws the Comment button and the card.
  */
 export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): ReactElement | null {
   const controller = useTranscriptComments()
   const [paintKey] = useState(() => Symbol("transcript-comments"))
   const [selected, setSelected] = useState<Selected | null>(null)
   const [selecting, setSelecting] = useState(false)
-  const [draft, setDraft] = useState<Draft | null>(null)
+  const [draft, setDraft] = useState<Selected | null>(null)
   const [flash, setFlash] = useState<Range | null>(null)
   const ranges = useRef(new Map<string, Range>())
   const draftRange = useRef<Range | null>(null)
@@ -227,11 +310,11 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
       const range = message && resolveComment(message, comment)
       if (!range) continue
       next.set(comment.id, range)
-      ;(comment.id === focus.id || comment.id === draft?.editing ? active : soft).push(range)
+      ;(comment.id === focus.id ? active : soft).push(range)
     }
     ranges.current = next
     draftRange.current = null
-    if (draft && !draft.editing) {
+    if (draft) {
       const message = messageIn(root, draft.sourceId)
       const range = message && offsetsToRange(message, draft.start, draft.end)
       if (range) {
@@ -296,7 +379,7 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
   }, [root, controller])
 
   const startDraft = useCallback((from: Selected) => {
-    setDraft({ ...from, initial: "" })
+    setDraft(from)
     setSelected(null)
     controller?.setFocus(NO_FOCUS)
     window.getSelection()?.removeAllRanges()
@@ -318,7 +401,7 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
     return () => document.removeEventListener("keydown", onKey, true)
   }, [root, controller, startDraft])
 
-  // POINTING AT A HIGHLIGHT shows its words; a click on it pins them open.
+  // POINTING AT A HIGHLIGHT shows its comment's card; a click on it, or into the card's box, pins it open.
   const hitTest = useCallback((x: number, y: number): string | null => {
     for (const [id, range] of ranges.current) {
       for (const box of range.getClientRects()) {
@@ -330,13 +413,11 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
   const setFocus = controller?.setFocus
   const focusRef = useRef(focus)
   focusRef.current = focus
-  // THE POINTER ON ITS WAY TO THE CARD leaves the surface, and the close that leaving schedules must not
-  // fire once it has arrived. The card's own onPointerEnter cannot be what cancels it: React makes that
-  // event out of the browser's `pointerout`, which comes BEFORE the surface's native `pointerleave`, so
-  // the cancel ran first and the surface then scheduled a close nothing cancelled — the card vanished
-  // under every pointer heading for Edit (2026-11-18, 20 of 20 sweeps). So the close itself asks whether
-  // the card is under the pointer.
   const cardRef = useRef<HTMLDivElement>(null)
+  // The close a pointer leaving the passage schedules asks, when it fires, whether the card is under the
+  // pointer: the card's own pointerenter cannot be what cancels it, because React makes that event out of
+  // the browser's `pointerout`, which comes BEFORE the surface's native `pointerleave` — the card vanished
+  // under every pointer on its way to it (2026-11-18, 20 of 20 sweeps).
   const scheduleClose = useCallback(() => {
     clearTimeout(closeTimer.current)
     closeTimer.current = setTimeout(() => {
@@ -350,37 +431,51 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
     if (!root || !setFocus || !hasComments || draft) return
     let frame = 0
     let last: PointerEvent | null = null
+    // THE WHOLE PAGE'S POINTER, not the surface's: a card in the margin stands outside the surface, over
+    // the artifacts rail, and the pointer crosses the column's last words and the rail to reach it. While
+    // it is anywhere between the passage and its card, the card stays.
     const move = (event: PointerEvent) => {
       last = event
       if (frame) return
       frame = requestAnimationFrame(() => {
         frame = 0
         if (!last || last.buttons) return
-        const id = hitTest(last.clientX, last.clientY)
+        // A passage under the card is not under the pointer: the card covers the prose below it.
+        const id = root.contains(last.target as Node) ? hitTest(last.clientX, last.clientY) : null
         root.toggleAttribute("data-comment-hover", id !== null)
         if (id) {
           cancelClose()
           if (!focusRef.current.pinned && focusRef.current.id !== id) setFocus({ id, pinned: false })
-        } else if (focusRef.current.id && !focusRef.current.pinned) scheduleClose()
+          return
+        }
+        const open = focusRef.current
+        if (!open.id || open.pinned) return
+        const passage = ranges.current.get(open.id)?.getBoundingClientRect()
+        const card = cardRef.current?.getBoundingClientRect()
+        if (passage && card && onTheWay(last.clientX, last.clientY, [passage, card])) cancelClose()
+        else scheduleClose()
       })
     }
-    const leave = () => {
+    // Out of the window altogether.
+    const out = (event: PointerEvent) => {
+      if (event.relatedTarget) return
       root.removeAttribute("data-comment-hover")
       if (focusRef.current.id && !focusRef.current.pinned) scheduleClose()
     }
     const click = (event: MouseEvent) => {
-      if (window.getSelection()?.isCollapsed === false) return
+      // A card whose words are being changed keeps the pointer's clicks from opening another.
+      if (window.getSelection()?.isCollapsed === false || dirty.current) return
       const id = hitTest(event.clientX, event.clientY)
       if (id) setFocus({ id, pinned: true })
     }
-    root.addEventListener("pointermove", move, { passive: true })
-    root.addEventListener("pointerleave", leave)
+    document.addEventListener("pointermove", move, { passive: true })
+    document.addEventListener("pointerout", out)
     root.addEventListener("click", click)
     return () => {
       cancelAnimationFrame(frame)
       root.removeAttribute("data-comment-hover")
-      root.removeEventListener("pointermove", move)
-      root.removeEventListener("pointerleave", leave)
+      document.removeEventListener("pointermove", move)
+      document.removeEventListener("pointerout", out)
       root.removeEventListener("click", click)
     }
   }, [root, setFocus, hasComments, draft, hitTest, cancelClose, scheduleClose])
@@ -411,16 +506,41 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
   }, [flash])
 
   const selectedAnchor = useRangeAnchor(() => selectedRange.current)
-  const draftAnchor = useRangeAnchor(() => (draft?.editing ? ranges.current.get(draft.editing) ?? null : draftRange.current))
-  const focusAnchor = useRangeAnchor(() => (focus.id ? ranges.current.get(focus.id) ?? null : null))
+  const draftAnchor = useCardAnchor(root, () => draftRange.current)
+  const focusAnchor = useCardAnchor(root, () => (focus.id ? ranges.current.get(focus.id) ?? null : null))
+  // Margin or below is read again when the window changes width under an open card.
+  const cardOpen = Boolean(draft || focus.id)
+  const [, setWidth] = useState(0)
+  useEffect(() => {
+    if (!cardOpen) return
+    const resize = () => setWidth(window.innerWidth)
+    window.addEventListener("resize", resize)
+    return () => window.removeEventListener("resize", resize)
+  }, [cardOpen])
 
   if (!controller || !root) return null
   const open = focus.id && !draft ? controller.comments.find((c) => c.id === focus.id) : undefined
-  const save = (text: string) => {
-    if (!draft) return
-    if (draft.editing) controller.update(draft.editing, text)
-    else controller.add({ sourceId: draft.sourceId, start: draft.start, end: draft.end, quote: draft.quote, text })
-    setDraft(null)
+  const placement = placementIn(root)
+  draftAnchor.placement = placement
+  focusAnchor.placement = placement
+  const card = {
+    side: placement === "margin" ? "right" : "bottom",
+    align: "start",
+    sideOffset: placement === "margin" ? MARGIN_GAP + 1 : BELOW_GAP,
+    updatePositionStrategy: "always",
+    // CARD_WIDTH, spelled out for Tailwind.
+    className: "w-[min(300px,calc(100vw-24px))] px-3 py-2.5",
+    "data-comment-placement": placement,
+    [COMMENT_UI_ATTR]: "",
+    onCloseAutoFocus: (event: Event) => event.preventDefault(),
+    // A press elsewhere closes a card whose words are as they were, and keeps one being changed: Cancel or
+    // Esc throws changes away, never a stray click.
+    onInteractOutside: (event: Event) => {
+      if (dirty.current) event.preventDefault()
+    },
+  } as const
+  const onDirty = (next: boolean) => {
+    dirty.current = next
   }
   return (
     <>
@@ -465,29 +585,15 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
       <Popover open={Boolean(draft)} onOpenChange={(next) => { if (!next) setDraft(null) }}>
         <PopoverAnchor virtualRef={draftAnchor} />
         {draft && (
-          <PopoverContent
-            side="bottom"
-            align="start"
-            sideOffset={6}
-            updatePositionStrategy="always"
-            className="w-[min(340px,calc(100vw-24px))] px-3 py-2.5"
-            data-comment-editor=""
-            {...{ [COMMENT_UI_ATTR]: "" }}
-            onCloseAutoFocus={(event) => event.preventDefault()}
-            // A press elsewhere drops an empty editor and keeps one with words in it: Cancel or Esc
-            // throws those away, never a stray click.
-            onInteractOutside={(event) => {
-              if (dirty.current) event.preventDefault()
-            }}
-          >
-            <CommentEditor
-              onDirty={(next) => {
-                dirty.current = next
+          <PopoverContent {...card} data-comment-editor="">
+            <CommentCard
+              key={`${draft.sourceId}:${draft.start}:${draft.end}`}
+              saved=""
+              onDirty={onDirty}
+              onSave={(text) => {
+                controller.add({ sourceId: draft.sourceId, start: draft.start, end: draft.end, quote: draft.quote, text })
+                setDraft(null)
               }}
-              key={draft.editing ?? `${draft.sourceId}:${draft.start}:${draft.end}`}
-              initial={draft.initial}
-              editing={Boolean(draft.editing)}
-              onSave={save}
               onCancel={() => setDraft(null)}
             />
           </PopoverContent>
@@ -498,42 +604,26 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
         <PopoverAnchor virtualRef={focusAnchor} />
         {open && (
           <PopoverContent
+            {...card}
             ref={cardRef}
-            side="bottom"
-            align="start"
-            sideOffset={6}
-            updatePositionStrategy="always"
             hideWhenDetached
-            className="w-[min(320px,calc(100vw-24px))] px-3 py-2"
             data-comment-popover={open.id}
-            {...{ [COMMENT_UI_ATTR]: "" }}
             onOpenAutoFocus={(event) => event.preventDefault()}
-            onCloseAutoFocus={(event) => event.preventDefault()}
-            onPointerEnter={cancelClose}
-            onPointerLeave={() => { if (!focus.pinned) scheduleClose() }}
           >
-            {/* The words, and the two things to do with them. Edit and Delete ride the first line, their
-                20px squares centred on its 19px line box. */}
-            <div className="flex items-start gap-2">
-              <div className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-[19px] text-fg/90 [overflow-wrap:anywhere]">{open.text}</div>
-              <span className="-mr-1.5 -mt-[0.5px] flex shrink-0 items-center">
-                <button
-                  type="button"
-                  title="Edit"
-                  aria-label="Edit comment"
-                  onClick={() => {
-                    setDraft({ sourceId: open.sourceId, start: open.start, end: open.end, quote: open.quote, editing: open.id, initial: open.text })
-                    controller.setFocus(NO_FOCUS)
-                  }}
-                  className={TINY_ICON}
-                >
-                  <Pencil size={11} strokeWidth={2} />
-                </button>
-                <button type="button" title="Delete" aria-label="Delete comment" onClick={() => controller.remove(open.id)} className={TINY_ICON}>
-                  <Trash2 size={11} strokeWidth={2} />
-                </button>
-              </span>
-            </div>
+            <CommentCard
+              key={open.id}
+              saved={open.text}
+              onDirty={onDirty}
+              // Clicking into the words is how they are edited, and it holds the card open: the pointer may
+              // wander off while the hand is on the keyboard.
+              onEngage={() => controller.setFocus({ id: open.id, pinned: true })}
+              onSave={(text) => {
+                controller.update(open.id, text)
+                controller.setFocus(NO_FOCUS)
+              }}
+              onCancel={() => controller.setFocus(NO_FOCUS)}
+              onDelete={() => controller.remove(open.id)}
+            />
           </PopoverContent>
         )}
       </Popover>
@@ -541,19 +631,36 @@ export function TranscriptCommentLayer({ root }: { root: HTMLElement | null }): 
   )
 }
 
-const TINY_ICON = "flex h-5 w-5 items-center justify-center rounded text-muted-60 outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:bg-panel-2"
 // THE TWO ARROWS ARE ONE CONTROL, so they stand closer to each other than to the words either side. A
 // 12px chevron paints 6px of its box, so on 20px squares the pair stood 13.00px apart in ink, as far as
 // the label stood from the first (13.53) — four marks at one spacing, nothing grouped (scripts/ink-gaps.mjs,
 // dsf 4, sans). On 14px squares: 8px between the arrows, 10px from the label, 12px to Discard.
 const NAV_ICON = "flex h-5 w-3.5 items-center justify-center rounded text-muted-60 outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:bg-panel-2"
 
-function CommentEditor({ initial, editing, onSave, onCancel, onDirty }: { initial: string; editing: boolean; onSave: (text: string) => void; onCancel: () => void; onDirty: (dirty: boolean) => void }): ReactElement {
-  const [value, setValue] = useState(initial)
+/**
+ * THE CARD, one shape for a comment being written and one already left: its words in a box, and a footer
+ * band under them. A comment's words are edited by clicking into them, with no Edit button (maintainer
+ * 2026-11-18: "You should just be able to click into the box and start editing"), so the band holds
+ * Delete until the words change, and Cancel and Save once they have.
+ */
+function CommentCard({ saved, onSave, onCancel, onDelete, onDirty, onEngage }: {
+  /** The words as they stand, "" for a new comment. */
+  saved: string
+  onSave: (text: string) => void
+  onCancel: () => void
+  /** Absent for a new comment, which has nothing to delete. */
+  onDelete?: () => void
+  onDirty: (dirty: boolean) => void
+  onEngage?: () => void
+}): ReactElement {
+  const isNew = !onDelete
+  const [value, setValue] = useState(saved)
+  const text = value.trim()
+  const changed = text !== saved.trim()
   useEffect(() => {
-    onDirty(value.trim() !== initial.trim())
+    onDirty(changed)
     return () => onDirty(false)
-  }, [value, initial, onDirty])
+  }, [changed, onDirty])
   const ref = useRef<HTMLTextAreaElement>(null)
   useLayoutEffect(() => {
     const el = ref.current
@@ -561,22 +668,27 @@ function CommentEditor({ initial, editing, onSave, onCancel, onDirty }: { initia
     el.style.height = "0px"
     el.style.height = `${Math.min(el.scrollHeight, 220)}px`
   }, [value])
+  // A new comment takes the caret; one shown because the pointer came by does not take it from the prompt box.
   useEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!el || !isNew) return
     el.focus({ preventScroll: true })
     el.setSelectionRange(el.value.length, el.value.length)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, as the card opens
   }, [])
-  const text = value.trim()
+  const save = () => {
+    if (text && changed) onSave(text)
+  }
   return (
     <div>
       <textarea
         ref={ref}
         value={value}
-        rows={2}
-        aria-label="Comment on this passage"
-        placeholder="Comment on this passage…"
+        rows={1}
+        aria-label={isNew ? "Comment on this passage" : "Comment"}
+        placeholder={isNew ? "Comment on this passage…" : undefined}
         data-1p-ignore
+        onFocus={onEngage}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           // The surface's own keys (⌘⏎ is Send now there) are not this box's: React carries a portal's
@@ -584,32 +696,42 @@ function CommentEditor({ initial, editing, onSave, onCancel, onDirty }: { initia
           event.stopPropagation()
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
             event.preventDefault()
-            if (text) onSave(text)
+            save()
           }
         }}
-        className="block max-h-[220px] min-h-[38px] w-full resize-none bg-transparent text-[13px] leading-[19px] text-fg outline-none placeholder:text-muted"
+        className={`block max-h-[220px] w-full resize-none bg-transparent text-[13px] leading-[19px] text-fg outline-none [overflow-wrap:anywhere] placeholder:text-muted ${isNew ? "min-h-[38px]" : ""}`}
       />
       {/* The footer band of the transcript cards (CardActions): a full-width hairline and tint, out to the
           panel's edges, so its corners take the panel's inner radius (rounded-lg less the 1px border).
           10px from the text to the hairline, the same as the panel's own top padding. Buttons stay on the
           right, where a comment box's submit is and where typing ends (maintainer 2026-11-16, picked from
-          a mockup over the cards' left-aligned rule). */}
+          a mockup over the cards' left-aligned rule; the comment's own card took the same band 2026-11-18). */}
       <div className="-mx-3 -mb-2.5 mt-2.5 flex items-center justify-end gap-1 rounded-b-[7px] border-t border-border bg-fg/[0.03] px-3 py-[7px]">
-        <button type="button" onClick={onCancel} className="rounded-md px-2 py-1 text-[12px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:bg-panel-2">
-          Cancel
-        </button>
-        <button
-          type="button"
-          disabled={!text}
-          onClick={() => onSave(text)}
-          className="rounded-md bg-fg px-2.5 py-1 text-[12px] font-medium text-bg outline-none transition-opacity hover:opacity-90 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-30"
-        >
-          {editing ? "Save" : "Add comment"}
-        </button>
+        {isNew || changed ? (
+          <>
+            <button type="button" onClick={onCancel} className={GHOST_BUTTON}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!text || !changed}
+              onClick={save}
+              className="rounded-md bg-fg px-2.5 py-1 text-[12px] font-medium text-bg outline-none transition-opacity hover:opacity-90 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-30"
+            >
+              {isNew ? "Add comment" : "Save"}
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={onDelete} className={GHOST_BUTTON}>
+            Delete
+          </button>
+        )}
       </div>
     </div>
   )
 }
+
+const GHOST_BUTTON = "rounded-md px-2 py-1 text-[12px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg focus-visible:bg-panel-2"
 
 // ── the count, on the line above the prompt box ────────────────────────────────────────────────────────
 // What the human has outstanding sits on the left of that line, the agent's live work on the right
