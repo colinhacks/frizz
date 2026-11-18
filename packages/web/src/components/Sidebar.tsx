@@ -866,16 +866,24 @@ export const ThreadRow = memo(function ThreadRow({
   // `hover:bg-*` under the strip, the backing had to be a second, guessed colour, and it read as a
   // darker box around the buttons (maintainer 2026-09-03). `pointer-events-none`, so it never shadows a
   // click on the row or its actions; `rounded-md` because the row clips nothing.
+  //
+  // THE OPEN ROW'S WASH IS SQUARE ON THE LEFT, and the pane's marker is that edge (maintainer 2026-11-18:
+  // "Why does the left line not just be the border on the kind of area with the slight background? …
+  // We should just remove the border radius in the upper left and bottom left"). Until then the marker
+  // was a rounded 2px bar standing 4px inside a fully rounded wash, a mark of its own beside the row
+  // rather than the row's edge. Hovering any other row keeps the rounded wash: only the open row has an
+  // edge to draw.
   return (
     <div
       data-sidebar-item={t.id}
-      className={`group relative flex min-w-0 items-start rounded-md transition-[color,opacity] after:pointer-events-none after:absolute after:inset-0 after:rounded-md after:bg-hover after:transition-opacity hover:after:opacity-100 ${active ? "after:opacity-100" : "after:opacity-0"} ${legacy ? "opacity-80" : dim ? "sidebar-row-dim" : ""}`}
+      className={`group relative flex min-w-0 items-start rounded-md transition-[color,opacity] after:pointer-events-none after:absolute after:inset-0 after:bg-hover after:transition-opacity hover:after:opacity-100 ${active ? "after:rounded-r-md after:opacity-100" : "after:rounded-md after:opacity-0"} ${legacy ? "opacity-80" : dim ? "sidebar-row-dim" : ""}`}
     >
       {/* The reading position owns a real, in-row rail rather than borrowing the status-icon column.
           The marker spans the row's complete visual height, including wrapped titles and subtitles,
-          while the fixed rail keeps it from shifting content or relying on clipped overflow. */}
+          while the fixed rail keeps it from shifting content or relying on clipped overflow. It stands
+          at the rail's very left, square, as the left edge of the open row's wash (above). */}
       <span aria-hidden="true" data-sidebar-marker-rail className="pointer-events-none absolute inset-y-0 left-0 w-5">
-        {active && <span data-sidebar-scroll-marker className="absolute inset-y-0 left-1 w-[2px] rounded-full bg-accent" />}
+        {active && <span data-sidebar-scroll-marker className="absolute inset-y-0 left-0 w-[2px] bg-accent" />}
         {/* THE QUEUE DOT (maintainer 2026-11-17: "we need an indicator when a thread that's in the queue
             is awaiting human attention. Probably just a yellow dot"). A row in the Queue band needs none:
             the band is the emphasis, which is why the "?" mark stays gray (sessionStateIndicatorFor). A
