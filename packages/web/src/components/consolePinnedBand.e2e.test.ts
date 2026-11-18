@@ -139,7 +139,8 @@ test("the Console's By status view pins, orders and drags a shelf of its own", {
       }
       await page.goto(consoleUrl, { waitUntil: "networkidle2" })
       await page.waitForSelector(`[data-sidebar-item="${kB3}"]`, { timeout: 20_000 })
-      await openRunning()
+      // Once A3, the one running thread, is pinned, the Running band is empty and draws no header at all.
+      if (await page.$(`${rail} [data-band-header="running"]`)) await openRunning()
       return steps
     }
     // A pinned row shows its pin only on hover, as the unpin verb (2026-10-24), so "pinned on the shelf
