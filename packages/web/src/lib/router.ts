@@ -3,6 +3,7 @@ import { store, topThreadSlug, closeDrawersById, closeLayersDisplacedBy, paneEna
 import { basePath, innerPath, outerPath, projectHref } from "./base-path.ts"
 import { parseStandaloneThreadPath, threadPageIsStandalone } from "./standaloneThreadRoute.ts"
 import { ARTIFACTS_PARAM, artifactsParam, paneProto, type PaneArtifacts } from "./threadPane.ts"
+import { navigate } from "./navigation.ts"
 
 // URL ⇄ state sync, SPA-style. A board's URL is its VIEW in the path — `/` (the board) or
 // `/status/<status>` (URL-only lists) — and the thread open on it in the QUERY: `?thread=<slug>`
@@ -239,7 +240,7 @@ export function registerNavigate(navigate: ((path: string, options?: SpaNavigate
 
 export function spaNavigate(path: string, options?: SpaNavigateOptions): void {
   if (registeredNavigate) registeredNavigate(path, options)
-  else if (typeof location !== "undefined") location.assign(path)
+  else navigate(path, { reason: "a link with no router mounted" })
 }
 
 /**

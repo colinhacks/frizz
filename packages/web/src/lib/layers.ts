@@ -65,6 +65,11 @@ export const LAYER = {
   toast: 280,
   /** The restart scrim, which alone must cover the whole app while Frizz restarts. */
   restart: 300,
+  /** The panel index.html's navigation gate puts up when it refuses to reload the page again, or when the
+   *  boot watchdog is waiting out a failed load: a page that stopped itself, so above everything, the
+   *  restart scrim included. Written in that inline script, which runs before any module can import this;
+   *  navigationGate.test.ts holds the two to the same number. */
+  pageStopped: 400,
 } as const
 
 export const Z_CHROME = "z-30"

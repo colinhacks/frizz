@@ -1,4 +1,5 @@
 import type { FrizzSupervisorStatus } from "./restart.ts"
+import { navigate } from "../lib/navigation.ts"
 
 // ── "Sign out this device" ─────────────────────────────────────────────────────────────────────────────
 // Ends the remote-access session of the browser that asks, and no other. The supervisor reads the id
@@ -59,6 +60,6 @@ export async function signOutThisDevice(fetcher: typeof fetch = fetch): Promise<
  * "needs a current access link" page any visitor without a session gets. `replace`, so Back cannot
  * return to a board this browser can no longer load.
  */
-export function leaveAfterSignOut(location: Pick<Location, "replace"> = window.location): void {
-  location.replace("/")
+export function leaveAfterSignOut(go: typeof navigate = navigate): void {
+  go("/", { replace: true, reason: "this device signed out" })
 }

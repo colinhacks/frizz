@@ -61,7 +61,7 @@ import { SessionMessageLine } from "./SessionMessageLine.tsx"
 import { lastAskIndex, lastHumanTurnIndex, messagePresentationText } from "../lib/messagePresentation.ts"
 import { foldCounts, stretchFoldRanges, type FoldRange } from "../lib/stretchFolds.ts"
 import { showsPicture } from "../lib/messagePictures.ts"
-import { latestSignOffs } from "../lib/signOffs.ts"
+import { landingOffset, landingRows, opensAtRest } from "../lib/openLanding.ts"
 import { inQueuedTail, withRestReplyInline } from "../lib/restReply.ts"
 import { steeredSinceRest, useSteeredAt, useTurnHeldForTranscript } from "../lib/steering.ts"
 import type { StepsReply } from "../lib/stepsAnswer.ts"
@@ -406,10 +406,9 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
           earlierError={earlierError}
           loadEarlier={showEarlier}
           jumpOverlay={jumpOverlay}
-          openAtLastMessage={(phone || pane !== undefined) && !running}
+          openAtRest={opensAtRest(thread)}
           windowStart={windowStart}
-          openAtTop={pane?.queueWindow === true}
-          sentAt={pane ? steerStamp : undefined}
+          sentAt={steerStamp}
         />
       ) : (
       <>
@@ -533,18 +532,13 @@ function onTranscriptControl(event: Event): boolean {
 // during it should win the moment it ends.
 const ANCHOR_RESTORE_MS = 250
 
-// How long the phone's open-at-the-last-message landing holds its row at the pane top while the rows
-// around it measure (see VirtualizedThreadTranscript's initial scroll). A cold open measures every row
-// from its estimate, and markdown, code and images keep settling for several frames after mount.
+// How long the landing a thread at rest opens on (lib/openLanding) holds its place while the rows around it
+// measure (see VirtualizedThreadTranscript's initial scroll). A cold open measures every row from its
+// estimate, and markdown, code and images keep settling for several frames after mount.
 const OPEN_AT_MESSAGE_HOLD_MS = 900
 
-// Where the queue's window lands its sign-off. Opened at the top, the human's message and the sign-off under
-// it read as a pair whenever the sign-off starts in the upper 60% of the pane: there is room to start reading
-// it without scrolling. Past that the human's message is long, and the sign-off lands a quarter of the pane
-// (at most 160px) below the top instead, with the last lines of that message still showing over it.
-const SIGN_OFF_FITS = 0.6
-const SIGN_OFF_LEAD = 0.25
-const SIGN_OFF_LEAD_MAX_PX = 160
+// The air the virtualized transcript keeps above its first row and under its last.
+const TRANSCRIPT_PAD_PX = 20
 
 // Opt-in drift diagnostic: `localStorage["frizz.debugScroll"] = "1"`, then reload.
 //
@@ -884,9 +878,8 @@ function VirtualizedThreadTranscript({
   earlierError,
   loadEarlier,
   jumpOverlay,
-  openAtLastMessage = false,
+  openAtRest = false,
   windowStart = 0,
-  openAtTop = false,
   sentAt,
 }: {
   slug: string
@@ -905,13 +898,13 @@ function VirtualizedThreadTranscript({
   earlierError: string | null
   loadEarlier: () => void
   jumpOverlay: HTMLElement | null
-  // The phone opens a thread at rest on the START of its last message rather than the end of it — see
-  // the initial-scroll effect below. Read once, when the transcript first lands.
-  openAtLastMessage?: boolean
-  // The one-thread pane's queue window: the first message drawn, by index into `messages`. It
-  // reads from the top down, as the queue card did, and `sentAt` brings a reply back into view from there.
+  // A thread at rest opens on the human's latest message and the first sign-off under it rather than on
+  // its tail (lib/openLanding) — see the initial-scroll effect below. Read once, when the transcript first
+  // lands.
+  openAtRest?: boolean
+  // The one-thread pane's queue window: the first message drawn, by index into `messages`.
   windowStart?: number
-  openAtTop?: boolean
+  // When this tab last sent to the thread. A send takes the reader to the tail, wherever the landing left them.
   sentAt?: number
 }) {
   // What the thread says about each message, from the surface this transcript is drawn in.
@@ -1121,22 +1114,39 @@ function VirtualizedThreadTranscript({
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
   const pendingPrependAnchorRef = useRef<{ rowKey: string; viewportTop: number } | null>(null)
+  // A thread at rest is still being put where it opens (lib/openLanding): from the first render until the
+  // initial-scroll effect below lets go. State, because the virtualizer reads it as an option.
+  const [opening, setOpening] = useState(openAtRest)
+  const estimateRow = (index: number) => {
+    const row = rows[index]
+    if (!row) return 80
+    if (row.kind === "head-anchor" || row.kind === "interactions") return 1
+    if (row.kind === "queued-send-now") return 22
+    if (row.kind === "earlier-history") return 42
+    if (row.kind === "transport-fallback") return 76
+    if (row.kind === "runtime-status") return 54
+    if (row.kind === "questions") return 220
+    if (row.kind === "settled-questions") return 140
+    if (row.kind === "fold") return 28 + row.gap
+    return row.kind === "message" ? 108 + row.gap : 82 + row.gap
+  }
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => transcriptRef.current,
     getItemKey: (index) => rows[index]?.key ?? index,
-    estimateSize: (index) => {
-      const row = rows[index]
-      if (!row) return 80
-      if (row.kind === "head-anchor" || row.kind === "interactions") return 1
-      if (row.kind === "queued-send-now") return 22
-      if (row.kind === "earlier-history") return 42
-      if (row.kind === "transport-fallback") return 76
-      if (row.kind === "runtime-status") return 54
-      if (row.kind === "questions") return 220
-      if (row.kind === "settled-questions") return 140
-      if (row.kind === "fold") return 28 + row.gap
-      return row.kind === "message" ? 108 + row.gap : 82 + row.gap
+    estimateSize: estimateRow,
+    // THE FIRST FRAME IS DRAWN WHERE THE THREAD OPENS. The library reads this once, for its first range,
+    // and puts the scroller there when it attaches, so a thread at rest mounts the rows around its landing
+    // (lib/openLanding) and paints them first. Without it the first frame was the top of the loaded page,
+    // or the tail once tail-follow had run, and the landing arrived a frame later as a jump. An estimate,
+    // from estimates: the initial-scroll effect below measures the real rows and holds the exact place.
+    initialOffset: () => {
+      if (!openAtRest || !transcriptKey) return 0
+      const landing = landingRows(rows, messages, lastAgentIdx)
+      const at = landing.steerLeads ? -1 : [landing.steer, landing.signOff, landing.fallback].find((index) => index >= 0) ?? -1
+      let offset = at < 0 ? 0 : TRANSCRIPT_PAD_PX
+      for (let i = 0; i < at; i++) offset += estimateRow(i)
+      return offset
     },
     overscan: 8,
     // A PREPEND KEEPS THE READER'S ROW MOUNTED. "Load earlier" inserts a whole page above the row the
@@ -1153,8 +1163,8 @@ function VirtualizedThreadTranscript({
       for (let i = Math.max(0, anchor - 2); i <= Math.min(rows.length - 1, anchor + 24); i++) extra.push(i)
       return [...new Set([...indexes, ...extra])].sort((a, b) => a - b)
     },
-    paddingStart: 20,
-    paddingEnd: 20,
+    paddingStart: TRANSCRIPT_PAD_PX,
+    paddingEnd: TRANSCRIPT_PAD_PX,
     anchorTo: "end",
     // NO `followOnAppend`. The tail follow is syncTailFollow's, below, on every commit; the library's own
     // follow fired on exactly one event here — the runtime-status row (or a queued bubble) being APPENDED,
@@ -1170,7 +1180,12 @@ function VirtualizedThreadTranscript({
     // syncTailFollow follows by the scroller's own height, so it has no index to go stale. (The option
     // came with the virtualized view, 2026-07-21, three days before syncTailFollow replaced what it was
     // for; it had been a second, redundant follower ever since.)
-    scrollEndThreshold: TAIL_FOLLOW_PX,
+    // …EXCEPT WHILE A THREAD AT REST IS OPENING (`opening`, below). `anchorTo: "end"` also keeps a list
+    // that is within this threshold of its end AT its end as rows measure, and every list is within it on
+    // its first commit, when its rows are still estimates shorter than the pane. So the first measuring
+    // pass walked a thread that had just opened at its top down to its tail (0 to 480 of 484px on a stack,
+    // 2026-11-18), a frame before the landing could put it back. No offset is within -1 of the end.
+    scrollEndThreshold: opening ? -1 : TAIL_FOLLOW_PX,
     // THE SWALLOWED WHEEL NOTCH — why scrolling back through a long thread stutters.
     //
     // A row above the reader that has never been measured mounts at its ESTIMATE and then corrects to
@@ -1253,102 +1268,115 @@ function VirtualizedThreadTranscript({
     scroller.scrollTop += node.getBoundingClientRect().top - screenTop
   }, [transcriptRef])
 
+  // The rows as the newest commit has them: the opening landing outlives the render it began in.
+  const rowsRef = useRef(rows)
+  useLayoutEffect(() => { rowsRef.current = rows })
+  // The landing while it holds, for the commits in between its frames (see the pass after the measuring one).
+  const openLandRef = useRef<(() => void) | null>(null)
+
   useLayoutEffect(() => {
     if (!transcriptKey || rows.length === 0 || initialTranscriptKeyRef.current === transcriptKey) return
     initialTranscriptKeyRef.current = transcriptKey
     tailReadyRef.current = false
     readerMovedRef.current = false
     nearTopLoadArmedRef.current = true
+    // ONE FRAME CHAIN, ENDED ONLY BY A NEW TRANSCRIPT OR THE UNMOUNT. This effect re-runs whenever the row
+    // count moves (the status row, a question's card) and returns at once, because the key is the same. So
+    // it has no cleanup: until 2026-11-18 the landing waited a frame and the cleanup cancelled that frame,
+    // which left a thread whose row count moved inside it with no landing at all, on its tail (read off
+    // the code, never caught on a stack).
+    cancelAnimationFrame(openHoldFrameRef.current)
+    openHoldFrameRef.current = 0
     // THE FULLSCREEN HAND-OFF. The door records which message the reader had at the top of the card or
     // drawer it was pressed in (lib/fullscreenHandoff); land on THAT instead of the tail, so expanding a
     // thread reads as the same page getting bigger rather than a jump to the end of a conversation the
     // reader was deliberately not at. Absent, stale, or aimed at a message this window does not hold,
-    // the tail is still the answer — and it always is when the reader could already see the end, which
-    // the capture side refuses to anchor on.
+    // the landing below is still the answer — and it always is when the reader could already see the end,
+    // which the capture side refuses to anchor on.
     const handoff = takeFullscreenEnterAnchor(slug)
     // The topmost message the reader had that THIS window can place. Anything above it is a row the
     // board surface drew and this one does not.
     const anchor = handoff?.candidates
       .map((candidate) => ({ candidate, index: rows.findIndex((row) => row.kind === "message" && row.message.sourceId === candidate.sourceId) }))
       .find((hit) => hit.index >= 0)
-    // THE PHONE OPENS A RESTED THREAD AT THE TOP OF ITS LAST MESSAGE (mockup v2, "Behaviour a still frame
-    // cannot show"). A handoff is written verdict-first, and on a 390pt screen a 40-line one opened at the
-    // tail puts the reader on its last bullet with the verdict 30 lines up. So at rest the phone lands the
-    // top of the newest thing the agent SAID at the top of the pane; a running thread still opens on the
-    // tail, where the live line is. `lastAgentIdx` is that message (lastAssistantIndex skips frizz's own
-    // event rows); if it draws no row of its own — a fence-only rest the resting card states — the last
-    // assistant row before it stands in, and with none the tail is still the answer. The fullscreen
-    // hand-off above outranks this: it is the reader's own place, carried over.
-    //
-    // THE SIGN-OFF OUTRANKS BOTH (2026-11-11). The work before it and after it is folded (lib/stretchFolds),
-    // so what a reader comes back to is the human's message and the sign-off that answers it. The phone lands
-    // the sign-off's top at the top of the pane; the queue's window keeps the human's message above it when
-    // the two fit (see the hold below). The sign-off's own row, or none: a sign-off that draws no row of its
-    // own (the resting card states it) leaves each surface its older landing.
-    const signOffAt = latestSignOffs(messages, lastHumanTurnIndex(messages))[0] ?? -1
-    const signOffRow = !anchor && signOffAt >= 0 && (openAtTop || openAtLastMessage)
-      ? rows.findIndex((row) => row.kind === "message" && row.messageIndex === signOffAt)
-      : -1
-    const lastMessageRow = signOffRow >= 0 && !openAtTop
-      ? signOffRow
-      : !anchor && openAtLastMessage && lastAgentIdx >= 0
-        ? rows.reduce((found, row, index) => (row.kind === "message" && row.messageIndex <= lastAgentIdx && row.message.role === "assistant" && row.message.kind !== "event" ? index : found), -1)
-        : -1
-    let frame = requestAnimationFrame(() => {
-      if (!anchor && (openAtTop || lastMessageRow >= 0)) {
-        // The fullscreen hand-off's two steps and its hold, aimed at a row's top instead of a remembered
-        // screen height: mount the row, release tail-follow, then re-align every frame while the rows
-        // around it correct from their estimates. The hold is longer than the hand-off's because nothing
-        // above this row has ever been measured on a cold open; a touch on the scroller ends it at once.
-        // The queue's window aims at the top of the list instead of a row: its opening steer, read down.
-        const rowKey = openAtTop ? null : rows[lastMessageRow].key
-        const signOffKey = openAtTop && signOffRow >= 0 ? rows[signOffRow].key : null
-        if (openAtTop) transcriptRef.current?.scrollTo({ top: 0 })
-        else virtualizer.scrollToIndex(lastMessageRow, { align: "start", behavior: "instant" })
-        followingTailRef.current = false
-        setAtEnd(false)
-        tailReadyRef.current = true
-        const until = performance.now() + OPEN_AT_MESSAGE_HOLD_MS
-        anchorRestoreUntilRef.current = until
-        // Its own frame chain, NOT `frame`: this effect re-runs (and cancels `frame`) whenever the row
-        // count moves, which on a cold open it does while the hold is still needed. Only unmount ends it.
-        const hold = () => {
-          const scroller = transcriptRef.current
-          if (!scroller || performance.now() >= until || performance.now() < readerScrollUntilRef.current) {
-            anchorRestoreUntilRef.current = 0
-            openHoldFrameRef.current = 0
-            // A last message shorter than the pane cannot reach its top: the landing clamps at the
-            // bottom, which IS the tail — so say so, or "Jump to latest" would sit over a reader who is
-            // already there until something else happened to re-run the tail reconciliation.
-            if (scroller && scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= TAIL_FOLLOW_PX) {
-              followingTailRef.current = true
-              tailHeightRef.current = scroller.scrollHeight
-              setAtEnd(true)
-            }
-            return
-          }
-          if (rowKey === null) {
-            // The queue's window reads from the human's message down, unless that pushes the sign-off past
-            // the upper part of the pane: then the sign-off lands a little below the top, with the end of
-            // the human's message still in view over it.
-            const target = signOffKey ? scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(signOffKey)}"]`) : null
-            if (!target && signOffRow >= 0) {
-              virtualizer.scrollToIndex(signOffRow, { align: "start", behavior: "instant" })
-            } else if (!target) {
-              scroller.scrollTop = 0
-            } else {
-              const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
-              scroller.scrollTop = top <= scroller.clientHeight * SIGN_OFF_FITS ? 0 : top - Math.min(scroller.clientHeight * SIGN_OFF_LEAD, SIGN_OFF_LEAD_MAX_PX)
-            }
-          } else {
-            const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(rowKey)}"]`)
-            if (row) scroller.scrollTop += row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-          }
-          openHoldFrameRef.current = requestAnimationFrame(hold)
-        }
-        hold()
-        return
+    // A THREAD AT REST OPENS ON THE HUMAN'S LATEST MESSAGE AND THE FIRST SIGN-OFF UNDER IT, on every
+    // surface (lib/openLanding has the rule and what it replaced). One whose turn is in flight opens on
+    // its tail, where the live line or the prompt waiting on the human is. The fullscreen hand-off above
+    // outranks it: that is the reader's own place, carried over.
+    const landing = !anchor && openAtRest ? landingRows(rows, messages, lastAgentIdx) : null
+    const keyOf = (index: number | undefined) => (index !== undefined && index >= 0 ? rows[index].key : undefined)
+    const steerKey = keyOf(landing?.steer)
+    const signOffKey = keyOf(landing?.signOff)
+    const fallbackKey = keyOf(landing?.fallback)
+    if (landing && (steerKey ?? signOffKey ?? fallbackKey) !== undefined) {
+      // Claimed HERE, before this commit's tail-follow pass (declared below, so it runs after this): a
+      // transcript starts attached to its tail, and that pass would otherwise put the first frame there.
+      followingTailRef.current = false
+      setAtEnd(false)
+      tailReadyRef.current = true
+      const until = performance.now() + OPEN_AT_MESSAGE_HOLD_MS
+      anchorRestoreUntilRef.current = until
+      // Where a row is now, as an offset into the content: null while the virtualizer has not mounted it.
+      const topOf = (scroller: HTMLElement, key: string | undefined) => {
+        if (key === undefined) return undefined
+        const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(key)}"]`)
+        return row ? row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop : null
       }
+      const land = (scroller: HTMLElement) => {
+        const next = landingOffset({
+          // The list's own first message opens at the list's top, "Load earlier" in view over it.
+          steer: landing.steerLeads ? 0 : topOf(scroller, steerKey),
+          signOff: topOf(scroller, signOffKey),
+          fallback: topOf(scroller, fallbackKey),
+          paneHeight: scroller.clientHeight,
+        })
+        let top: number | undefined
+        if ("top" in next) top = next.top
+        else {
+          // A virtual row out of reach: go to where the virtualizer places it, which mounts it, and
+          // measure it on the next frame. Written to the scroller directly, never `scrollToIndex`: the
+          // library would keep re-aiming at that index for as long as this hold aims anywhere else.
+          const key = next.reach === "steer" ? steerKey : next.reach === "signOff" ? signOffKey : fallbackKey
+          const index = rowsRef.current.findIndex((row) => row.key === key)
+          top = index >= 0 ? virtualizer.getOffsetForIndex(index, "start")?.[0] : undefined
+        }
+        if (top !== undefined && Math.abs(scroller.scrollTop - top) >= 0.5) scroller.scrollTop = top
+      }
+      // Then every frame while the rows around the landing correct from their estimates: nothing above it
+      // has ever been measured on a cold open. A touch on the scroller ends the hold at once.
+      const hold = () => {
+        const scroller = transcriptRef.current
+        if (performance.now() >= until || performance.now() < readerScrollUntilRef.current) {
+          if (anchorRestoreUntilRef.current === until) anchorRestoreUntilRef.current = 0
+          openHoldFrameRef.current = 0
+          openLandRef.current = null
+          setOpening(false)
+          // A thread shorter than the pane, or one whose landing clamps at the bottom, IS at its tail — so
+          // say so, or "Jump to latest" would sit over a reader who is already there until something else
+          // happened to re-run the tail reconciliation.
+          if (scroller && scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= TAIL_FOLLOW_PX) {
+            followingTailRef.current = true
+            tailHeightRef.current = scroller.scrollHeight
+            setAtEnd(true)
+          }
+          return
+        }
+        // No scroller yet on the commit that mounts it along with this transcript (a thread whose
+        // transcript was already loaded): its ref is set after this effect has run, so the hold waits for
+        // it rather than ending. Ending there handed such a thread to tail-follow.
+        if (scroller) land(scroller)
+        openHoldFrameRef.current = requestAnimationFrame(hold)
+      }
+      openLandRef.current = () => {
+        const scroller = transcriptRef.current
+        if (scroller) land(scroller)
+      }
+      hold()
+      return
+    }
+    setOpening(false)
+    openHoldFrameRef.current = requestAnimationFrame(() => {
+      openHoldFrameRef.current = 0
       if (!anchor) {
         virtualizer.scrollToEnd({ behavior: "instant" })
         setAtEnd(true)
@@ -1372,13 +1400,15 @@ function VirtualizedThreadTranscript({
       const until = performance.now() + ANCHOR_RESTORE_MS
       anchorRestoreUntilRef.current = until
       const hold = () => {
-        if (performance.now() >= until || performance.now() < readerScrollUntilRef.current) return
+        if (performance.now() >= until || performance.now() < readerScrollUntilRef.current) {
+          openHoldFrameRef.current = 0
+          return
+        }
         alignToScreenTop(anchor.candidate.sourceId, anchor.candidate.screenTop)
-        frame = requestAnimationFrame(hold)
+        openHoldFrameRef.current = requestAnimationFrame(hold)
       }
       hold()
     })
-    return () => cancelAnimationFrame(frame)
   }, [alignToScreenTop, rows.length, slug, transcriptKey, virtualizer])
   useEffect(() => () => cancelAnimationFrame(openHoldFrameRef.current), [])
 
@@ -1610,6 +1640,11 @@ function VirtualizedThreadTranscript({
     content.style.height = `${virtualizer.getTotalSize() + delta}px`
     for (const { index, size } of changed) virtualizer.resizeItem(index, size)
   })
+
+  // THE OPENING LANDING, ON EVERY COMMIT WHILE IT HOLDS, and declared after the measuring pass above for
+  // the prepend restore's reason: that pass resizes the rows that just mounted and re-renders before
+  // paint, so a place taken against their estimates is off by the time the frame is drawn.
+  useLayoutEffect(() => { openLandRef.current?.() })
 
   // THE PREPEND RESTORE: "load earlier" put a page above the reader, so put the row they were reading
   // back where it was. On EVERY commit while one is pending, and declared after the measuring pass

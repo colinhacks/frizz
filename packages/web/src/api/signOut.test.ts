@@ -44,7 +44,7 @@ test("a server without the endpoint is an error, not a silent sign-out", async (
 })
 
 test("leaving replaces the history entry, so Back cannot return to the board", () => {
-  const replaced: string[] = []
-  leaveAfterSignOut({ replace: (url: string | URL) => void replaced.push(String(url)) })
-  assert.deepEqual(replaced, ["/"])
+  const moves: [string | null, boolean | undefined][] = []
+  leaveAfterSignOut((to, options) => (moves.push([to, options.replace]), true))
+  assert.deepEqual(moves, [["/", true]])
 })

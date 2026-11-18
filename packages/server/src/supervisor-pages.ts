@@ -222,8 +222,28 @@ export const RECOVERY_PROGRESS_DETAIL = "Running threads keep working. The board
  * The ordinary case this exists for is a two-second restart, where the reader should never have to
  * click anything at all.
  */
+/**
+ * This page's half of the board's navigation gate (`frizzNavigate` in packages/web/index.html): the same
+ * per-tab ledger of moves nobody clicked for, under the same key and the same limits, five in a minute or
+ * twelve in half an hour. A board whose page answered this one's HEAD and then served it again would
+ * otherwise pass the reader back and forth for as long as the tab stayed open, the two pages each
+ * starting their own count. navigationGate.test.ts holds the two halves to the same answers.
+ */
+export const NAVIGATION_LEDGER_CHECK = `
+  function mayMove(){
+    var key="frizz-auto-navigations",now=Date.now(),list=[]
+    try{list=JSON.parse(sessionStorage.getItem(key)||"[]")}catch(e){}
+    if(!Array.isArray(list))list=[]
+    list=list.filter(function(at){return typeof at==="number"&&at<=now&&now-at<1800000})
+    if(list.length>=12||list.filter(function(at){return now-at<60000}).length>=5)return false
+    list.push(now)
+    try{sessionStorage.setItem(key,JSON.stringify(list))}catch(e){}
+    return true
+  }
+`
+
 const RECOVERY_SCRIPT = `
-(function(){
+(function(){${NAVIGATION_LEDGER_CHECK}
   var target=document.body.dataset.target||"/"
   function $(id){return document.getElementById(id)}
   var heading=$("heading"),detail=$("detail"),elapsed=$("elapsed"),steps=$("steps"),callout=$("callout"),calloutText=$("callout-text")
@@ -347,7 +367,19 @@ const RECOVERY_SCRIPT = `
     // A hidden tab neither polls nor spends its budget; visibilitychange starts the loop again.
     if(document.hidden)return
     alive().then(function(up){
-      if(up){clock=null;say("Frizz is back. Reloading.",true);location.replace(target);return}
+      if(up){
+        clock=null
+        // Over the gate's limits: Frizz answers, but this tab has been sent around enough. The link is a click,
+        // which clears the count, as the board's own Reload button does.
+        if(!mayMove()){
+          halt("Frizz is back. ",false);actions.hidden=true
+          var open=document.createElement("a");open.href=target;open.textContent="Open it"
+          open.addEventListener("click",function(){try{sessionStorage.removeItem("frizz-auto-navigations")}catch(e){}})
+          probe.appendChild(open)
+          return
+        }
+        say("Frizz is back. Reloading.",true);location.replace(target);return
+      }
       return readStatus().then(function(status){
         var advanced=narrate(status)
         if(stopped)return

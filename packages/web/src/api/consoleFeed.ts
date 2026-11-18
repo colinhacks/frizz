@@ -14,6 +14,7 @@ import { invalidateInteractionQueries } from "./interaction-cache.ts"
 import { rpcFor } from "./rpc.ts"
 import { writeTranscriptPush } from "./transcript-push.ts"
 import { cachedMessages, expandBoardDelta, TranscriptTails, WS_PATCH_QUERY } from "./wirePatch.ts"
+import { navigate } from "../lib/navigation.ts"
 
 // THE CONSOLE'S LIVE FEED — every open project's board, as one.
 //
@@ -795,7 +796,7 @@ function notifyConsole(project: string, event: Extract<ServerEvent, { type: "not
   n.onclick = () => {
     window.focus()
     if (isConsolePath()) openThread(threadKey(project, event.slug))
-    else location.assign(boardThreadHref(event.slug, project))
+    else navigate(boardThreadHref(event.slug, project), { reason: "a notification was clicked" })
     n.close()
   }
 }

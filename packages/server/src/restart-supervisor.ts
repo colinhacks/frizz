@@ -36,6 +36,7 @@ import { recoveryPage, unauthorizedPage, unlistedHostPage } from "./supervisor-p
 import type { BootView } from "./boot-view.ts"
 import { CALLER_HEADER, encodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog, type CallerVia } from "./audit.ts"
 import { REMOTE_REFUSED_CODE, remoteHostLabel, remoteRefusedMessage } from "./remote-refusal.ts"
+import { refuseTransforms } from "./no-transform.ts"
 import { FRIZZ_ROUTE_PREFIX, frizzRoute, type RelayAccess } from "@frizz/shared"
 
 export const SUPERVISOR_CONTROL_PREFIX = "/_frizz/control"
@@ -479,7 +480,10 @@ export class RestartSupervisorProxy {
 
   async listen(): Promise<void> {
     if (this.server) return
-    const server = createServer((req, res) => this.handle(req, res))
+    const server = createServer((req, res) => {
+      refuseTransforms(res)
+      this.handle(req, res)
+    })
     server.keepAliveTimeout = 5_000
     server.headersTimeout = 10_000
     server.on("upgrade", (req, socket, head) => this.handleUpgrade(req, socket, head))
@@ -507,6 +511,7 @@ export class RestartSupervisorProxy {
   relayListener(): Promise<number> {
     this.relayPort ??= new Promise<number>((resolveListen, rejectListen) => {
       const server = createServer((req, res) => {
+        refuseTransforms(res)
         if (this.admitRelayed(req)) return this.handle(req, res)
         res.writeHead(403, { "content-type": "text/plain; charset=UTF-8" })
         res.end("Forbidden")

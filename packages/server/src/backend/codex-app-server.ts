@@ -81,7 +81,7 @@ export function selectCodexHostKind(
   if (flagValue === "1" || flagValue === "true") return nativeSupported ? "native" : "daemon"
   return nativeSupported ? "native" : "daemon"
 }
-export const CODEX_APP_SERVER_SUPPORTED_VERSION = "0.169.1"
+export const CODEX_APP_SERVER_SUPPORTED_VERSION = "0.170.0"
 // THE FLOOR IS ITS OWN NUMBER, AND A PIN BUMP DOES NOT MOVE IT. The pin above is what a NEW app-server
 // is started on. This is the oldest one a bridge will keep TALKING to: an app-server that outlived
 // Update & Restart still runs the build it was started on, and until 2026-11-10 the pin was also the
@@ -103,8 +103,8 @@ export const CODEX_APP_SERVER_MINIMUM_VERSION = "0.167.0"
 // The ACCEPTANCE RULE is deliberately not that exact coordinate — see codexVersionVerdict below.
 export const CODEX_APP_SERVER_PROTOCOL_REVISION = Object.freeze({
   packageVersion: CODEX_APP_SERVER_SUPPORTED_VERSION,
-  sourceTag: "rust-v0.169.1",
-  sourceCommit: "c376cf7396eff83ce4c6ac61b9553df142e7a0be",
+  sourceTag: "rust-v0.170.0",
+  sourceCommit: "29eb79e9866b3262a777fdf8195c1b9e63684c91",
 })
 /** Numeric semver compare; a version that will not parse sorts BELOW everything (fails closed). */
 export function compareCodexVersions(a: string, b: string): number {

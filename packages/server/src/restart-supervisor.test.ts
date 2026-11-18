@@ -133,7 +133,7 @@ test("public supervisor serves local images without entering or requiring the di
     const served = await getBytes(port, path, { "sec-fetch-site": "same-origin" })
     assert.equal(served.status, 200)
     assert.equal(served.headers["content-type"], "image/png")
-    assert.equal(served.headers["cache-control"], "private, max-age=60")
+    assert.equal(served.headers["cache-control"], "private, max-age=60, no-transform")
     assert.deepEqual(served.body, image)
 
     const head = await getBytes(port, path, { "sec-fetch-site": "same-origin" }, "HEAD")
@@ -1990,5 +1990,36 @@ test("a request target the URL parser refuses is answered, not thrown out of the
     assert.equal((await proxied(port, "/ordinary-route", { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` })).status, 503, "still serving")
   } finally {
     await proxy.close().catch(() => undefined)
+  }
+})
+
+test("every answer either listener gives says no-transform, so no CDN in front of a board rewrites it", async () => {
+  // Cloudflare injected its analytics beacon into every page under frizz.sh, and the board reloaded itself
+  // every two seconds over it (2026-11-18). A response marked no-transform is one Cloudflare leaves alone.
+  const current = await listen((_req, res) => {
+    res.writeHead(200, { "content-type": "text/html", "Cache-Control": "public, max-age=31536000, immutable" })
+    res.end("<!doctype html>")
+  })
+  const port = await freePort()
+  const proxy = new RestartSupervisorProxy({ port, publicOrigin: PUBLIC, childPort: () => current.port, restart: async () => ({ state: "ready" }) })
+  try {
+    await proxy.listen()
+    const relay = await proxy.relayListener()
+    const loopback = { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` }
+    const cacheControl = async (at: number, path: string, headers: Record<string, string>) => {
+      const answer = await proxied(at, path, headers)
+      return `${answer.status} ${answer.headers?.["cache-control"] ?? "(none)"}`
+    }
+    // The board's own answer keeps every directive it gave.
+    assert.equal(await cacheControl(port, "/", loopback), "200 public, max-age=31536000, immutable, no-transform")
+    // The proxy's own pages, the ones a visitor without a session sees through the relay.
+    assert.equal(await cacheControl(relay, "/", { host: "colin.frizz.sh", origin: PUBLIC }), "401 no-store, no-transform")
+    assert.equal(await cacheControl(port, "/", { host: "colin.frizz.sh", origin: PUBLIC }), "401 no-store, no-transform")
+    // A recovery page, while the board itself is down.
+    await current.close()
+    assert.equal(await cacheControl(port, "/", loopback), "503 no-store, no-transform")
+  } finally {
+    await proxy.close().catch(() => undefined)
+    await current.close().catch(() => undefined)
   }
 })

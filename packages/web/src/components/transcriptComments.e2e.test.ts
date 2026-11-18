@@ -97,7 +97,7 @@ test("a comment on a passage waits as a highlight, survives a reload, and the ne
     await page.waitForSelector("[data-comment-editor] textarea", { visible: true, timeout: 5000 })
     assert.equal(await page.evaluate(() => document.activeElement?.matches("[data-comment-editor] textarea") ?? false), true, "the editor takes the caret")
     assert.equal((await highlights()).active, 1, "the passage being written on is lit")
-    await page.keyboard.type("Why key on the name alone here?")
+    await page.keyboard.type("Why key on the name alone")
     const editor = await page.$eval("[data-comment-editor]", (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })
     await shot("2-editor", { x: editor.x - 40, y: editor.y - 70, width: editor.width + 80, height: editor.height + 90 })
     await page.keyboard.down("Meta")
@@ -108,23 +108,37 @@ test("a comment on a passage waits as a highlight, survives a reload, and the ne
     assert.deepEqual(await highlights(), { soft: 1, active: 0 }, "the comment waits as a highlight over its passage")
     assert.match(await page.$eval(`${surface} textarea[data-surface="chatComposer"], ${surface} [data-composer-box] textarea`, (el) => (el as HTMLTextAreaElement).placeholder), /note to send with your comment/)
 
-    // Pointing at the passage shows the words; Esc while the editor is open throws an edit away.
+    // Pointing at the passage shows its card: in the margin right of the 720 column, on the passage's line,
+    // over the artifacts rail a 1440 window shows beside it.
+    const cardWords = () => page.$eval("[data-comment-popover] textarea", (el) => (el as HTMLTextAreaElement).value)
     await page.mouse.move(first.from.x + 20, first.from.y)
     await page.waitForSelector("[data-comment-popover]", { visible: true, timeout: 5000 })
-    assert.match(await page.$eval("[data-comment-popover]", (el) => el.textContent ?? ""), /Why key on the name alone here\?/)
-    const popover = await page.$eval("[data-comment-popover]", (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })
-    await shot("3-hover", { x: popover.x - 40, y: popover.y - 70, width: popover.width + 80, height: popover.height + 90 })
-    // The pointer can travel from the passage onto the card and use it: leaving the prose for the card
-    // once closed it under every pointer on its way to Edit.
-    const edit = await page.$eval('[data-comment-popover] button[aria-label="Edit comment"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })
-    await page.mouse.move(edit.x, edit.y, { steps: 8 })
+    assert.equal(await cardWords(), "Why key on the name alone")
+    const popover = await page.$eval("[data-comment-popover]", (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, placement: el.getAttribute("data-comment-placement") } })
+    const column = await page.$eval(surface, (el) => el.getBoundingClientRect().right)
+    assert.equal(popover.placement, "margin")
+    assert.ok(popover.x > column && popover.y < first.from.y && popover.y + popover.height > first.from.y, `the card stands in the margin on the passage's line: ${JSON.stringify(popover)}, column ends at ${column}`)
+    await shot("3-hover", { x: first.from.x - 40, y: popover.y - 40, width: popover.x + popover.width + 40 - (first.from.x - 40), height: popover.height + 80 })
+    // The pointer crosses the rest of the line to the card and clicks into its words to edit them. Leaving
+    // the prose for the card once closed it under every pointer on its way there.
+    const into = { x: popover.x + popover.width - 30, y: popover.y + 20 }
+    await page.mouse.move(into.x, into.y, { steps: 12 })
     await new Promise((r) => setTimeout(r, 600))
     assert.ok(await page.$("[data-comment-popover]"), "the card stays open under a pointer that came from its passage")
-    await page.mouse.click(edit.x, edit.y)
-    await page.waitForSelector("[data-comment-editor] textarea", { visible: true, timeout: 5000 })
-    assert.equal(await page.$eval("[data-comment-editor] textarea", (el) => (el as HTMLTextAreaElement).value), "Why key on the name alone here?", "Edit opens the comment's words")
-    await page.keyboard.press("Escape")
-    await page.waitForSelector("[data-comment-editor]", { hidden: true, timeout: 5000 })
+    await page.mouse.click(into.x, into.y)
+    assert.equal(await page.evaluate(() => document.activeElement?.matches("[data-comment-popover] textarea") ?? false), true, "a click into the words puts the caret in them")
+    await page.keyboard.press("End")
+    await page.keyboard.type(" here?")
+    await page.mouse.move(5, 450, { steps: 4 })
+    await new Promise((r) => setTimeout(r, 600))
+    assert.ok(await page.$("[data-comment-popover]"), "a card being edited stays open after the pointer leaves")
+    await page.keyboard.down("Meta")
+    await page.keyboard.press("Enter")
+    await page.keyboard.up("Meta")
+    await page.waitForSelector("[data-comment-popover]", { hidden: true, timeout: 5000 })
+    await page.mouse.move(first.from.x + 20, first.from.y)
+    await page.waitForSelector("[data-comment-popover]", { visible: true, timeout: 5000 })
+    assert.equal(await cardWords(), "Why key on the name alone here?", "the edit was kept")
     await page.mouse.move(5, 450)
     await page.waitForSelector("[data-comment-popover]", { hidden: true, timeout: 5000 })
 
@@ -168,6 +182,19 @@ test("a comment on a passage waits as a highlight, survives a reload, and the ne
     await page.goto(`${boardUrl}/status/active?thread=${slug}`, { waitUntil: "networkidle2" })
     await page.waitForFunction((sel) => document.querySelector(`${sel} [data-pending-comments="2"]`), { timeout: 15_000 }, drawer)
     await page.waitForFunction(() => (CSS.highlights.get("frizz-comment")?.size ?? 0) === 2, { timeout: 10_000 })
+    // The drawer runs to the window's edge, so there the card opens under its passage.
+    const inDrawer = await page.evaluate((sel) => {
+      const text = CSS.highlights.get("frizz-comment")!
+      const rects = [...text].map((r) => (r as Range).getClientRects()[0]).filter((r) => r && r.left > document.querySelector(sel)!.getBoundingClientRect().left)
+      return { x: rects[0].left + 10, y: rects[0].top + rects[0].height / 2 }
+    }, drawer)
+    await page.mouse.move(inDrawer.x, inDrawer.y)
+    await page.waitForSelector("[data-comment-popover]", { visible: true, timeout: 5000 })
+    const below = await page.$eval("[data-comment-popover]", (el) => ({ y: el.getBoundingClientRect().y, placement: el.getAttribute("data-comment-placement") }))
+    assert.equal(below.placement, "below")
+    assert.ok(below.y > inDrawer.y, "under the passage")
+    await page.mouse.move(5, 450)
+    await page.waitForSelector("[data-comment-popover]", { hidden: true, timeout: 5000 })
     await page.goto(`${boardUrl}/thread/${slug}`, { waitUntil: "networkidle2" })
     await page.waitForFunction((sel) => document.querySelector(`${sel} [data-pending-comments="2"]`), { timeout: 15_000 }, surface)
     await page.waitForFunction(() => (CSS.highlights.get("frizz-comment")?.size ?? 0) === 2, { timeout: 10_000 })
@@ -175,7 +202,7 @@ test("a comment on a passage waits as a highlight, survives a reload, and the ne
     // ↓ walks to a comment and pins its words open.
     await page.click(`${surface} [data-pending-comments] button[aria-label="Next comment"]`)
     await page.waitForSelector("[data-comment-popover]", { visible: true, timeout: 5000 })
-    assert.match(await page.$eval("[data-comment-popover]", (el) => el.textContent ?? ""), /Say what this means for the cache\./, "the first in transcript order is the earlier paragraph's")
+    assert.equal(await page.$eval("[data-comment-popover] textarea", (el) => (el as HTMLTextAreaElement).value), "Say what this means for the cache.", "the first in transcript order is the earlier paragraph's")
     await page.keyboard.press("Escape")
     await page.waitForSelector("[data-comment-popover]", { hidden: true, timeout: 5000 })
 

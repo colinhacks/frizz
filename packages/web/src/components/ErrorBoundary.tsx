@@ -2,6 +2,7 @@ import { Component, type ErrorInfo, type ReactElement, type ReactNode } from "re
 import { Sheet } from "./ui/Sheet.tsx"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { store } from "../store.ts"
+import { navigate } from "../lib/navigation.ts"
 
 // THE WINDOW MUST NEVER GO BLANK.
 //
@@ -113,7 +114,7 @@ export function ErrorPanel({
             Close
           </button>
         )}
-        <button type="button" className={ACTION_CLASS} onClick={() => window.location.reload()}>
+        <button type="button" className={ACTION_CLASS} onClick={() => navigate(null, { reason: "the error page's Reload button" })}>
           Reload Frizz
         </button>
       </div>
