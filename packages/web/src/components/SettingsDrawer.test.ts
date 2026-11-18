@@ -77,8 +77,10 @@ test("the drawer is one untabbed list of interface preferences, with no project 
   assert.doesNotMatch(source, /role="tab(?:list)?"|SettingsTabs|label: "(?:Project|Frizz) settings"/)
   const fields = [...source.matchAll(/<SettingsField label="([^"]+)"/g)].map((m) => m[1])
   // GitHub leads, and above the draft gate, so a slow settings read cannot hold the sign-in back.
-  assert.deepEqual(fields, ["GitHub", "Appearance", "Project sidebar", "Wrap code", "Dictation", "Desktop notifications", "Child threads", "Local file links"])
+  assert.deepEqual(fields, ["GitHub", "Appearance", "Thread width", "Project sidebar", "Wrap code", "Dictation", "Desktop notifications", "Child threads", "Local file links"])
   assert.ok(source.indexOf('<SettingsField label="GitHub"') < source.indexOf("{!draft ? ("), "the GitHub row renders without the draft")
+  // The two browser preferences of how the page is drawn don't wait on the server either.
+  assert.ok(source.indexOf('<SettingsField label="Thread width"') < source.indexOf("{!draft ? ("), "the Thread width row renders without the draft")
   // Child threads is the one experiment, and says so beside its name.
   assert.deepEqual([...source.matchAll(/<SettingsField label="([^"]+)" experimental\b/g)].map((m) => m[1]), ["Child threads"])
   assert.match(experimentalChipSource, /normal-case[^`]*tracking-normal[^`]*`\}>\s*Experimental\s*</)
