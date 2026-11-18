@@ -1,6 +1,6 @@
 # frizz.sh
 
-The one-page site at [frizz.sh](https://frizz.sh). Static: no framework, no build step.
+The one-page site at [frizz.sh](https://frizz.sh). Static: no framework. The only build step writes `sitemap.xml`.
 
 | Path | What it is |
 | --- | --- |
@@ -10,6 +10,7 @@ The one-page site at [frizz.sh](https://frizz.sh). Static: no framework, no buil
 | `og.html` | Source for `img/og.png`, the 1200×630 social card. Not deployed (`.vercelignore`). |
 | `fonts/` | Inter and Geist Mono, Latin-subset variable woff2 from Google Fonts, under the OFL in `fonts/OFL.txt`. |
 | `docs/` | The remote-access guides, at `/docs`. They mirror [`docs/remote-access.md`](../docs/remote-access.md): change one and change the other, and `scripts/site-docs.test.mjs` fails when a sentence about what a signed-in device or the relay can do is in one and not the other. The launcher's messages link these pages (`src/cloud.ts`, `src/remote-pane.ts`), since an `npx frizz` install has no `docs/` folder. One file per route, sharing `site.css` and the same `.doc` column as the homepage. |
+| `sitemap.mjs` | Vercel's build command (`vercel.json`). It writes `sitemap.xml` from each deployed page's `<link rel="canonical">`, then deletes itself from the output, so a new page is listed on its first deploy as long as it names its canonical URL. `scripts/site-sitemap.test.mjs` fails when a guide's canonical is missing or wrong. `robots.txt` points crawlers at the sitemap. |
 
 ## Why `/docs` and not `docs.frizz.sh`
 
