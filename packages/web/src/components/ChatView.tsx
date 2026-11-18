@@ -73,6 +73,7 @@ import { getThemeSnapshot, subscribeTheme } from "../lib/theme.ts"
 import { isVisualizationThemeAck, visualizationThemeMessage } from "../lib/visualizationThemeProtocol.ts"
 import { canAdoptThread } from "../lib/adoption.ts"
 import { emptyTranscriptState } from "../lib/emptyTranscript.ts"
+import { useDispatchedPrompt, withDispatchedPrompt } from "../lib/dispatchedPrompt.ts"
 import { ExpiredTranscript } from "./ExpiredTranscript.tsx"
 import { THREAD_HEADER_CLASS, THREAD_HEADER_CONTROLS_CLASS, THREAD_HEADER_TITLE_CLASS } from "../lib/threadHeaderLayout.ts"
 import { SheetClose } from "./ui/SheetHeader.tsx"
@@ -232,9 +233,19 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
   const loadingEarlierRef = useRef(false)
   const [loadingEarlier, setLoadingEarlier] = useState(false)
   const [earlierError, setEarlierError] = useState<string | null>(null)
+  // A THREAD THIS TAB JUST STARTED opens on the words that started it, with the Working row under them,
+  // rather than on "Session starting…" until the session has written them (lib/dispatchedPrompt). Not over
+  // a read that failed, which says so, nor past a first page: a thread with earlier pages landed its first
+  // message long ago.
+  const dispatched = useDispatchedPrompt(slug)
+  const starting = q.isPending || boardThread?.runtime === "running" || boardThread?.runtime === "spawning"
+  const dispatchedShown = q.isError || q.data?.hasEarlier === true ? undefined : dispatched
   // Raw server order — each message renders its `parts` in block order (fidelity). Memoized so
   // useLiveAnswering's `liveMsg` identity check compares objects from THIS same list.
-  const liveMessages = useMemo(() => q.data?.messages ?? [], [q.data])
+  const liveMessages = useMemo(
+    () => withDispatchedPrompt(q.data?.messages ?? [], dispatchedShown, starting),
+    [q.data, dispatchedShown, starting],
+  )
   // What this surface draws of it, built by the thread surface's one pipeline (ThreadSurface
   // useThreadMessages): the rest the board has not reached held back, the running background calls moved
   // to the line of counts, the registered questions that have arrived, the refused fences marked.
@@ -314,7 +325,7 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
   // child of it — so it is genuinely stationary while the transcript scrolls underneath. Held as
   // state (not a ref) so the portal renders as soon as the node mounts.
   const [jumpOverlay, setJumpOverlay] = useState<HTMLDivElement | null>(null)
-  const count = q.data?.messages.length ?? 0
+  const count = liveMessages.length
   const empty = emptyTranscriptState({ pending: q.isPending, failed: q.isError, expired: !!q.data?.expired }, { running, adoptable: canAdoptThread(thread) })
 
   const loadEarlier = useCallback(async () => {

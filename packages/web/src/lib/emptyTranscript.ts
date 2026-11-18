@@ -21,6 +21,8 @@ export function emptyTranscriptState(
   // read takes a beat. Claiming "Session starting…" there is wrong, since it may have run for hours.
   if (read.pending) return "loading"
   if (read.failed) return "failed"
+  // Seen from another tab, a reload or another device. The tab that started the thread draws the words it
+  // sent and the Working row instead, so its transcript is never empty (lib/dispatchedPrompt).
   if (thread.running) return "starting"
   if (read.expired) return "expired"
   // A thread Frizz never originated (a pre-existing .frizz board): no session, no transcript.

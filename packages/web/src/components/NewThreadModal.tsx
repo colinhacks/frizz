@@ -30,6 +30,7 @@ import { ProjectScope, scopedKey, useProjectScope } from "../lib/projectScope.ts
 import { runtimeDownloadNote } from "../lib/signIn.ts"
 import { beginDispatch, dispatchAnswered, dispatchedThreadId, dispatchFailed } from "../lib/pendingDispatch.ts"
 import { openStartedThread, screenNow } from "../lib/openStartedThread.ts"
+import { rememberDispatchedPrompt } from "../lib/dispatchedPrompt.ts"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
 
@@ -112,8 +113,12 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         screen: screenNow(),
       }
     },
-    onSuccess: (res, _input, context) => {
+    onSuccess: (res, input, context) => {
       if (context) dispatchAnswered(context.pendingKey, res.slug)
+      // The thread opens with these words as its first message and the Working row under them, before
+      // the session has written them (lib/dispatchedPrompt). Dated now rather than at the click: a first
+      // thread can wait minutes on its runtime's download, and the session writes its own copy after this.
+      rememberDispatchedPrompt(dispatchedThreadId(project, res.slug), input.prompt, new Date().toISOString())
       // The board stream now owns the durable thread row. Drop our local bridge as soon as the
       // server acknowledges it, preventing an optimistic card + server card duplicate.
       setPendingDispatch(null)

@@ -29,6 +29,10 @@
 //                  paging history (`tools=200 toolms=1 narrate=1 disklag=0` writes 400+ messages)
 //   thinking=1     a thinking block before the final message (a "Thought for Ns" row)
 //   think=MS       how long the model "thinks" before its first record (default 1500)
+//   startms=MS     how long the session takes to write the dispatch prompt to its transcript at all
+//                  (default 0): a real Claude Code runs its SessionStart hooks and boots first, and a
+//                  thread opened meanwhile has nothing of the human's to draw yet. A message that
+//                  arrives in that window is a steer, as it would be once the turn had started
 //   reply=done|steps|needs|bare   how every later turn ends (default done)
 //   replyparas=N   replytools=N   replythink=MS    the same knobs for later turns (defaults 2, 0, 1500)
 //   replythinking=1  a thinking block OPENING every later turn, before its tool calls — the shape a real
@@ -144,7 +148,7 @@ function write(record) {
 const now = () => new Date().toISOString()
 
 // ---- the script ----
-const defaults = { agents: 0, shells: 0, replyagents: 0, replyshells: 0, agentms: 4000, agentsteps: 2, agenttext: 1, narrate: 0, shellms: 4000, notifyparas: 1, notifythink: 1000, ending: "done", paras: 3, tools: 0, toolms: 1500, thinking: 0, think: 1500, thinkms: 2000, replythinking: 0, gapms: 0, reply: "done", replyparas: 2, replytools: 0, replythink: 1500, disklag: 15, resultlag: 30 }
+const defaults = { startms: 0, agents: 0, shells: 0, replyagents: 0, replyshells: 0, agentms: 4000, agentsteps: 2, agenttext: 1, narrate: 0, shellms: 4000, notifyparas: 1, notifythink: 1000, ending: "done", paras: 3, tools: 0, toolms: 1500, thinking: 0, think: 1500, thinkms: 2000, replythinking: 0, gapms: 0, reply: "done", replyparas: 2, replytools: 0, replythink: 1500, disklag: 15, resultlag: 30 }
 let config = null
 function parseScript(text) {
   const token = /\[script([^\]]*)\]/.exec(text)?.[1] ?? ""
@@ -488,9 +492,15 @@ function handleUserMessage(message) {
   if (config === null) {
     config = parseScript(text)
     if (config.file) loadScript(config.file)
-    write({ type: "user", message: { role: "user", content: text }, uuid: randomUUID(), timestamp: now(), promptSource: "sdk" })
-    send({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, uuid, session_id: sessionId })
-    startTurn("first", text)
+    const begin = () => {
+      write({ type: "user", message: { role: "user", content: text }, uuid: randomUUID(), timestamp: now(), promptSource: "sdk" })
+      send({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, uuid, session_id: sessionId })
+      startTurn("first", text)
+    }
+    if (config.startms > 0) {
+      running = true
+      setTimeout(begin, config.startms)
+    } else begin()
     return
   }
   if (running) {
