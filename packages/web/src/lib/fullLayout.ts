@@ -15,9 +15,10 @@ export const RAIL_WIDTH = 340
 // THE MOST A THREAD'S COLUMN GROWS TO, per the Settings choice (lib/prefs.ts threadWidth). A cap, never a
 // size: each surface still gives the column what the window has left, and only stops it here. Standard is
 // the drawer's own width (lib/sheet.ts SHEET_BASE_WIDTH), the measure every thread surface kept until
-// 2026-11-18, about 95 characters of body text a line; Wide is about 115 and Widest about 130. Three
-// steps rather than a dragged width (maintainer 2026-11-18, closing colinhacks/frizz#77: "There is no
-// value in having the pane be that wide … it just still has a somewhat opinionated max width").
+// 2026-11-18, 101 characters of transcript prose a line; Wide is 119 and Widest 133 (measured in sans on a
+// real stack, 2026-11-18). Three steps rather than a dragged width (maintainer 2026-11-18, closing
+// colinhacks/frizz#77: "There is no value in having the pane be that wide … it just still has a somewhat
+// opinionated max width").
 export const THREAD_WIDTH_PX: Record<ThreadWidth, number> = {
   standard: SHEET_BASE_WIDTH,
   wide: 840,
