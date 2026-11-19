@@ -229,7 +229,8 @@ export function SettingsDrawer({ offerUpdate = false }: {
 //     sign-in (a once-per-machine setup, which a phone reaches through the new-thread "Issue or PR" chip)
 //     are desktop-only rows and do not render here; the SERVER values behind them are untouched, so the
 //     desktop reads exactly what it did. Snooze length is here instead: it sets the preset the
-//     board's swipe and the ⋯ sheet use, and the phone has no other place to choose it.
+//     board's swipe and the ⋯ sheet use, and the phone has no other place to choose it. So is Wrap
+//     code, a preference of this browser that a narrow screen meets on nearly every line of code.
 //
 // Plain full-width rows under section labels — no grouped-inset cards, no iOS chrome.
 //
@@ -365,7 +366,7 @@ function MobileSettingsPage({
   offerUpdate: boolean
 }) {
   const { connection } = useSnapshot(store)
-  const { queueOrder, snoozePreset } = useSnapshot(prefs)
+  const { queueOrder, snoozePreset, wrapCode } = useSnapshot(prefs)
   const conn = CONNECTION_WORD[connection]
   const supervisor = useSupervisorStatus()
   const version = supervisor.data?.version
@@ -408,6 +409,13 @@ function MobileSettingsPage({
           <div className={MOBILE_ROW}>
             <span className="min-w-0 flex-1 truncate">Theme</span>
             <MobileThemeSegments />
+          </div>
+          {/* This browser's own preference (lib/codeWrap.ts), and the phone is where it bites: at 393px a
+              line of code holds about 36 characters, so most lines wrap, and until 2026-11-19 only the
+              desktop drawer could turn that off. */}
+          <div className={MOBILE_ROW}>
+            <span className="min-w-0 flex-1 truncate">Wrap code</span>
+            <MobileSwitch label="Wrap code" checked={wrapCode} onChange={(on) => (prefs.wrapCode = on)} />
           </div>
         </MobileSection>
 
