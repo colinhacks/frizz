@@ -281,6 +281,9 @@ test("a box carried onto a later rest's card stays on it, ticked, once the reply
     // all three with the send's instant: the same three rows, ticked, and the first card unchanged.
     const carried = await read("carried")
     assert.deepEqual(carried, [firstCard(0), { steps: [FIRST, ...SECOND], ticks: [true, true, true], controls: 0 }], "the reply drawn under a tool call still answers the card above it")
+    // The wake and the call come after the stretch's last sign-off, so they fold once the reply is in.
+    await page.click("[data-wake-divider=stretch-fold]")
+    await page.waitForSelector("[data-transcript-source-id='a3']")
     assert.ok(await page.evaluate(() => {
       const reply = document.querySelector("[data-transcript-source-id='u2']")
       const call = document.querySelector("[data-transcript-source-id='a3']")

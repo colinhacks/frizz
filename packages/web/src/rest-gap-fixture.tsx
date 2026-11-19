@@ -57,10 +57,13 @@ store.board = { projectDir: "/fixture/frizz", threads: [thread] } as BoardSnapsh
 const today = new Date()
 const on = (daysAgo: number, h: number, m: number) => new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysAgo, h, m).toISOString()
 const user = (id: string, at: string, text: string) => ({ sourceId: id, role: "user", text, tools: [], parts: [], at })
-const agent = (id: string, at: string, text: string) => ({ sourceId: id, role: "assistant", text, tools: [], parts: [{ kind: "text", text }], at })
+// Each reply is a bare rest, which the server stamps as the turn's sign-off (server sign-offs.ts), and an
+// earlier stretch keeps only its sign-offs in view (lib/stretchFolds): unstamped, the two answered
+// stretches fold, rest hairlines and all.
+const agent = (id: string, at: string, text: string) => ({ sourceId: id, role: "assistant", text, tools: [], parts: [{ kind: "text", text }], at, signOff: true })
 
 const tool = (name: string, detail: string) => ({ name, status: "completed", detail })
-const worked = (id: string, at: string, text: string, tools: ReturnType<typeof tool>[]) => ({ sourceId: id, role: "assistant", text, tools, parts: [{ kind: "tools", tools }, { kind: "text", text }], at })
+const worked = (id: string, at: string, text: string, tools: ReturnType<typeof tool>[]) => ({ sourceId: id, role: "assistant", text, tools, parts: [{ kind: "tools", tools }, { kind: "text", text }], at, signOff: true })
 const rested = (id: string, at: string) => ({ sourceId: id, role: "assistant", kind: "event", boundary: "rest", text: "Agent rested", tools: [], parts: [], at })
 
 const messages = [

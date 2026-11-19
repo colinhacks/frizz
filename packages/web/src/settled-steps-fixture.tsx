@@ -58,6 +58,10 @@ const say = (sourceId: string, text: string, min: number) =>
   ({ sourceId, role: "assistant", text, tools: [], parts: [{ kind: "text", text }], at: ago(min) }) as unknown as TranscriptMessage
 const human = (sourceId: string, text: string, min: number) =>
   ({ sourceId, role: "user", text, tools: [], parts: [], at: ago(min) }) as unknown as TranscriptMessage
+// A rest that handed the human steps, as the server stamps it (server sign-offs.ts): an earlier stretch keeps
+// only its sign-offs in view (lib/stretchFolds), so an unstamped steps rest would fold once the human typed.
+// The shell wait is left unstamped, a park the server kept nothing of.
+const signed = (m: TranscriptMessage) => ({ ...m, signOff: true }) as TranscriptMessage
 
 // THE CARRIED CASE: two steps rests, the first box of the first ticked and never sent.
 const CARRIED = AT === "carried" || AT === "carried-rest"
@@ -75,8 +79,8 @@ const event = (sourceId: string, text: string, min: number) =>
 
 const carriedMessages: TranscriptMessage[] = [
   human("u1", "Forward team@ to my Gmail.", 40),
-  say("a1", `The route needs a sign-in.\n\n${stepsFence("Authorize the sign-in, then verify the Gmail address", FIRST_STEPS, "The rule is created once the address is verified.")}`, 30),
-  say("a2", `The first sign-in went partway.\n\n${stepsFence("Authorize the second sign-in, then verify the Gmail address", SECOND_STEPS, SECOND_PROSE)}`, 10),
+  signed(say("a1", `The route needs a sign-in.\n\n${stepsFence("Authorize the sign-in, then verify the Gmail address", FIRST_STEPS, "The rule is created once the address is verified.")}`, 30)),
+  signed(say("a2", `The first sign-in went partway.\n\n${stepsFence("Authorize the second sign-in, then verify the Gmail address", SECOND_STEPS, SECOND_PROSE)}`, 10)),
   ...(AT === "carried" ? [
     event("e1", "Background task «Starting the second sign-in» finished", 5.001),
     // Made 4s AFTER the human sent, and drawn above the reply: the worker took the reply in after it.
@@ -88,9 +92,9 @@ const carriedMessages: TranscriptMessage[] = [
 const messages: TranscriptMessage[] = CARRIED ? carriedMessages : [
   human("u1", "Cut the acme 4.2.0 release.", 40),
   say("a1", `Building the release artifacts.\n\n${SHELL_FENCE}`, 38),
-  say("a2", `The build is green.\n\n${STEPS_FENCE}`, 20),
+  signed(say("a2", `The build is green.\n\n${STEPS_FENCE}`, 20)),
   ...(AT === "rest" ? [] : [human("u2", AT === "asked" ? "Which account should approve it — the bot or mine?" : AT === "partial" ? `Done 1 of 2:\n- [x] Run \`npm login --auth-type=web\` in a terminal on this machine.\n- [ ] Approve the browser prompt with the **acme-bot** account.${PARAMS.get("note") ? "\n\nThe browser prompt never came up." : ""}` : "Done", 5)]),
-  ...(AT === "moved" ? [say("a3", LATER_FENCE, 1)] : []),
+  ...(AT === "moved" ? [signed(say("a3", LATER_FENCE, 1))] : []),
 ]
 
 // THE LIST AS THE SERVER HOLDS IT in each state (human-todos.ts): both steps owed at rest and after a
