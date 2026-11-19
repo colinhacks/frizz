@@ -1544,7 +1544,6 @@ export function deriveAwaitingBackground(
   registeredPrWatches: ReadonlySet<string> = new Set(),
   armedTimerIds: ReadonlySet<string> = new Set(),
   armedWatches: readonly RegisteredWatch[] = [],
-  openQuestions = 0,
 ): boolean {
   // DECLARED, not inferred. This card used to appear whenever the thread had anything running, which is
   // how it came to announce a wait on a dev server nobody tore down. It now states what the worker said
@@ -1557,13 +1556,18 @@ export function deriveAwaitingBackground(
   // hasLiveOps client-side, spinning a dead thread — unless stopped here explicitly.
   if (limitPause || tele?.providerError) return false
   // Any hard human gate or completion signal outranks this reason → the thread cards as THAT, not here.
-  // A REGISTERED question outranks this card for the same reason a fenced one does: at rest with both
-  // outstanding the human should be looking at the QUESTION, which is the actionable thing, and two
-  // expanded surfaces compete for one glance. The waits are not lost with it — BackgroundOpsStrip
-  // still lists every live shell, sub-agent and watcher under the prompt box, one compact line each
-  // (checked in a browser on registered-question-fixture.html?busy=1). That strip is where they live on
-  // an asking card; this card is where they live when there is nothing to ask.
-  if (hasActionableInteraction || tele?.pendingAsk || tele?.pendingQuestion || openQuestions > 0) return false
+  //
+  // A REGISTERED QUESTION DOES NOT (2026-11-19). From 2026-08-26 an open one did, so the human would look
+  // at the question rather than at two cards. That stopped being what it bought once a park beside a
+  // standing question became ordinary (the scheduler stopped refusing one on 2026-10-13) and sign-offs
+  // went incremental: the question's card stays in the sign-off that asked it, and the park's awaiting
+  // card is drawn at the bottom of the thread either way, through the transcript's fence block. All the
+  // rule still withheld was the card's Snooze, on a thread the question keeps in the queue, while the
+  // server already honours that event-snooze ahead of a question (deriveNeedsYou, 2026-10-19). Reported
+  // on a quiet park on a PR and a timer under a question asked one sign-off earlier (maintainer
+  // 2026-11-19: "Why am I not seeing a snooze button on this thread? … It's in my fucking queue").
+  // The asks below still win: each holds the turn itself, or is a legacy worker's last-message fence.
+  if (hasActionableInteraction || tele?.pendingAsk || tele?.pendingQuestion) return false
   // A signal fence — ```done OR ```awaiting — is the worker's OWN explicit statement about why it
   // stopped, and it renders its own card in the transcript body. That is strictly more specific than
   // "it has background work running", so it wins: show the fence card ALONE, never both. This is the
@@ -1603,7 +1607,7 @@ export function deriveAwaitingBackground(
   // drawer and full-screen page for a healthy thread resting on its children or on a shell. Since
   // 2026-08-01 that covers a shell-only rest too — it now has NO queue card at all, so this card in the
   // drawer and on the standalone page is the only place that state is stated in words.
-  return deriveNeedsYou({ ...row, bg_snooze_rested_at: null }, tele, runtime, hasActionableInteraction, nowMs, limitPause, false, deliveryProcessGone, {}, new Set(), armedTimerIds, armedWatches, openQuestions)
+  return deriveNeedsYou({ ...row, bg_snooze_rested_at: null }, tele, runtime, hasActionableInteraction, nowMs, limitPause, false, deliveryProcessGone, {}, new Set(), armedTimerIds, armedWatches)
 }
 
 // WHICH BAND A REST OUT OF THE QUEUE SITS IN (2026-10-05) — ThreadView.waitStatus. deriveNeedsYou answers
@@ -2200,7 +2204,7 @@ function sessionThreadView(
   })
   const needsYou = queuesForHuman && !handoffToParent
   const deliveryInFlight = !archived && deriveDeliveryInFlight(row, runtime, needsYou, deliveryProcessGone, answerInFlight, nowMs)
-  const awaitingBackground = archived ? false : deriveAwaitingBackground(row, tele, runtime, interactionPresence.needsUser, nowMs, limitPause, deliveryProcessGone, github, registeredPrWatches, armedTimerIds, armedWatches, standingCount)
+  const awaitingBackground = archived ? false : deriveAwaitingBackground(row, tele, runtime, interactionPresence.needsUser, nowMs, limitPause, deliveryProcessGone, github, registeredPrWatches, armedTimerIds, armedWatches)
   // hasFreshDelivery rather than deliveryInFlight: the spin stops after a minute, and a message still on
   // its way past that keeps its row where it was rather than parking it in Snoozed.
   const waitStatus = archived ? undefined : deriveWaitStatus(tele, runtime, needsYou, awaitingBackground, answerInFlight || hasFreshDelivery(row, deliveryProcessGone), nowMs, github, registeredPrWatches, armedWatches)

@@ -53,7 +53,7 @@ function place(r: SessionRow, t: SessionTelemetry, extra: { github?: GithubStatu
   const github = extra.github ?? {}
   const watches = extra.watches ?? []
   const needsYou = deriveNeedsYou(r, t, runtime, false, now, undefined, true, false, github, prs, timers, watches, 0, extra.inFlight ?? false)
-  const card = deriveAwaitingBackground(r, t, runtime, false, now, undefined, false, github, prs, timers, watches, 0)
+  const card = deriveAwaitingBackground(r, t, runtime, false, now, undefined, false, github, prs, timers, watches)
   return { needsYou, waitStatus: deriveWaitStatus(t, runtime, needsYou, card, extra.inFlight ?? false, now, github, prs, watches) }
 }
 
