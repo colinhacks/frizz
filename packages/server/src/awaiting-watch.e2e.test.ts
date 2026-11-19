@@ -108,9 +108,6 @@ async function harness(target?: string) {
   const at = new Date(Date.now() - 60_000).toISOString()
   writeFileSync(transcript, launchRecords(at) + parkRecord(at, target))
   const storage = createStorage(join(dir, "ui.db"), "p")
-  // Frizz's own sign-off nudge fires on a FENCELESS rest; every rest here carries a fence, so it cannot
-  // fire — but silence it anyway so a delivery count is unambiguous about what produced it.
-  storage.setSetting("signoffNudge", "off")
   storage.upsertSession({
     slug: SLUG, session_id: SESSION, thread_name: `frizz-${SLUG}`, spawned_at: at,
     last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: at, title_auto: 1,
@@ -240,7 +237,6 @@ test("a poll publishes a reading the BOARD can actually read, and the queue rule
     message: { role: "assistant", content: [{ type: "text", text: "PR is up.\n\n```awaiting\nprs: [acme/app#391]\nfor: 2h\n---\nWatching for review.\n```" }] },
   }))
   const storage = createStorage(join(dir, "ui.db"), "p")
-  storage.setSetting("signoffNudge", "off")
   // A thread dispatched BEFORE the `needs_input:` cut, because "CI running holds the thread out of the
   // queue" is the LEGACY rule this seam feeds. A new-contract worker says where its rest belongs itself
   // (board.needsInputQueues), and no PR reading moves it.
@@ -332,7 +328,6 @@ async function prHarness() {
     message: { role: "assistant", content: [{ type: "text", text: "PR is up." }] },
   }))
   const storage = createStorage(join(dir, "ui.db"), "p")
-  storage.setSetting("signoffNudge", "off")
   storage.upsertSession({
     slug: SLUG, session_id: SESSION, thread_name: `frizz-${SLUG}`, spawned_at: at,
     last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: at, title_auto: 1,
@@ -766,7 +761,6 @@ test("a fence naming a timer that was never registered is corrected, off a real 
   const at = new Date(Date.now() - 60_000).toISOString()
   writeFileSync(join(dir, `${SESSION}.jsonl`), stalledParkRecord(at))
   const storage = createStorage(join(dir, "ui.db"), "p")
-  storage.setSetting("signoffNudge", "off")
   storage.upsertSession({
     slug: SLUG, session_id: SESSION, thread_name: `frizz-${SLUG}`, spawned_at: at,
     last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: at, title_auto: 1,
@@ -1191,7 +1185,6 @@ async function fanoutHarness(prCount: number, review: () => Promise<unknown>) {
     message: { role: "assistant", content: [{ type: "text", text: "PRs are up." }] },
   }))
   const storage = createStorage(join(dir, "ui.db"), "p")
-  storage.setSetting("signoffNudge", "off")
   storage.upsertSession({
     slug: SLUG, session_id: SESSION, thread_name: `frizz-${SLUG}`, spawned_at: at,
     last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: at, title_auto: 1,
@@ -1286,7 +1279,6 @@ test("a watcher on an archived thread stays armed and stops costing GitHub anyth
   const dir = mkdtempSync(join(tmpdir(), "frizz-prwatch-archived-"))
   const at = new Date(Date.now() - 60_000).toISOString()
   const storage = createStorage(join(dir, "ui.db"), "p")
-  storage.setSetting("signoffNudge", "off")
   const seed = (slug: string, session: string, number: number) => {
     writeFileSync(join(dir, `${session}.jsonl`), line({
       type: "assistant", timestamp: at, sessionId: session, uuid: `u-${slug}`,

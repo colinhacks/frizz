@@ -303,7 +303,6 @@ function parkedOn(hints: FenceView["hints"], restedAt: string): SessionTelemetry
 
 test("a rest on `monitors:` naming an ARMED monitor is honoured; an unknown id is bumped with how to register one", async () => {
   const h = harness()
-  h.storage.setSetting("signoffNudge", "off")
   h.storage.upsertSession(row("t"))
   const id = h.arm("t", { firstRunAtMs: T0 })
   const restedAt = new Date(h.clock.ms - 60_000).toISOString()
@@ -325,7 +324,6 @@ test("a rest on `monitors:` naming an ARMED monitor is honoured; an unknown id i
 // merged — the worker told twice, in one message, that its watch had passed.
 test("a watch that passes under a rest on it sends ONE wake — no park correction beside it", async () => {
   const h = harness()
-  h.storage.setSetting("signoffNudge", "off")
   h.storage.upsertSession(row("t"))
   const id = h.arm("t", { firstRunAtMs: T0 - 60_000 })
   h.tele.set("t", parkedOn([{ kind: "command", value: id }, { kind: "status", value: "watching" }, { kind: "for", value: "6h" }], new Date(h.clock.ms - 30_000).toISOString()))
@@ -352,7 +350,6 @@ test("a watch that passes under a rest on it sends ONE wake — no park correcti
 // with it rather than being stranded behind it.
 test("a pass inside the quiet window is delivered at once, carrying what the window held", async () => {
   const h = harness({ wakeQuietWindowMs: WAKE_QUIET_WINDOW_MS })
-  h.storage.setSetting("signoffNudge", "off")
   h.storage.upsertSession(row("t"))
   h.tele.set("t", tele())
   // A wake handed over opens the thread's window…
@@ -390,7 +387,6 @@ test("a pass inside the quiet window is delivered at once, carrying what the win
 
 test("a rest on a command watch that already PASSED is told so, not that its fence is wrong", async () => {
   const h = harness()
-  h.storage.setSetting("signoffNudge", "off")
   h.storage.upsertSession(row("t"))
   const id = h.arm("t", { firstRunAtMs: T0 })
   h.storage.settleCommandWatch(id, "passed", T0)

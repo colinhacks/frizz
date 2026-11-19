@@ -205,10 +205,6 @@ function scheduler(
     last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: null, title_auto: 1,
     title: slug, state: "open", meta: null, seen_at: null, transcript_id: null,
   } as SessionRow)
-  // Frizz's built-in sign-off reminder (SOURCE 9) now fires on EVERY fenceless rest, independently of
-  // the Goal — so it would add a second delivery to every count in this file. Silenced so these stay
-  // about the Goal; the reminder has signoff-nudge.test.ts.
-  storage.setSetting("signoffNudge", "off")
   storage.setRecurringPromptBySlug(slug, { prompt: "keep going", stopHook: true, heartbeat: false, postCompaction: false, intervalMs: null, armedAt: "2026-08-02T00:00:00.000Z" })
   if (opts.lastFiredAt) storage.stampRecurringRestFired(slug, storage.getSession(slug)!.recurring_armed_at!, opts.lastFiredAt)
   const delivered: string[] = []
@@ -372,7 +368,6 @@ function heartbeatScheduler(
     last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: null, title_auto: 1,
     title: slug, state: "open", meta: null, seen_at: null, transcript_id: null,
   } as SessionRow)
-  storage.setSetting("signoffNudge", "off")
   storage.setRecurringPromptBySlug(slug, { prompt: "check the deploy", stopHook: false, heartbeat: true, postCompaction: false, intervalMs: opts.intervalMs ?? 3_600_000, armedAt: opts.armedAt ?? "2026-08-02T00:00:00.000Z" })
   if (opts.lastFiredAt) storage.stampRecurringScheduleFired(slug, storage.getSession(slug)!.recurring_armed_at!, opts.lastFiredAt)
   const delivered: string[] = []
@@ -568,7 +563,6 @@ function compactScheduler(
     last_read_at: null, unread: 0, exited: 0, archived: 0, rested_at: null, title_auto: 1,
     title: slug, state: "open", meta: null, seen_at: null, transcript_id: null,
   } as SessionRow)
-  storage.setSetting("signoffNudge", "off")
   storage.setRecurringPromptBySlug(slug, {
     prompt: "Re-read .frizz/threads/sid/plan.md before continuing",
     stopHook: false, heartbeat: false, postCompaction: true,
@@ -917,7 +911,7 @@ test("an auth-faulted thread is never re-prompted — the Goal cannot fix a sign
 // AND THE GENERAL CASE OF IT (PR #26). A failed turn of ANY kind — a context-window 400, a 500, a dropped
 // connection — is written as a synthetic assistant record, so it advances the rest instant: a fresh
 // `stopHookFenceId` per failure, which is exactly what defeats the per-rest dedupe. This trigger has NO
-// cap of its own (the sign-off reminder's SIGNOFF_NUDGE_MAX has no counterpart here), so before the
+// cap of its own, so before the
 // guard a thread with an armed Goal whose every turn failed was bumped once per tick indefinitely — and
 // on a context-window 400 each bump is what keeps the conversation over the limit. The control below is
 // the same thread WITHOUT the fault: the advancing rest instant must draw a bump, or this assertion is

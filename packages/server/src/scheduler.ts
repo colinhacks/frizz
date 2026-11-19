@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, signOffCorrection, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_STOPPED_BY_HUMAN_REASON, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, GithubWatchStatus, shortCommit, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, signoffNudgeMessage, type SignoffLiveOps, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
+import { awaitingNeedsInput, needsInputRequired, DONE_FENCE_CORRECTION_LEAD, doneOverOpenQuestionsBody, signOffCorrection, type DoneBlockingQuestion, questionFencesLive, PARK_CORRECTION_NAMES_LEAD, PARK_CORRECTION_NEEDS_INPUT_LEAD, PARK_CORRECTION_RETIRED_LEAD, interruptEndedSubAgentsMessage, type InterruptEndedSubAgent, parkExpiredWakeMessage, parkFinishedWakeMessage, prWatchExpiredWakeMessage, ownWatchExpiredWakeMessage, commandWatchPassedWakeMessage, commandWatchExpiredWakeMessage, commandWatchCancelledWakeMessage, monitorEventWakeMessage, monitorExitedWakeMessage, monitorExpiredWakeMessage, monitorCancelledWakeMessage, monitorLabel, MONITOR_FLOOD_MAX_EVENTS, MONITOR_FLOOD_REASON, MONITOR_FLOOD_WINDOW_MS, MONITOR_STOPPED_BY_HUMAN_REASON, MONITOR_REGISTRATION_WINDOW_MS, type CommandWatchRun, questionAnswerMessage, questionsCancelledWakeMessage, type QuestionAnswer, type QuestionDismissal, RETIRED_AWAITING_REPLACEMENT, retiredAwaitingKindsIn, compactionPromptMessage, limitResumeSteer, limitModelSwitchSteer, formatGithubWakeSteer, GithubWakeItem, GithubWatchStatus, shortCommit, type GithubIssueStatus, prWatchWakeMessage, prWatchGoneWakeMessage, issueWatchWakeMessage, shellDoneMessage, restPromptMessage, schedulePromptMessage, timerPromptMessage, liveOpsLines, mergedWakeMessage, type OffMergePath, wakeDeliveryToken, wakeTimeHeader, stripWakeTimeHeader, type QuotaSnapshot } from "@frizz/shared"
 import { takeLoopTurn } from "./loop-turns.ts"
 import { readSignOffFaults } from "./signoff-completeness.ts"
 import { autonomousGoalOf, childOfRow, questionFenceCorrection, QUESTION_FAULTS_OUTLIVE_HUMAN_FROM, QUESTION_FENCES_REGISTER_FROM, standingQuestions, syncQuestionFences, type QuestionFaultBook } from "./question-fences.ts"
@@ -656,8 +656,8 @@ type RecurringRow = Pick<
 // could just drop the AutonomousMode toggle… If somebody enables the stop hook goal, then that kind of
 // implies to me that they don't really want to answer any more questions." Arming a Goal IS the consent
 // the switch used to collect, so collecting it twice only bought a way to get it wrong — and the hold's
-// original job (a half-finished thread resting silently, with nobody to bring it back) belongs to the
-// built-in sign-off nudge now (SOURCE 9), which fires on exactly the rests that need it.
+// original job (a half-finished thread resting silently, with nobody to bring it back) is the Goal's
+// own: arming one is asking to be prompted at every rest.
 //
 // WHAT STILL STOPS A BUMP is `restMessageIsSignedOff` below, and it is about the FENCE rather than about
 // questions: the stop hook asks "you stopped — is there more?", and a ```done or an ```awaiting on a wait
@@ -863,7 +863,7 @@ function armedCommandWatchIdsOf(storage: Storage, slug: string): ReadonlySet<str
   return new Set(storage.listCommandWatches(slug, { armedOnly: true }).map((w) => w.id))
 }
 
-/** The same set as the nudge and the corrections print it: the id, and the command as its label. */
+/** The same set the corrections print: the id, and the command as its label. */
 function commandWatchOps(storage: Storage, slug: string): { id: string; label: string }[] {
   return storage.listCommandWatches(slug, { armedOnly: true })
     .map((w) => ({ id: w.id, label: w.kind === "monitor" ? `persistent: ${monitorLabel(w)}` : w.command.trim().replace(/\s+/g, " ").slice(0, 80) }))
@@ -1003,8 +1003,8 @@ const TIMER_HINT_PREFIX = "timer:"
 
 // Every delivery-id namespace here is safe against its neighbours: no prefix minted below is a prefix
 // of another, and a source that mints an id outside all of them is superseded by `deliveryContext`'s
-// tail rather than delivered. (A registered watcher is scheduler SOURCE 8; the built-in sign-off nudge
-// is SOURCE 9, and it carries its own consecutive cap.)
+// tail rather than delivered. (A registered watcher is scheduler SOURCE 8; SOURCE 9, the retired sign-off
+// reminder, keeps only its prefix, so an old row of it is superseded.)
 /** A finished background shell's delivery namespace. The shell's own launch tool_use id is the whole
  *  key, so one shell can wake its thread exactly once, ever — no counter, no cursor, no way to loop. */
 const SHELL_FENCE_PREFIX = "shell"
@@ -1171,9 +1171,9 @@ function concurrencyGate(limit: number): <T>(fn: () => Promise<T>) => Promise<T>
   }
 }
 
+/** The retired sign-off reminder's delivery namespace (SOURCE 9), kept so a reminder an older server left
+ *  in the outbox is recognised and superseded rather than read as an awaiting park. */
 const SIGNOFF_FENCE_PREFIX = "signoff"
-const SIGNOFF_HINT_KEY = "signoff:rest"
-const SIGNOFF_NUDGE_MAX = 2
 /** SOURCE 12's cap on CORRECTIVE bumps (nameless / retired / dead). Three, not two: there are three
  *  distinct corrections and a worker may legitimately need to be told about more than one. `expired` is
  *  uncounted — re-parking on still-running work is unlimited by explicit decision (2026-08-15).
@@ -1186,13 +1186,6 @@ const PARK_BUMP_MAX = 3
  *  says the wait is over itself. Over 14 days here 99 of the 110 corrections naming a sub-agent landed
  *  within this long of the child's own notice, 58 of them within 5s. */
 const OWN_COMPLETION_NOTICE_GRACE_MS = 60_000
-/** The kill switch. Not in the UI — this lands on every live thread at once, so there has to be a way
- *  to stop it that is not a code change. Absent (the default) means ON. */
-const SIGNOFF_NUDGE_SETTING = "signoffNudge"
-
-function signoffFenceId(restedAt: string): string {
-  return `${SIGNOFF_FENCE_PREFIX}:${restedAt}`
-}
 function isSignoffFenceId(fenceId: string): boolean {
   return fenceId.startsWith(`${SIGNOFF_FENCE_PREFIX}:`)
 }
@@ -1767,15 +1760,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     // This branch is load-bearing in a way the others are not: without it the fallthrough below reads
     // every watcher delivery as an awaiting fence, finds none, and supersedes it — the watcher enqueues
     // on every tick and never delivers, which looks exactly like a watcher that does not work.
-    // The built-in nudge is bound to the exact rest it was queued for, and to that rest still being
-    // fenceless. A worker that signed off between enqueue and delivery must not then be told how to
-    // sign off — which is both useless and, arriving after a ```done, actively confusing.
-    if (isSignoffFenceId(item.fenceId)) {
-      if (tele.authFault || tele.apiFault) return "superseded"
-      if (item.fenceId !== signoffFenceId(tele.lastAssistantAt ?? "")) return "superseded"
-      if (tele.lastFence || tele.pendingQuestion) return "superseded"
-      return tele.turn === "idle" ? "current-idle" : "current-busy"
-    }
+    // The sign-off reminder is retired (SOURCE 9): one an older server queued is never sent.
+    if (isSignoffFenceId(item.fenceId)) return "superseded"
     // A report repair is bound to a report that is STILL missing from the model's context. If the
     // runtime delivered it late — between the tick that queued this repair and the tick that would
     // send it — the fold drops it out of `droppedReports` and the repair reads as superseded here.
@@ -2236,225 +2222,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   // Like the snooze pass, an alarm that came due while frizz was DOWN still fires when it comes back —
   // the row is its own durable registration, and "you asked to be woken at 15:00" does not stop being
   // true because the server restarted at 14:59. Unlike the snooze pass, it does not wait for rest.
-  // ---- SOURCE 9: THE BUILT-IN SIGN-OFF NUDGE ---------------------------------------------------
-  // Frizz's own stop hook. Always on, not disableable per-thread, and invisible in the UI — orthogonal
-  // to the operator's Goal, which keeps its own three triggers.
-  //
-  // THE PER-THREAD OFF SWITCH WAS TRIED AND REVERTED (2026-08-13 → 2026-08-14): the Goal's then-existing
-  // "Autonomous mode" silenced this for a day, on the argument that a thread told to keep going should not
-  // also be handed a menu of ways to stop. What killed it is that the reminder no longer IS that menu — it
-  // opens by sending a half-finished thread back to the work — and that suppressing it took the
-  // ```awaiting park with it, which nothing else on that thread's deliveries names. That switch is gone
-  // entirely now (2026-08-16), so re-deriving the exemption would silence this on EVERY thread with a Goal.
-  // The maintainer's 2026-08-12 call stands: keep it separate from the Goal, enabled all the time. (Until
-  // 2026-08-28 that meant paying one extra transcript record per rest, both going out together; the
-  // record turned out to arrive stale and draw a second ```done. Now the GOAL stands down on the rest
-  // this takes — evalRestPrompts — and this never stands down for the Goal.)
-  //
-  // It fires on a rest that carried NO FENCE AT ALL, and its message is the sign-off protocol itself.
-  // The rules therefore arrive at the one moment they are about to be used, rather than 200k tokens
-  // earlier in a system prompt the agent stopped attending to (maintainer 2026-08-11: "the agent seems
-  // to often forget about this stuff when it's added to the additional system prompt anyway"). A thread
-  // that signs off correctly never sees it, so the mechanism costs nothing except on exactly the rests
-  // that were about to produce an item nobody can triage.
-  //
-  // THE CAP IS CONSECUTIVE AND IT IS NOT OPTIONAL. An agent that rests bare, is told how to sign off,
-  // and rests bare again would otherwise be told forever — a nag loop frizz itself generates. After
-  // SIGNOFF_NUDGE_MAX in a row with no fence appearing, it gives up and the item sits in the queue as a
-  // plain bare rest, which is exactly today's behaviour.
-  //
-  // ONLY A FENCE GIVES THE ALLOWANCE BACK. This used to say a new word from the HUMAN did too, on the
-  // reasoning that their message is a new task and the count was about the old one — but that was written
-  // before the delivery-id fix below, and the code has never done it. It cannot: frizz's own nudge lands
-  // as a USER record, so "the human spoke" is a condition the nudge satisfies by nudging, which is the
-  // 22-deliveries-in-four-minutes loop that fix exists to close. The consequence is worth stating plainly
-  // rather than leaving as a footnote — on a thread with a Goal armed, two bare rests exhaust this
-  // permanently, and everything after is the Goal alone.
-  //
-  // TOP-LEVEL THREADS ONLY — a sub-agent's final message is a report to its parent, not a queue item.
-  // That falls out of this pass reading session rows, which sub-agents do not have.
-  function evalSignoffNudges(nowMs: number): void {
-    if (deps.storage.getSetting(SIGNOFF_NUDGE_SETTING) === "off") return
-    for (const row of deps.storage.allSessions()) {
-      if (row.state === "archived" || row.archived === 1) continue
-      const tele = deps.tailer.get(row.slug)
-      if (!tele || tele.turn !== "idle") continue
-      // THE AGENT MUST HAVE SPOKEN LAST, and this is the load-bearing guard rather than a nicety.
-      //
-      // Frizz's own delivery lands in the transcript as a USER record, so it advances `lastActivityAt`
-      // AND `lastUserAt`. Keying on either meant the nudge minted a fresh delivery id for a rest that
-      // had not happened, and reset its own consecutive counter with its own message: measured on a real
-      // stack, 22 deliveries in four minutes to one thread. The cap could not save it, because the thing
-      // being counted was resetting the count.
-      //
-      // `lastAssistantAt > lastUserAt` is the honest question — did the AGENT end the exchange? — and it
-      // is immune to anything frizz says, because frizz only ever speaks as the user. A thread whose last
-      // word is frizz's own nudge is a thread that has not answered it yet.
-      const spokeAt = tele.lastAssistantAt
-      if (!spokeAt) continue
-      if (tele.lastUserAt && Date.parse(tele.lastUserAt) >= Date.parse(spokeAt)) continue
-      // Same trap as the stop hook's: a signed-out provider answers instantly, so the failure LOOKS like
-      // a fenceless rest and satisfies every guard above. Teaching it to sign off cannot help — it never
-      // reached the model.
-      if (tele.authFault) continue
-      // AND THE GENERAL CASE OF IT, which the auth guard above is one instance of. A FAILED TURN IS NOT A
-      // REST: a synthetic API-error record is written as an assistant record, so it advances the rest
-      // instant and satisfies every guard above, and a thread whose every turn fails therefore presents
-      // as an agent that keeps resting without a fence. The nudge cannot be answered — nothing the agent
-      // writes reaches the model — so it is pure burn, and on the error this matters most for it is
-      // WORSE than pure burn: a 400 for a conversation that has outgrown the model's context window is
-      // made permanent by anything that appends to the conversation, which is exactly what the nudge
-      // does. Observed unbounded in the field before the cap was fixed to bind at all; both fixes are
-      // needed, because the cap alone still spends two deliveries on a thread that can never use them.
-      if (tele.apiFault) continue
-      // A PERSON'S STOP IS NOT A REST EITHER. The human ended the turn, so the worker never had the chance
-      // to sign off, and the reminder would tell it off for the human's act — then wake it into another
-      // turn, the opposite of what Stop asked for. Only a backend whose Stop ends the turn and nothing
-      // else writes the mark (OpenCode's); Claude's and Codex's rests are untouched by it.
-      if (tele.operatorStopped) continue
-      // ANY fence means the thread already said where it stands — including `awaiting`, which is still
-      // a legitimate sign-off until the registry replaces it. Nothing to teach, AND the allowance comes
-      // back: signing off is the only event that proves the nudge worked, and the only one frizz cannot
-      // cause by nudging. (Guarded on a non-zero count in storage, so this is a transition, not a write
-      // on every tick.)
-      //
-      // A REGISTRATION SAYS IT JUST AS LOUDLY, and since 2026-08-27 it is how a worker is meant to say
-      // it: `done` records a row, `ask` records a row, `watch` records a row, and none of the three can
-      // write the tailer's `lastFence`. Reading only the fence would nudge a worker for not writing a
-      // sentence it was told to replace with a tool call — which is the protocol reminder teaching the
-      // OLD protocol, on exactly the threads that adopted the new one.
-      //
-      // AND AN ANSWER ON ITS WAY COUNTS TOO, which is the case this guard read wrong for a day. Every
-      // registration test above opens the INSTANT the human answers — the row leaves `open` and nothing
-      // has replaced it yet — so the very next tick nudged a worker for resting without a fence while its
-      // answer was still in the outbox. The transcript then read: the worker's rest, "FRIZZ ASKED FOR A
-      // SIGN-OFF", then the human's answer (maintainer 2026-08-27, on exactly that sequence). It also
-      // spent one of the two nudges this thread will ever get on a thread that had done nothing wrong.
-      //
-      // A CANCELLATION ON ITS WAY IS THE SAME CASE FROM THE OTHER DIRECTION (2026-09-02): arming a Goal
-      // dismisses the open questions wholesale, which turned a rest that had signed off WITH a question
-      // into what this pass reads as a bare one — so the nudge took the rest ("you rested without a
-      // fence", to a worker whose question frizz itself had just cancelled) and the Goal stood down for
-      // it. The armed-rest flag scopes it to exactly the threads whose dismissals wake on their own.
-      //
-      // EXCEPT A WATCH, UNDER THE ANSWER-REQUIRED CONTRACT (2026-10-01). A registration says WHEN the
-      // worker wakes; it cannot say where the rest sits meanwhile, and on a thread dispatched at or after
-      // NEEDS_INPUT_REQUIRED_AT that answer (`status:`) lives only in the fence. So a rest behind a `watch`
-      // with no fence is a bare rest there — it queues (board.needsInputQueues), and this teaches the
-      // fence that would have kept it out.
-      //
-      // AN OPEN QUESTION SIGNS OFF ONLY THE REST IT STANDS AT (2026-10-05, narrowed 2026-10-13): the rest
-      // that asked it, or a later one whose message references it with an `id:` fence (standingQuestions).
-      // An older question nobody referenced says nothing about THIS rest — it stays answerable where it was
-      // asked — so a rest that says nothing else is a bare one. From 2026-10-05 to 2026-10-13 such a rest
-      // drew a carried-question nudge demanding the worker name or withdraw every old question; the
-      // maintainer dropped that rule with the ```question fence ("questions may get registered and never
-      // answered, and then they just sort of fade away. I think it's probably fine"), so this is the plain
-      // sign-off nudge like any other bare rest.
-      //
-      // A FENCE THAT COULD NOT REGISTER is answered by its own correction (evalQuestionFences, which runs
-      // first in the tick), not by this: telling the worker it signed off with nothing while its question
-      // is being corrected would be two contradictory messages about one rest.
-      //
-      // …AND BY NOTHING ONCE THAT CORRECTION'S CAP IS SPENT (2026-10-13). This used to stand down only for
-      // a correction that was actually in the outbox, so the rest the cap silenced fell through to here:
-      // a worker that kept writing the same broken ```question fence got three corrections and then this
-      // reminder twice, opening "You rested without a fence" to a worker whose message was a fence. The
-      // sentence was false, and the two extra wakes were the cap being spent a second time under another
-      // name. Keyed on the FAULT (questionFaultRests, rebuilt by evalQuestionFences just before this pass,
-      // whether or not it could still correct), exactly as SOURCE 12's reset is. Saying something true
-      // instead was the alternative, and it is a fourth and fifth correction: the worker has been told
-      // three times what is wrong with that fence. The thread stays where the board already has it, a
-      // rest with its refused fence drawn as the code block it is, for the human to read. (Below the
-      // sign-off test on purpose: a rest that ALSO carries a fence Frizz honours is signed off as before.)
-      const needsInput = needsInputRequired(row.spawned_at)
-      const questionRows = deps.storage.listThreadQuestions(row.slug)
-      const standing = standingQuestions(questionRows, tele, deps.questionFaults?.of(row.slug))
-      if (outbox.get(wakeDeliveryId(row.slug, row.session_id, parkFenceId(QUESTION_FENCE_CAUSE, spokeAt)))) continue
-      // SOURCE 18 took a bare rest that left out an open question: its correction already says what to write.
-      if (signOffFaultRests.get(row.slug) === spokeAt) continue
-      if (
-        tele.lastFence ||
-        tele.pendingQuestion ||
-        registeredDoneFence(deps.storage.getThreadDone(row.slug), tele.lastUserAt) !== undefined ||
-        standing.length > 0 ||
-        answersInFlight(questionRows, answersReceivedAt(tele), row.recurring_on_rest === 1 && Boolean(row.recurring_prompt?.trim())) !== undefined ||
-        (!needsInput && deps.storage.listThreadWatches(row.slug, { armedOnly: true }).length > 0)
-      ) {
-        if ((row.signoff_nudges ?? 0) > 0) deps.storage.resetSignoffNudges(row.slug)
-        continue
-      }
-      // The rest's ```question fence failed and its correction is capped: nothing to say (see above).
-      if (questionFaultRests.get(row.slug) === spokeAt) continue
-      // A native ask is a question by another route: the thread is frozen on a modal the human has to
-      // answer, and telling it to write a ```question fence is telling it to do what it already did.
-      if (tele.pendingAsk || tele.permPrompt) continue
-      // The sentinel still ends the arrangement for sessions that predate the fence (see `saidDone`).
-      if (tele.lastAssistantAllDone) continue
-      // IT DOES NOT YIELD TO THE GOAL, and that is a deliberate reversal (maintainer 2026-08-12: "we
-      // should keep it separate from goal… It should just be enabled all the time"). The reminder used
-      // to ride the Goal's at-rest trailer so a rest produced one delivery instead of two — but that
-      // made the protocol a thing a thread only learned if an operator had armed a Goal, and put a copy
-      // of it in the trailer, which is its own kind of repetition. It is frizz's own hook now: identical
-      // on every thread, whatever the operator has configured.
-      // THE GOAL YIELDS TO IT INSTEAD (2026-08-28). "The second delivery costs one transcript record"
-      // was the accounting here until then, and it was wrong: the two went out in one tick, 5 ms apart,
-      // the runtime queued the Goal's turn first, and this message — "you rested without a fence" —
-      // reached a worker that had just answered the Goal WITH one. It fenced again; two Done cards. The
-      // supersession check in `deliveryContext` exists for exactly that and could not fire, because it
-      // ran at send. So this pass mints first in the tick and SOURCE 5 declines the rest it took.
-      // AND NO GOAL-SHAPED EXEMPTION HERE — see the SOURCE 9 header for the day it had one.
-      // THE CONSECUTIVE CAP. It counts fenceless rests and is cleared ONLY by a fence (above) — never by
-      // a user record, because frizz's own delivery is one, and anchoring on that let the nudge reset its
-      // own counter with its own message.
-      if ((row.signoff_nudges ?? 0) >= SIGNOFF_NUDGE_MAX) continue
-      const fenceId = signoffFenceId(spokeAt)
-      const deliveryId = wakeDeliveryId(row.slug, row.session_id, fenceId)
-      // Bound to the AGENT'S OWN last word, so one nudge per rest falls out of delivery-id uniqueness.
-      // Deliberately NOT `lastActivityAt`, which frizz's own delivery advances — see the guard above.
-      if (outbox.get(deliveryId)) continue
-      // THIS THREAD's live ops and their ids, so the agent can write a correct fence without going
-      // looking for an id it cannot see. Shells are named by `taskId` — the handle the runtime actually
-      // showed the worker — because that is the string it will naturally reach for, and the one the
-      // fence's own integrity check matches on.
-      const ops: SignoffLiveOps = {
-        shells: (tele.bgShells ?? []).filter((sh) => sh.state === "running").map((sh) => ({ id: sh.taskId ?? sh.id, label: sh.label })),
-        subAgents: (tele.subAgents ?? []).filter((a) => a.state === "running").map((a) => ({ id: a.taskId ?? a.id, label: a.label })),
-        // The other two registries, so the nudge lists EVERY kind an awaiting fence can name rather
-        // than the two the fold happens to know about — a worker told about half its work writes half
-        // a fence, and the half it left out is not what gets it bumped.
-        timers: deps.storage.listThreadTimers(row.slug, { armedOnly: true })
-          .map((t) => ({ id: t.id, label: t.prompt.trim().replace(/\s+/g, " ").slice(0, 80) })),
-        prs: deps.storage.listPrWatches(row.slug, { armedOnly: true }).filter((w) => w.kind !== "issue")
-          .map((w) => ({ id: `${w.owner}/${w.repo}#${w.number}`, label: `${w.owner}/${w.repo}#${w.number}` })),
-        issues: deps.storage.listPrWatches(row.slug, { armedOnly: true }).filter((w) => w.kind === "issue")
-          .map((w) => ({ id: `${w.owner}/${w.repo}#${w.number}`, label: `${w.owner}/${w.repo}#${w.number}` })),
-        commands: commandWatchOps(deps.storage, row.slug),
-      }
-      const item = outbox.enqueue({
-        id: deliveryId,
-        slug: row.slug,
-        sessionId: row.session_id,
-        fenceId,
-        hintKey: SIGNOFF_HINT_KEY,
-        message: withClock(signoffNudgeMessage(ops, needsInput, tele.strayFence === true), spokeAt),
-        reason: "rested without signing off",
-      }, nowMs).delivery
-      log(`waker: queued ${row.slug} — ${item.reason}`)
-      checkpoint("after-enqueue", item)
-    }
-  }
-
-  // Count a nudge against the consecutive cap. Called at SEND — the only path a wake to a live runtime
-  // takes — and again when the same item is confirmed later; the storage write is idempotent per
-  // anchor, so the second call for one item is a no-op rather than a double count.
-  function settleSignoffNudge(item: WakeDelivery): void {
-    if (!isSignoffFenceId(item.fenceId)) return
-    // Anchored on the REST this nudge was for (the agent's own last word, which is the fence id), so a
-    // retry of the same delivery cannot count twice while a genuinely new fenceless rest does.
-    deps.storage.countSignoffNudge(item.slug, item.fenceId)
-  }
-
+  // ---- SOURCE 9 IS RETIRED (2026-11-19): A REST WITH NO SIGN-OFF IS A REPLY ---------------------------
+  // From 2026-08-12 this pass told a worker that rested with no fence and no registration how to sign
+  // off, twice at most. It existed to catch a worker that stopped half-way, and a measurement on the
+  // maintainer's Mac found it did not: of 129 reminders, none sent a worker back to unfinished work, 51
+  // were delivered into a turn the human had just started (a typed message ended the rest's question
+  // through the queue's `restFromAt` before the user record moved `lastUserAt`, the only reply this pass
+  // could see), and the rest made a worker restate a finished answer as a ```done — a chat answer
+  // included, which some projects forbid. The maintainer chose to accept the rest as what it is: the
+  // worker's reply, waiting on the human (2026-11-19, thread "Whether a worker may rest without a
+  // sign-off"). The rest queues as it always did, its message is the handoff, and the residual card says
+  // the thread is waiting on a reply (web RestedCard). A thread with a Goal armed is still prompted at
+  // every rest by the Goal (SOURCE 5). A reminder left in the outbox by an older server is superseded
+  // unsent (`deliveryContext`).
 
   // ---- THE HUMAN TYPING HANDS THE CORRECTIVE ALLOWANCE BACK (2026-10-13) ----------------------------
   //
@@ -2486,14 +2266,6 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   // AN ANCHOR WRITTEN BEFORE THIS DATE IS A FENCE ID, `park:<cause>:<rest>`, not an instant: the rest is
   // read out of it, so a thread already stuck at the cap comes back when its human has typed since.
   // Anything else an anchor might hold parses to no instant and simply never matches.
-  //
-  // THE SIGN-OFF REMINDER'S CAP DOES NOT DO THIS, AND THE DIFFERENCE IS DELIBERATE — do not make either
-  // match the other. SIGNOFF_NUDGE_MAX comes back only when the thread signs off (see "ONLY A FENCE
-  // GIVES THE ALLOWANCE BACK" in the SOURCE 9 header, and the test that pins it). That comment names its
-  // reason: the human's word was the original intent and could not be honoured, because Frizz's own
-  // nudge lands as a user record and "the human spoke" was a condition the nudge satisfied by nudging.
-  // It was written before `restFromAt` could tell the two apart. Whether the reminder's cap should now
-  // follow is a decision about that cap, recorded there and not reopened here.
   function evalParkBumpRelease(): void {
     for (const row of deps.storage.allSessions()) {
       if ((row.park_bumps ?? 0) <= 0 || !row.park_bump_anchor) continue
@@ -2578,7 +2350,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       })
       if (sync.registered.length > 0) log(`waker: ${row.slug} registered question(s) ${sync.registered.map((q) => q.handle).join(", ")}`)
       if (sync.faults.length === 0 || tele.turn !== "idle") continue
-      // The agent must have spoken last, and the turn must have reached the model — SOURCE 9's guards.
+      // The agent must have spoken last, and the turn must have reached the model.
       const spokeAt = tele.lastAssistantAt
       if (!spokeAt) continue
       if (tele.lastUserAt && Date.parse(spokeAt) <= Date.parse(tele.lastUserAt)) continue
@@ -2678,8 +2450,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   // not a call the worker made by signing off. The Goal's own rest prompt already declines a rest that
   // said done; where it has been re-armed since, it stands down for this correction (evalRestPrompts).
   //
-  // ONE VOICE PER REST. The sign-off reminder (SOURCE 9) never fires on a rest that carries a fence, and
-  // park integrity (SOURCE 12) reads only an ```awaiting fence, so neither can share this rest. A
+  // ONE VOICE PER REST. Park integrity (SOURCE 12) reads only an ```awaiting fence, so it cannot share
+  // this rest. A
   // ```question fence that could not register (SOURCE 14) can: that correction runs first and carries this
   // one as its second paragraph, and this pass stands down for the rest it took. An ANSWER on its way
   // takes the rest too — its wake ends the rest by itself, and the worker's next sign-off is judged then.
@@ -2747,7 +2519,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (row.state === "archived" || row.archived === 1) continue
       const tele = deps.tailer.get(row.slug)
       if (!tele || tele.turn !== "idle" || tele.lastFence?.kind !== "done") continue
-      // The agent must have spoken last, and the turn must have reached the model — SOURCE 9's guards.
+      // The agent must have spoken last, and the turn must have reached the model.
       const spokeAt = tele.lastAssistantAt
       if (!spokeAt) continue
       if (tele.lastUserAt && Date.parse(tele.lastUserAt) >= Date.parse(spokeAt)) continue
@@ -2799,7 +2571,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (row.state === "archived" || row.archived === 1) continue
       const tele = deps.tailer.get(row.slug)
       if (!tele || tele.turn !== "idle") continue
-      // The agent must have spoken last, and the turn must have reached the model — SOURCE 9's guards.
+      // The agent must have spoken last, and the turn must have reached the model.
       const spokeAt = tele.lastAssistantAt
       if (!spokeAt || !(Date.parse(spokeAt) >= signOffRulesFromMs)) continue
       if (tele.lastUserAt && Date.parse(tele.lastUserAt) >= Date.parse(spokeAt)) continue
@@ -2856,9 +2628,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const tele = deps.tailer.get(row.slug)
       if (!tele || tele.turn !== "idle") continue
       if (tele.lastFence?.kind !== "awaiting") continue
-      // The agent must have spoken last — same guard as the sign-off nudge, and for the same measured
-      // reason: frizz's own delivery lands as a USER record, so keying on activity would let this reset
-      // its own dedupe and bump in a loop.
+      // The agent must have spoken last, for a measured reason: frizz's own delivery lands as a USER
+      // record, so keying on activity would let this reset its own dedupe and bump in a loop.
       const spokeAt = tele.lastAssistantAt
       if (!spokeAt) continue
       if (tele.lastUserAt && Date.parse(tele.lastUserAt) >= Date.parse(spokeAt)) continue
@@ -2953,7 +2724,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // `steps:` NAME THE HUMAN (2026-10-03), so a fence carrying only steps is not this case: it waits on
       // the one party whose reply wakes the thread, from the queue it is already in. With no `for:` it
       // falls through the malformed-fence skip below and is simply honoured; with one, it expires.
-      // `questions:` name the human the same way (2026-10-05), and the answer is the wake.
+      // `questions:` name the human the same way (2026-10-05), and the answer is the wake. So does
+      // `status: needs_input` naming nothing (2026-11-19, AwaitingPark.reply): the worker's reply, waiting
+      // on the human's next message, the same rest as one with no fence at all.
       // CHILD THREADS: a child's `status: needs_input` names its PARENT the way `steps:` name the human — the
       // parent's reply is the wake, and SOURCE 17 hands it the handoff — so it needs nothing else named.
       const onParent = awaitingNeedsInput(tele.lastFence.hints) === true && childOfRow(deps.storage, row) !== undefined
@@ -2967,7 +2740,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // HONOURED ⇒ the corrective allowance comes back. A park frizz can actually honour is the one
       // event that proves a correction landed, and — unlike any activity signal — not one frizz can
       // cause by correcting. Guarded on a non-zero count so this is a transition, not a write on every
-      // tick, exactly as the sign-off nudge's reset is. It deliberately does NOT `continue`: an honoured
+      // tick. It deliberately does NOT `continue`: an honoured
       // park can still have run out, and that bump is owed.
       //
       // NO ANSWER (2026-10-01). A worker dispatched under the answer-required contract owes every park an
@@ -3052,8 +2825,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         checkpoint("after-enqueue", item)
         continue
       }
-      // No `for:` at all is a MALFORMED fence rather than a wrong one, and the sign-off nudge teaches the
-      // whole grammar in one message — a better teacher than a correction aimed at one line.
+      // No `for:` at all is a MALFORMED fence rather than a wrong one, and is left as it stands: the
+      // thread queues on it, and the human reads the message under it.
       if (park.forMs === null && !nameless) continue
 
       // FINISHED IS NOT THE SAME AS MISSING, and conflating them is what drove the worst churn observed.
@@ -3208,8 +2981,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           "The frontmatter is YAML: PLURAL keys, each taking a list, and your prose below the `---`.",
           "Use `frizzctl activity` to read it all back as a ready-to-paste fence.",
           "",
-          "AND IF YOU ARE NOT WAITING ON ANYTHING, you are not awaiting — you are done. End with ```done,",
-          "or ask the human in a ```question fence if you need them.",
+          "AND IF YOU ARE NOT WAITING ON ANYTHING, you are not awaiting. Finished work ends with ```done, a",
+          "decision the human owes is a ```question fence, and a reply that waits on their next message",
+          "needs no fence at all: rest on it as it stands.",
         ].join("\n")
         // THESE TWO LIVE IN @frizz/shared, beside the parsers that read them back. Same rule as
         // `limitResumeSteer`: a formatter the chat cannot parse falls through FrizzWake's legacy
@@ -3288,8 +3062,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         message: messageWithClock,
         reason: retired.length > 0 ? `awaiting fence uses retired kind(s): ${retired.join(", ")}` : nameless ? "awaiting park names nothing" : expired ? "awaiting park expired" : `awaiting park named ${dead.length} dead item(s)`,
       }, nowMs).delivery
-      // COUNTED AT ENQUEUE, not at delivery — the one place the sign-off nudge's idiom does not transfer.
-      // A nudge counts when it lands because it fires on a rest the thread is dispatchable for; a
+      // COUNTED AT ENQUEUE, not at delivery. The retired sign-off reminder counted when it landed,
+      // because it fired on a rest the thread was dispatchable for; a
       // correction is enqueued whenever a bad fence is seen, and that can outrun the delivery loop. Pinned
       // by the loop test: settling on delivery left the cap unreached and 12 unlearning rests drew 12
       // bumps, which is the runaway this exists to stop.
@@ -3666,7 +3440,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // them all: eleven went to one thread within two seconds the moment it rested (thread
       // `yeah-we-definitely-don-t-do-enough`, 2026-08-27 00:53), three of them "CI FAILED" with job
       // lists the later ones had already replaced — the same stale-second-wake shape as the Goal after
-      // the sign-off nudge (evalRestPrompts). A merge or close supersedes the waiting report outright,
+      // the retired sign-off reminder (evalRestPrompts). A merge or close supersedes the waiting report outright,
       // below, because a worker that reads "CI failed" and then "merged" back to back starts fixing a
       // PR that is gone.
       //
@@ -4919,8 +4693,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // has not done can change the outcome, so re-prompting is pure burn: the thread already cards its
       // auth fault and the sign-in recovery in the queue.
       if (tele.authFault) continue
-      // AND EVERY OTHER FAILED TURN, for the same reason — and here it matters MORE than for the sign-off
-      // reminder, because this trigger has no cap of its own. A synthetic API-error record of any kind
+      // AND EVERY OTHER FAILED TURN, for the same reason — and here it matters MORE than it did for the
+      // retired sign-off reminder, because this trigger has no cap of its own. A synthetic API-error record of any kind
       // (a 400 for a conversation that has outgrown the context window, a 500, a dropped connection) is
       // an assistant record, so it advances `lastAssistantAt`: a fresh rest instant, a fresh
       // `stopHookFenceId`, and the per-rest dedupe below never fires. Without this guard a thread with
@@ -4948,33 +4722,18 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // A SETTLEMENT WAKE OWNS THIS REST (2026-09-02). An answer the human just gave, or the questions
       // this very Goal's arming cancelled, is already on its way through evalQuestionAnswers — a wake
       // that ends the rest by itself, and whose message is the news. The Goal firing beside it is the
-      // two-deliveries-in-one-tick shape the reminder hold below exists for ("Redundant Dones"), so it
-      // stands down the same way and fires on the first rest the worker takes AFTER hearing the news.
+      // two-deliveries-in-one-tick shape that once drew two Done cards for one sign-off ("Redundant
+      // Dones", the retired sign-off reminder beside this Goal, 2026-08-28), so it stands down and fires on the first rest the worker takes AFTER hearing the news.
       // The flag may be hard true: this pass only runs for rows whose armed rest Goal is exactly the
       // gate evalQuestionAnswers wakes dismissal-only settlements on. Bounded like the answer card is —
       // the wake landing advances `lastUserAt` past the settlement, which both spends this hold and
       // closes the rest above. A wake the worker took MID-TURN leaves no user record, so the hold reads
       // answersReceivedAt: on `lastUserAt` alone it never spent, and the Goal never fired again.
       if (answersInFlight(deps.storage.listThreadQuestions(row.slug), answersReceivedAt(tele), true) !== undefined) continue
-      // THE REMINDER TOOK THIS REST (2026-08-28). SOURCE 9 mints before this pass runs, and a rest it
-      // claimed gets no Goal on top. The two used to go out in the same tick, 5 ms apart; the runtime
-      // queued the second behind the first's turn, so a worker that answered the Goal with a ```done
-      // fence then read "you rested without a fence" and fenced again — two Done cards for one sign-off
-      // (thread `wrong-agent-id-re-fencing`, maintainer: "Redundant Dones"). The reminder's own
-      // supersession check in `deliveryContext` could not catch it: it ran at send, before any reply
-      // existed. The reminder already opens by sending a half-finished thread back to the work, so the
-      // operator's words lose nothing on that rest; they reach the worker on the first bare rest the
-      // reminder does not take (its cap spent, or the setting off). A DELIVERED reminder holds this too,
-      // which is what makes it per-rest rather than per-tick — in production its record closes the rest
-      // anyway (`lastUserAt` moves past `restedAt`, above). Superseded means the worker moved on and
-      // exhausted means the runtime could not be reached; the Goal for that rest is dead or doomed alike,
-      // so neither holds it.
-      const reminder = outbox.get(wakeDeliveryId(row.slug, row.session_id, signoffFenceId(restedAt)))
-      if (reminder && reminder.state !== "superseded" && reminder.state !== "exhausted") continue
       // …AND SO DID A ```question FENCE'S CORRECTION (SOURCE 14, 2026-10-13), for the same reason. On a
       // Goal thread every non-secret question is refused with "decide it yourself and proceed", so a rest
       // that asked one drew that correction AND this prompt, handed over together as "Frizz held 2 wakes"
-      // — two voices for one rest, the shape the reminder hold above exists to prevent and the one an
+      // — two voices for one rest, the shape the settlement hold above exists to prevent and the one an
       // ```awaiting fence's correction already holds the Goal for (restMessageIsSignedOff). The correction
       // is the voice that says what went wrong; the Goal speaks at the worker's next rest.
       const questionCorrection = outbox.get(wakeDeliveryId(row.slug, row.session_id, parkFenceId(QUESTION_FENCE_CAUSE, restedAt)))
@@ -5122,7 +4881,6 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
             settleCompactPrompt(item)
             settleTimer(item)
             settleQuestionAnswers(item)
-            settleSignoffNudge(item)
             log(`waker: delivered ${item.slug} — ${item.reason}${item.attempts > 1 ? ` (on attempt ${item.attempts})` : ""}`)
           }
           continue
@@ -5398,15 +5156,6 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         if (outbox.markSent(item.id, deliveryOwner, sentAt, sentAt + confirmGraceMs)) {
           // The same stamp on every companion — it is what confirmFrame recognises the frame by.
           for (const d of companions) outbox.markSent(d.id, deliveryOwner, sentAt, sentAt + confirmGraceMs)
-          // THE NUDGE'S CAP IS SPENT AT SEND, not at confirmation, and this branch is why the cap
-          // existed on paper only. Every wake to a live runtime leaves here, so the settle below was
-          // unreachable in production — and the confirm path this hands to cannot make up for it,
-          // because `deliveryContext` reads a signoff item as SUPERSEDED the instant the agent's next
-          // assistant record lands (an API-error record is one), and the superseded branch counts
-          // nothing. `signoff_nudges` therefore stayed 0 forever while SIGNOFF_NUDGE_MAX was 2.
-          // Counting here is also the honest anchor: the tokens are spent when the message is sent,
-          // and confirmation is exactly what a thread failing every turn can never supply.
-          for (const d of frame) settleSignoffNudge(d)
           log(`waker: sent ${item.slug} — ${item.reason}; confirming within ${Math.round(confirmGraceMs / 1000)}s`)
           checkpoint("after-delivery", item)
           continue
@@ -5426,10 +5175,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (!acked.includes(item)) {
         log(`waker: delivery acknowledgement lost ownership for ${item.slug}; preserving the authoritative terminal state`)
       }
-      for (const d of acked) {
-        settleDelivered(d)
-        settleSignoffNudge(d)
-      }
+      for (const d of acked) settleDelivered(d)
       if (!acked.includes(item)) continue
       const acknowledged = outbox.get(item.id)
       if (acknowledged) checkpoint("after-ack", acknowledged)
@@ -5446,11 +5192,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   // ONCE PER REST, DURABLY: the child's row remembers the rest it last reported (child_reported_at), so
   // the level-triggered sweep below, a restart and a pruned outbox all agree it was said.
   //
-  // NOT WHILE FRIZZ IS STILL TALKING TO THE CHILD. A bare rest earns the child a sign-off nudge, a dead
-  // park name a correction, a refused question a fault — each an open wake on the CHILD, enqueued by an
-  // earlier pass in this same tick. Reporting that rest would hand the parent a premature handoff and then
-  // a second, real one; so a child with any wake of its own still open is left for a later tick, when it
-  // has either answered (a new rest) or Frizz has given up nudging it (and the rest is the handoff).
+  // NOT WHILE FRIZZ IS STILL TALKING TO THE CHILD. A dead park name earns the child a correction, a
+  // refused question a fault — each an open wake on the CHILD, enqueued by an earlier pass in this same
+  // tick. Reporting that rest would hand the parent a premature handoff and then a second, real one; so a
+  // child with any wake of its own still open is left for a later tick, when it has either answered (a
+  // new rest) or Frizz has stopped correcting it (and the rest is the handoff). A bare rest is a handoff
+  // as it stands (SOURCE 9 is retired), so it is reported at once.
   async function evalChildHandoffs(): Promise<void> {
     if (!deps.boardThreads || !deps.deliverToThread) return
     const views = await deps.boardThreads()
@@ -5513,28 +5260,26 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (err instanceof InjectedSchedulerCrash) throw err
       log(`waker: recurring-prompt schedule pass failed: ${err instanceof Error ? err.message : String(err)}`)
     }
-    // THE REMINDER MINTS BEFORE THE GOAL'S REST PASS (2026-08-28): SOURCE 5 stands down on a rest the
-    // reminder took, and it reads that off the outbox — so the reminder has to be there first. Before
-    // this the two went out in one tick, 5 ms apart, and the second arrived stale (see evalRestPrompts).
+    // THE CORRECTIONS MINT BEFORE THE GOAL'S REST PASS: SOURCE 5 stands down on a rest a correction took,
+    // and it reads that off the outbox — so the correction has to be there first. When two went out in
+    // one tick, 5 ms apart, the second arrived stale (see evalRestPrompts).
     try {
       // Before any pass that reads the corrective cap: a message the human typed since the last counted
       // correction hands the allowance back.
       evalParkBumpRelease()
       // SOURCE 14 first: a rest whose question fence failed is answered by that correction, and the
-      // sign-off nudge reads the outbox to stand down for it.
+      // passes after it read the outbox to stand down for it.
       evalQuestionFences(now())
       // SOURCE 15 after it, for the same reason: a rest that has both wrong gets SOURCE 14's message with
       // this one's paragraph in it, and this pass reads the outbox to stand down.
       evalDoneOverQuestions(now())
-      // SOURCE 18 after both, which it stands down for, and before the nudge and SOURCE 12, which read it.
+      // SOURCE 18 after both, which it stands down for, and before SOURCE 12, which reads it.
       evalSignOffCompleteness(now())
-      evalSignoffNudges(now())
-      // SOURCE 12, beside the nudge because they are the same job from two directions: the nudge catches
-      // a rest that declared NOTHING, this catches one whose declaration stopped being true.
+      // SOURCE 12: a rest whose ```awaiting declaration stopped being true.
       evalParkIntegrity(now())
     } catch (err) {
       if (err instanceof InjectedSchedulerCrash) throw err
-      log(`waker: sign-off nudge pass failed: ${err instanceof Error ? err.message : String(err)}`)
+      log(`waker: sign-off correction pass failed: ${err instanceof Error ? err.message : String(err)}`)
     }
     try {
       evalRestPrompts(now())
@@ -5542,8 +5287,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (err instanceof InjectedSchedulerCrash) throw err
       log(`waker: recurring-prompt rest pass failed: ${err instanceof Error ? err.message : String(err)}`)
     }
-    // SOURCE 17 after every pass that can wake a CHILD for its own rest (the nudge, the corrections, the
-    // Goal): it stands down while any of their wakes is open, so they must be in the outbox first.
+    // SOURCE 17 after every pass that can wake a CHILD for its own rest (the corrections, the Goal): it stands down while any of their wakes is open, so they must be in the outbox first.
     try {
       await evalChildHandoffs()
     } catch (err) {
