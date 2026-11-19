@@ -23,8 +23,15 @@ import { ReadAndAnswerCardNote } from "./ReadAndAnswerNote.tsx"
 // would also compact the /full page on a narrow window, which keeps the desktop chrome — and its own
 // per-card Send — on every width. `numberOf` numbers a question by its place among the thread's open
 // questions, so a card placed inside a message and its sibling at the rest still count 1, 2.
+//
+// A TAP ON A CARD OPENS THE SHEET AT ITS QUESTION (`open`, 2026-11-19). The card lists the options by
+// letter, which reads as a thing to tap, and until then a tap did nothing: the only way in was the bar's
+// Answer, two thumbs below. The card is still read-only, and Answer is still the control (a pointer's
+// shortcut over it, so the row takes no role). A link in the question keeps its own tap.
 export interface PhoneQuestions {
   numberOf: (id: string) => number
+  /** Open the answer sheet at this question. Absent when no question here can be answered in it. */
+  open?: (id: string) => void
 }
 
 export const PhoneQuestionsContext = createContext<PhoneQuestions | null>(null)
@@ -54,7 +61,12 @@ export function CompactQuestionList({ questions }: { questions: readonly Registe
       className="min-w-0 overflow-hidden rounded-[12px] border border-border-strong bg-panel pb-2.5 text-[14px] leading-5"
     >
       {questions.map((q, i) => (
-        <div key={q.id} data-question-id={q.id} className={i > 0 ? "mt-2.5 border-t border-border" : undefined}>
+        <div
+          key={q.id}
+          data-question-id={q.id}
+          onClick={phone?.open ? (event) => { if (!(event.target as Element).closest("a, button")) phone.open?.(q.id) } : undefined}
+          className={`${i > 0 ? "mt-2.5 border-t border-border" : ""}${phone?.open ? " cursor-pointer" : ""}`}
+        >
           <CompactQuestion q={q} n={phone?.numberOf(q.id) ?? i + 1} />
         </div>
       ))}

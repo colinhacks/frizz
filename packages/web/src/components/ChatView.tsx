@@ -250,14 +250,9 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
   // useThreadMessages): the rest the board has not reached held back, the running background calls moved
   // to the line of counts, the registered questions that have arrived, the refused fences marked.
   const { messages, openQuestions, settledQuestions, transcriptShells } = useThreadMessages(boardThread, liveMessages)
-  // ON A PHONE the registered cards are read-only and answering is a sheet (PhoneQuestionCards,
-  // RegisteredAnswerSheet), opened from the bottom bar's "Answer". Null off the phone page. A card is
-  // numbered by its place among the questions the sheet steps through, which are the ones drawn.
-  const phoneQuestions = useMemo<PhoneQuestions | null>(
-    () => (phone ? { numberOf: (id) => openQuestions.findIndex((q) => q.id === id) + 1 } : null),
-    [phone, openQuestions],
-  )
   const [answerSheetOpen, setAnswerSheetOpen] = useState(false)
+  // The question a tap on its card opened the sheet at; the bar's Answer opens it where the human left off.
+  const [answerSheetAt, setAnswerSheetAt] = useState<string | undefined>(undefined)
   // A QUEUED THREAD OPENS AS ITS CARD DOES (the one-thread pane, maintainer 2026-11-09): from the human's
   // most recent steer on, with what is above it one click away. Decided once, when the transcript lands,
   // and held by id for as long as the thread stays open, so a reply sent from here adds to what is on
@@ -274,6 +269,24 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
   const sheetQuestions = useMemo(
     () => (readAndAnswerHost ? openQuestions.filter((q) => !questionNeedsMachine(q.spec)) : openQuestions),
     [readAndAnswerHost, openQuestions],
+  )
+  // ON A PHONE the registered cards are read-only and answering is a sheet (PhoneQuestionCards,
+  // RegisteredAnswerSheet), opened from the bottom bar's "Answer" or by a tap on a card it can answer. Null
+  // off the phone page. A card is numbered by its place among the questions the sheet steps through, which
+  // are the ones drawn.
+  const phoneQuestions = useMemo<PhoneQuestions | null>(
+    () => (phone
+      ? {
+          numberOf: (id) => openQuestions.findIndex((q) => q.id === id) + 1,
+          open: sheetQuestions.length > 0
+            ? (id) => {
+                setAnswerSheetAt(sheetQuestions.some((q) => q.id === id) ? id : undefined)
+                setAnswerSheetOpen(true)
+              }
+            : undefined,
+        }
+      : null),
+    [phone, openQuestions, sheetQuestions],
   )
   const steerStamp = useSteeredAt()[slug]
   // The send that ends a rest draws where it will land, stamped with the instant this tab sent it — see
@@ -496,14 +509,14 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
           // artifact sidebar at all").
           above={phone || !thread ? undefined : <QueueOpsSummary thread={thread} transcriptShells={transcriptShells} only={railBeside ? TODO_ONLY : undefined} />}
           phoneBarOverride={phone && sheetQuestions.length > 0
-            ? (api) => <PhoneAnswerBar count={sheetQuestions.length} onAnswer={() => setAnswerSheetOpen(true)} onReply={readAndAnswerHost ? undefined : api.editReply} />
+            ? (api) => <PhoneAnswerBar count={sheetQuestions.length} onAnswer={() => { setAnswerSheetAt(undefined); setAnswerSheetOpen(true) }} onReply={readAndAnswerHost ? undefined : api.editReply} />
             : undefined}
           // The box matches the header above it: the phone bar under the phone's chrome, the desktop box
           // (and its rail's Goal) under the desktop header — which /full keeps at every width.
           phoneChrome={phone}
         />
       </div>
-      {phone && answerSheetOpen && <RegisteredAnswerSheet questions={sheetQuestions} onClose={() => setAnswerSheetOpen(false)} />}
+      {phone && answerSheetOpen && <RegisteredAnswerSheet questions={sheetQuestions} startAt={answerSheetAt} onClose={() => setAnswerSheetOpen(false)} />}
     </div>
     </PhoneQuestionsContext.Provider>
     </ThreadSurface>

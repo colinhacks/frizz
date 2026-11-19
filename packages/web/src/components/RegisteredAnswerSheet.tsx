@@ -29,12 +29,18 @@ import { RegisteredAnsweringContext, type RegisteredAnswering } from "./Register
 //
 // MOUNTED MEANS OPEN, and it takes its own history entry (lib/backDismiss): a phone's Back closes the
 // sheet, not the thread under it. Back INSIDE the sheet (the footer's Back) walks the steps instead.
-export function RegisteredAnswerSheet({ questions, onClose }: { questions: readonly RegisteredQuestionView[]; onClose: () => void }) {
+export function RegisteredAnswerSheet({ questions, startAt, onClose }: {
+  questions: readonly RegisteredQuestionView[]
+  /** The question to open at: the one whose card in the transcript was tapped. */
+  startAt?: string
+  onClose: () => void
+}) {
   const a = useContext(RegisteredAnsweringContext)
   const dismiss = useBackDismiss(onClose)
   const steps = a ? answerSteps(questions, a.answersOf) : []
-  // `null` is the review. Opens where the human left off: the first step with nothing staged on it.
-  const [at, setAt] = useState<string | null>(() => (a ? firstOpenStep(steps, a.answersOf) : null))
+  // `null` is the review. Opens where the human left off: the first step with nothing staged on it. A
+  // card's tap names its own question instead, and opens on that question's first step.
+  const [at, setAt] = useState<string | null>(() => (a ? steps.find((s) => s.q.id === startAt)?.key ?? firstOpenStep(steps, a.answersOf) : null))
   // A step's free-text row, opened by "Write a different answer…". Per step, so moving on closes it.
   const [writing, setWriting] = useState(false)
 
@@ -364,7 +370,7 @@ function ReviewFooter({ a, onSent }: { a: RegisteredAnswering; onSent: () => voi
   return (
     <SheetFooter>
       <button type="button" data-answer-send disabled={a.staged === 0 || a.sending} onClick={send} className={`${BTN} ${SOLID} flex-1 disabled:opacity-35`}>
-        {a.sending ? "Sending…" : "Send answers"}
+        {a.sending ? "Sending…" : a.staged === 1 ? "Send answer" : "Send answers"}
       </button>
     </SheetFooter>
   )
