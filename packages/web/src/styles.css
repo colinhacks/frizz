@@ -28,6 +28,19 @@
   }
 }
 
+/* THE PHONE SHELL'S VARIANT. `phone:` is true exactly where `useIsMobile()` is (lib/mobile.ts, whose
+   header has the reasoning): a window at most 700px wide, or a touch screen at most 500px tall, which is
+   a phone held sideways. Change the two together.
+   NO CLASS SPELLS THE WIDTH ITSELF. Until 2026-11-19 every phone rule was `max-[700px]:`, and a phone on
+   its side is 844 to 956px wide, so each of them missed it along with the shell: it drew the desktop's
+   rail, sidebar and pane in 393px of height, with room for two queue rows. mobile.guard.test.ts refuses
+   the old spelling. */
+@custom-variant phone {
+  @media (max-width: 700px), (pointer: coarse) and (max-height: 500px) {
+    @slot;
+  }
+}
+
 /* Dense orchestration surface; system sans-serif, 13px base. */
 @theme {
   /* WHERE /full BECOMES TWO COLUMNS — the `split:` variant, used only by StandaloneThreadPage.
@@ -114,8 +127,9 @@
    `min(720px, 80vw)` or, for settings, a fixed 560px. At 390pt that leaves a 78px sliver of board
    showing down one side and a panel too narrow to read a transcript in.
    `!important` because the width those panels carry is an INLINE style, which no ordinary rule can
-   outrank. The breakpoint is `MOBILE_MAX_PX` in lib/mobile.ts — change them together. */
-@media (max-width: 700px) {
+   outrank. The query is `MOBILE_QUERY` in lib/mobile.ts and the `phone:` variant above — change the
+   three together. */
+@media (max-width: 700px), (pointer: coarse) and (max-height: 500px) {
   .frizz-sheet-panel {
     width: 100vw !important;
     max-width: 100vw !important;

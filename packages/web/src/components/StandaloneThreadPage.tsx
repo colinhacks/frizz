@@ -169,8 +169,11 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
               // panel / queue card the door was clicked in wears the same name (tagged at click time,
               // ExpandThreadLink), and the browser morphs that surface into this column. Inert
               // outside a transition — no navigation but the door's opts in.
-              // The phone's page owns the top safe area, as its drawer does (styles.css `.frizz-sheet-panel`).
-              className="flex h-full w-[var(--full-thread-narrow)] min-w-0 shrink-0 flex-col overflow-hidden border-border bg-panel max-[700px]:pt-[env(safe-area-inset-top)] sm:border-x split:w-[var(--full-thread)] [view-transition-name:thread-chat]"
+              // The phone's page owns the top safe area, as its drawer does (styles.css `.frizz-sheet-panel`),
+              // and the whole width, as its drawer does: held sideways a phone is wider than the column, which
+              // stood as a bordered 720px strip between two gutters under a header meant for the screen's edge.
+              // (`!` on the border: `sm:` is declared after `phone:` in the sheet, and both match there.)
+              className="flex h-full w-[var(--full-thread-narrow)] min-w-0 shrink-0 flex-col overflow-hidden border-border bg-panel phone:w-full phone:border-x-0! phone:pt-[env(safe-area-inset-top)] sm:border-x split:w-[var(--full-thread)] [view-transition-name:thread-chat]"
             >
               {route.kind === "loading" ? (
                 <div className="flex flex-1 items-center justify-center" role="status" aria-label="Loading thread">

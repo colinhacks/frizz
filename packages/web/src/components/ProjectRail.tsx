@@ -34,6 +34,8 @@ import { Z_CHROME } from "../lib/layers.ts"
 //
 // HIDDEN BELOW 800px, where the sidebar already stacks above the workpane and a permanent 56px column
 // would be a tenth of the viewport spent on navigation. The grid at `/` is the switcher there.
+// AND ON EVERY PHONE (`phone:`, lib/mobile.ts): one held sideways is 844px wide or more, so the width
+// alone kept the rail there, drawn under the phone's header with the board inset beside it.
 
 /**
  * The column's total painted width, and the inset every surface beside it reserves.
@@ -45,7 +47,7 @@ import { Z_CHROME } from "../lib/layers.ts"
  * Exported as a pair so the reserved space and the painted width cannot drift apart.
  */
 export const RAIL_WIDTH_CLASS = "w-[57px]"
-export const RAIL_INSET_CLASS = "max-[800px]:pl-0 pl-[57px]"
+export const RAIL_INSET_CLASS = "max-[800px]:pl-0 phone:pl-0 pl-[57px]"
 /** What a fixed-position surface must clear to sit beside the rail rather than under it. */
 export const RAIL_WIDTH_PX = 57
 
@@ -719,7 +721,7 @@ export function ProjectRail() {
   return (
     <nav
       aria-label="Projects"
-      className={`fixed inset-y-0 left-0 ${Z_CHROME} flex flex-col items-center border-r border-border bg-panel/60 py-3 max-[800px]:hidden ${RAIL_WIDTH_CLASS}`}
+      className={`fixed inset-y-0 left-0 ${Z_CHROME} flex flex-col items-center border-r border-border bg-panel/60 py-3 max-[800px]:hidden phone:hidden ${RAIL_WIDTH_CLASS}`}
     >
       {/* A HOME GLYPH, not the Frizz mark. Two reasons, and the second is why it stopped being the
           mark: this slot is a destination ("all projects"), and the wordmark said whose app you are

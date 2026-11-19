@@ -11,7 +11,7 @@ import { Z_TOAST } from "../lib/layers.ts"
 // the named thread in the side drawer), and `action` (a button that runs the caller's own verb).
 // A toast's button. On a phone it is the only way back from a Done (its Undo), so it is a thumb's target
 // there: 36px tall where the desktop pill is 22 (measured 2026-11-19, 393px wide: 44x22 before).
-const TOAST_BUTTON = "shrink-0 rounded-md border border-border px-2 py-0.5 text-[12px] text-fg/90 transition-colors hover:bg-panel-2 max-[700px]:min-h-9 max-[700px]:rounded-lg max-[700px]:px-3.5 max-[700px]:text-[14px] max-[700px]:active:bg-panel-2"
+const TOAST_BUTTON = "shrink-0 rounded-md border border-border px-2 py-0.5 text-[12px] text-fg/90 transition-colors hover:bg-panel-2 phone:min-h-9 phone:rounded-lg phone:px-3.5 phone:text-[14px] phone:active:bg-panel-2"
 
 export function Toaster() {
   const snap = useSnapshot(store)
@@ -49,7 +49,7 @@ export function Toaster() {
         // passed it a supervisor's raw build log — the text has to wrap inside a strip-sized box
         // instead. `break-words` covers the other half of that failure: a long unbroken token (an
         // absolute path, a URL) would otherwise push straight past the cap.
-        className={`flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-2.5 break-words rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[13px] font-medium max-[700px]:gap-3 max-[700px]:text-[14px] text-fg shadow-xl shadow-shadow-ink/40 transition-all duration-200 ease-out ${
+        className={`flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-2.5 break-words rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[13px] font-medium phone:gap-3 phone:text-[14px] text-fg shadow-xl shadow-shadow-ink/40 transition-all duration-200 ease-out ${
           visible ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0"
         }`}
       >

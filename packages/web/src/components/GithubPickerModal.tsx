@@ -223,7 +223,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
         // A PAGE ON A PHONE, as New thread is, which is what it opens from there: full screen under the
         // device's top inset, with a back arrow (the phone header below). As a card it kept 20px of scrim
         // a side to close it by and nothing else, on a device with no Escape.
-        className="flex max-h-[85vh] w-[720px] max-w-[90vw] flex-col rounded-xl border border-border bg-panel px-5 pb-3 pt-5 shadow-2xl shadow-shadow-ink/50 outline-none max-[700px]:h-full max-[700px]:max-h-none max-[700px]:w-full max-[700px]:max-w-none max-[700px]:rounded-none max-[700px]:border-0 max-[700px]:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-[700px]:pt-[env(safe-area-inset-top)] max-[700px]:shadow-none"
+        className="flex max-h-[85vh] w-[720px] max-w-[90vw] flex-col rounded-xl border border-border bg-panel px-5 pb-3 pt-5 shadow-2xl shadow-shadow-ink/50 outline-none phone:h-full phone:max-h-none phone:w-full phone:max-w-none phone:rounded-none phone:border-0 phone:pb-[max(0.75rem,env(safe-area-inset-bottom))] phone:pt-[env(safe-area-inset-top)] phone:shadow-none"
         onKeyDownCapture={(e) => {
           if (e.key === "Escape") {
             e.stopPropagation()

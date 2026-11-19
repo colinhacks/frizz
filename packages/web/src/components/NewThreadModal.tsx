@@ -554,7 +554,7 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
           // phone breakpoint nothing changes.
           className={isMobile
             ? `fixed inset-0 ${Z_MODAL} flex flex-col bg-bg pt-[env(safe-area-inset-top)] outline-none`
-            : `fixed left-1/2 top-1/2 ${Z_MODAL} w-[640px] max-w-[86vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50 outline-none max-[700px]:top-[calc(env(safe-area-inset-top)+56px)] max-[700px]:w-[calc(100vw-24px)] max-[700px]:max-w-none max-[700px]:translate-y-0`}
+            : `fixed left-1/2 top-1/2 ${Z_MODAL} w-[640px] max-w-[86vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-panel p-5 shadow-2xl shadow-shadow-ink/50 outline-none phone:top-[calc(env(safe-area-inset-top)+56px)] phone:w-[calc(100vw-24px)] phone:max-w-none phone:translate-y-0`}
         >
           {onConsole ? <ProjectScope project={target.project?.slug}>{form}</ProjectScope> : form}
         </RadixDialog.Content>

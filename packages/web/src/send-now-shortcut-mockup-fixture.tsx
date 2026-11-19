@@ -667,7 +667,7 @@ function FadeSwitch() {
 function Sheet() {
   return (
     <TooltipProvider>
-      <div className="min-h-screen bg-panel px-10 py-10 text-sm text-fg max-[700px]:px-4">
+      <div className="min-h-screen bg-panel px-10 py-10 text-sm text-fg phone:px-4">
         <div className="mx-auto max-w-[1180px]">
           <style>{KEYCAP_CSS}</style>
           <h1 className="mb-2 text-[20px] font-semibold">{CHORD} for Send now</h1>

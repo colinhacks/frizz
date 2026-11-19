@@ -293,7 +293,7 @@ function Section({ id, name, says, children }: { id: string; name: string; says:
 function Sheet() {
   return (
     <TooltipProvider>
-      <div className="min-h-screen bg-panel px-10 py-10 text-fg text-sm max-[700px]:px-4">
+      <div className="min-h-screen bg-panel px-10 py-10 text-fg text-sm phone:px-4">
         <div className="mx-auto max-w-[1080px]">
           <h1 className="mb-2 text-[20px] font-semibold">One smaller “Send now” under the queued messages</h1>
           <p className="mb-3 max-w-[720px] text-[13px] leading-[20px] text-muted">

@@ -208,7 +208,7 @@ export function SubAgentSheet({
               a strip of icons a row of its own below 640px, and one check alone there sat on an empty
               line under the close button. The title truncates instead. */}
           <header data-subagent-header className={`flex ${PANE_HEADER_HEIGHT_CLASS} min-w-0 shrink-0 items-center gap-2.5 border-b border-border bg-panel px-3 ${PHONE_SHEET_BAR}`}>
-            <div className="flex min-w-0 flex-1 items-center gap-2.5 pl-1 max-[700px]:gap-0.5 max-[700px]:pl-0">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5 pl-1 phone:gap-0.5 phone:pl-0">
               <SheetClose onClose={close} />
               <div className="min-w-0 flex-1 leading-tight">
                 {/* ThreadTitle's read-only shape: a sub-agent's name is its dispatch description,

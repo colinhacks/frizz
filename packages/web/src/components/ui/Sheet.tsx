@@ -4,7 +4,7 @@ import { useSnapshot } from "valtio"
 import { store, markDrawerClosing, removeDrawerAfterExit } from "../../store.ts"
 import { registerDrawerClose } from "../../lib/overlays.ts"
 import { useBackClosesLayer } from "../../lib/backDismiss.ts"
-import { useIsMobile } from "../../lib/mobile.ts"
+import { MOBILE_LANDSCAPE_QUERY, useIsMobile } from "../../lib/mobile.ts"
 import { drawerZ } from "../../lib/layers.ts"
 import {
   SHEET_CLOSE_MS,
@@ -41,10 +41,15 @@ export function useIsTopDrawer(id: number): boolean {
   return [...snap.drawers].reverse().find((drawer) => !drawer.closing)?.id === id
 }
 
+// Where a drawer is a modal (the comment at the top of this file). A PHONE HELD SIDEWAYS IS NARROW TOO,
+// whatever its width: its sheet is the whole screen (styles.css, the phone's sheet rule), so it takes the
+// same modal dialog and the same lock.
+const NARROW_DRAWER_QUERY = `(max-width: 800px), ${MOBILE_LANDSCAPE_QUERY}`
+
 export function useNarrowDrawer(): boolean {
-  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 800px)").matches)
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.(NARROW_DRAWER_QUERY).matches)
   useEffect(() => {
-    const query = window.matchMedia?.("(max-width: 800px)")
+    const query = window.matchMedia?.(NARROW_DRAWER_QUERY)
     if (!query) return
     const update = () => setNarrow(query.matches)
     update()

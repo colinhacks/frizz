@@ -39,12 +39,12 @@ export function SheetHeader({
       <SheetClose onClose={onClose} />
       {/* No icon on a phone: its bar is two lines there, and a glyph centred on two lines floats between
           them (MarkdownDrawer has the measurement). */}
-      {icon && <span className="contents max-[700px]:hidden">{icon}</span>}
-      <div className="flex min-w-0 flex-1 flex-col justify-center max-[700px]:pl-0.5 max-[700px]:leading-[1.25]">
+      {icon && <span className="contents phone:hidden">{icon}</span>}
+      <div className="flex min-w-0 flex-1 flex-col justify-center phone:pl-0.5 phone:leading-[1.25]">
         {/* On a phone the `meta` goes UNDER the title, as the line a thread's header keeps there: beside it,
             a shell's "running 1h 25m" cut its title to "Running the sync load t…". */}
-        <div className="flex min-w-0 items-center gap-2 max-[700px]:flex-col max-[700px]:items-start max-[700px]:gap-0 max-[700px]:[&>:nth-child(2)]:text-[13px] max-[700px]:[&>:nth-child(2)]:text-muted">
-          <span className={`min-w-0 truncate text-[13px] font-medium max-[700px]:max-w-full ${PHONE_SHEET_TITLE}`} title={title}>
+        <div className="flex min-w-0 items-center gap-2 phone:flex-col phone:items-start phone:gap-0 phone:[&>:nth-child(2)]:text-[13px] phone:[&>:nth-child(2)]:text-muted">
+          <span className={`min-w-0 truncate text-[13px] font-medium phone:max-w-full ${PHONE_SHEET_TITLE}`} title={title}>
             {title}
           </span>
           {meta}
@@ -52,7 +52,7 @@ export function SheetHeader({
         {subtitle && (
           // A path keeps its END: the box runs right to left, so the ellipsis lands on the left, and the
           // isolate keeps the path itself reading left to right.
-          <span className={`truncate text-[10px] text-muted-60 max-[700px]:text-[13px] max-[700px]:text-muted ${subtitlePath ? "text-left [direction:rtl]" : ""}`} title={subtitlePath ? subtitle : undefined}>
+          <span className={`truncate text-[10px] text-muted-60 phone:text-[13px] phone:text-muted ${subtitlePath ? "text-left [direction:rtl]" : ""}`} title={subtitlePath ? subtitle : undefined}>
             {subtitlePath ? <bdi>{subtitle}</bdi> : subtitle}
           </span>
         )}
@@ -64,9 +64,9 @@ export function SheetHeader({
 
 /** A sheet bar's box on a phone: the phone thread header's own (MobileThreadHeader). For a bar that is not a
  *  SheetHeader and leads with SheetClose (the sub-agent sheet). */
-export const PHONE_SHEET_BAR = "max-[700px]:h-auto max-[700px]:min-h-14 max-[700px]:gap-0.5 max-[700px]:py-1 max-[700px]:pl-1 max-[700px]:pr-3"
+export const PHONE_SHEET_BAR = "phone:h-auto phone:min-h-14 phone:gap-0.5 phone:py-1 phone:pl-1 phone:pr-3"
 /** And its title's type there. */
-export const PHONE_SHEET_TITLE = "max-[700px]:text-[16.5px] max-[700px]:font-semibold max-[700px]:tracking-[-0.01em]"
+export const PHONE_SHEET_TITLE = "phone:text-[16.5px] phone:font-semibold phone:tracking-[-0.01em]"
 
 // Every sheet's close: a bare X and a hairline rule, LEADING the header. Every sheet slides out to the
 // RIGHT, so the X sits at the edge it leaves from and the right end is left to the sheet's own
@@ -97,12 +97,12 @@ export function SheetClose({ onClose }: { onClose: () => void }): ReactElement {
         type="button"
         aria-label="Close"
         onClick={onClose}
-        className="-ml-1 shrink-0 rounded-md p-1.5 text-muted outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 max-[700px]:ml-0 max-[700px]:flex max-[700px]:size-11 max-[700px]:items-center max-[700px]:justify-center max-[700px]:rounded-full max-[700px]:p-0 max-[700px]:text-fg/90 max-[700px]:hover:bg-transparent max-[700px]:active:bg-hover"
+        className="-ml-1 shrink-0 rounded-md p-1.5 text-muted outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 phone:ml-0 phone:flex phone:size-11 phone:items-center phone:justify-center phone:rounded-full phone:p-0 phone:text-fg/90 phone:hover:bg-transparent phone:active:bg-hover"
       >
-        <X size={15} className="max-[700px]:hidden" />
-        <ArrowLeft size={21} strokeWidth={2.1} className="hidden max-[700px]:block" />
+        <X size={15} className="phone:hidden" />
+        <ArrowLeft size={21} strokeWidth={2.1} className="hidden phone:block" />
       </button>
-      <span aria-hidden data-close-rule className="ml-px mr-[9px] h-4 w-px shrink-0 bg-border max-[700px]:hidden" />
+      <span aria-hidden data-close-rule className="ml-px mr-[9px] h-4 w-px shrink-0 bg-border phone:hidden" />
     </>
   )
 }

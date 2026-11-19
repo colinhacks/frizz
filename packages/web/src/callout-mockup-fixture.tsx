@@ -244,7 +244,7 @@ function Sheet() {
   return (
     <TooltipProvider>
       <style>{INK_CSS + SHAPE_CSS}</style>
-      <div className="co-sheet min-h-screen bg-bg px-10 py-10 text-sm text-fg max-[700px]:px-4" data-ink={ink}>
+      <div className="co-sheet min-h-screen bg-bg px-10 py-10 text-sm text-fg phone:px-4" data-ink={ink}>
         <div className="mx-auto max-w-[1180px]">
           <h1 className="mb-2 text-[20px] font-semibold">Callouts</h1>
           <p className="mb-3 max-w-[760px] text-[13px] leading-[20px] text-muted">

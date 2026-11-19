@@ -3307,7 +3307,7 @@ export function AgentBlock({
                   data-subagent-profile
                   // Not on a phone: there "opus 5.5 › high" took the width of the title beside it, which
                   // read "Audit every retry pa…" five rows running. The child's sheet says its profile.
-                  className="shrink-0 whitespace-nowrap text-[11.5px] leading-none text-faint max-[700px]:hidden"
+                  className="shrink-0 whitespace-nowrap text-[11.5px] leading-none text-faint phone:hidden"
                   title={`Sub-agent profile: ${profile}`}
                 >
                   {profile}
