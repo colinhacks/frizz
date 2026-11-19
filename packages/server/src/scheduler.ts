@@ -17,7 +17,7 @@ import { createWakeDeliveryStore, WAKE_QUIET_WINDOW_MS, type WakeDelivery } from
 import { childrenByParent, liveChildThreads } from "./child-threads.ts"
 // The board owns the registered-done lifetime rule, and the waker must read it by exactly the same rule
 // or the two disagree about whether a thread is finished.
-import { answersInFlight, answersReceivedAt, registeredDoneFence, safeQuestionSpec, wakeQuestionAnswer } from "./board.ts"
+import { answersInFlight, answersReceivedAt, doneEndsAt, registeredDoneFence, safeQuestionSpec, wakeQuestionAnswer } from "./board.ts"
 import { ProducerStoppedError } from "./shutdown.ts"
 import { completionsDueForRelay, relayMessage } from "./completion-relay.ts"
 import {
@@ -703,14 +703,15 @@ function saidDone(tele: Pick<SessionTelemetry, "lastFence" | "lastAssistantAllDo
  *  Without this the arrangement outlived the sign-off it was built to end: a worker that used the verb
  *  instead of the fence kept being woken at every rest, forever, by a Goal it had explicitly finished
  *  with. `registeredDoneFence` carries the same "nothing newer from the human" lifetime the board reads
- *  it by, so the loop reopens on the human's next word exactly as the fence's version does. */
+ *  it by (doneEndsAt: a message the human typed, never a wake), so the loop reopens on the human's next
+ *  word. */
 function threadSaidDone(
   storage: Storage,
   slug: string,
-  tele: Pick<SessionTelemetry, "lastFence" | "lastAssistantAllDone" | "lastUserAt" | "lastAssistantAt">,
+  tele: Pick<SessionTelemetry, "lastFence" | "lastAssistantAllDone" | "lastUserAt" | "lastAssistantAt" | "restFromAt">,
   armedAt?: string | null,
 ): boolean {
-  const registered = registeredDoneFence(storage.getThreadDone(slug), tele.lastUserAt) !== undefined
+  const registered = registeredDoneFence(storage.getThreadDone(slug), doneEndsAt(tele)) !== undefined
   const fenced = saidDone(tele)
   if (!registered && !fenced) return false
   return !armReopenedTheLoop(storage, slug, tele, registered, fenced, armedAt)
@@ -3875,8 +3876,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       // lets a worker sign off with a background process still running — a dev server, a poller it has
       // moved on from — naming it in the body. Waking that thread when the process exits hands a
       // finished worker news it declared it did not need, and it answers the only way it can: by saying
-      // done again — a second Done card, and a registered done is un-done by the wake's own user record
-      // until it does (registeredDoneFence reads the last user instant). SOURCES 4 and 5 already decline
+      // done again — a second Done card. (A registered done is no longer un-done by the wake's own user
+      // record, since 2026-11-19: doneEndsAt reads the human typing.) SOURCES 4 and 5 already decline
       // a done thread; this is the same guard. The one exception is a shell the worker REGISTERED a wait
       // on (`frizzctl watch`): a registration trumps a done on the board, so it trumps it here too —
       // the wake is the thing it registered for. Matched by ROW, in any state but dropped, because
@@ -5213,7 +5214,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (open.has(row.slug)) continue
       const parent = deps.storage.getSession(view.parentSlug)
       if (!parent) continue
-      const done = registeredDoneFence(deps.storage.getThreadDone(row.slug), tele.lastUserAt)
+      const done = registeredDoneFence(deps.storage.getThreadDone(row.slug), doneEndsAt(tele))
       let handoff: string
       if (done) handoff = deps.storage.getThreadDone(row.slug)!.body
       else {

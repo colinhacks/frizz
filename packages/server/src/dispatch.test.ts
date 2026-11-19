@@ -578,6 +578,7 @@ test("end-state contract: a fenceless reply is a sign-off, done checks, awaiting
     // the worker's own reply, with nothing running and nothing to decide, is a sign-off with no fence, so
     // the contract names it and no longer threatens a bump Frizz does not send.
     assert.match(c, /A REPLY NEEDS NO FENCE\./)
+    assert.match(c, /A done you recorded with `frizzctl done` stands through every wake until the human types/)
     assert.match(c, /That rest is a sign-off: the thread goes into their queue with your message on it/)
     assert.match(c, /What it must never be is a stop with the task half-done/)
     assert.doesNotMatch(c, /ALWAYS SIGN OFF/, "a fenceless reply is a sign-off now")

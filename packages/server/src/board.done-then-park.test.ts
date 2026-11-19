@@ -7,7 +7,7 @@ import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { BoardSnapshot } from "@frizz/shared"
+import { wakeDeliveryToken, type BoardSnapshot } from "@frizz/shared"
 import { createBoard, registeredDoneFence } from "./board.ts"
 import { Bus } from "./bus.ts"
 import type { Project } from "./project.ts"
@@ -17,6 +17,8 @@ import { createTailer } from "./tailer.ts"
 const T0 = Date.now() - 60 * 60_000
 const at = (second: number) => new Date(T0 + second * 1000).toISOString()
 const prompt = (second: number) => JSON.stringify({ type: "user", timestamp: at(second), message: { role: "user", content: "go" } })
+// A wake Frizz delivers: a user record, but not the human typing.
+const wake = (second: number) => JSON.stringify({ type: "user", timestamp: at(second), message: { role: "user", content: `acme/app#12 merged.\n\n${wakeDeliveryToken("w1")}` } })
 const reply = (second: number, text: string) => JSON.stringify({ type: "assistant", timestamp: at(second), message: { stop_reason: "end_turn", content: [{ type: "text", text }] } })
 const STEPS = "Over to you.\n\n```awaiting\nsteps:\n  - Approve the npm sign-in\n---\nThe publish follows once it lands.\n```"
 
@@ -44,6 +46,8 @@ async function withBoard(run: (board: BoardSnapshot) => void) {
   // Steps handed over at 2s, answered in words at 3s, done at 5s, and the human types again at 8s: the
   // completion no longer stands, but the step it gave up on is not owed again.
   thread("typed-after-done", [prompt(1), reply(2, STEPS), prompt(3), reply(4, "Skipping the sign-in as asked."), prompt(8)], 5)
+  // Done at 5s, then a watcher's wake at 7s and the worker's "nothing new" at 8s: no human typed since.
+  thread("woken-after-done", [prompt(1), reply(4, "Marking it done."), wake(7), reply(8, "That is the merge I already reported.")], 5)
   const tailer = createTailer({ project, storage, bus: new Bus(), onChange: () => {}, sessionLogDir: logDir, now: () => T0 + 120_000, brokerDaemonAlive: () => false, shellAlive: () => true })
   for (let i = 0; i < 200 && !storage.allSessions().every((row) => tailer.get(row.slug)); i++) tailer.tick()
   const board = createBoard(project, storage, new Bus(), tailer, "done-then-park", {
@@ -73,6 +77,10 @@ test("an awaiting fence written after `frizzctl done` takes the completion back"
     const typed = view("typed-after-done")
     assert.equal(typed?.lastFence?.registered, undefined, "the human's new message spends the completion")
     assert.deepEqual(typed?.humanTodos ?? [], [], "and the step it gave up on stays given up on")
+    // A WAKE IS NOT THE HUMAN (2026-11-19): the completion stands through it, and through the reply to it.
+    const woken = view("woken-after-done")
+    assert.equal(woken?.lastFence?.kind, "done", "a Frizz wake leaves a finished thread finished")
+    assert.equal(woken?.lastFence?.registered, true)
   })
 })
 

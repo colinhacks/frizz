@@ -123,3 +123,21 @@ test("provider failures supersede a rest Goal delivery queued before the failure
     assert.deepEqual(h.rows().map((r) => r.state), ["superseded"])
   } finally { h.close() }
 })
+
+// A REGISTERED DONE STANDS UNTIL THE HUMAN TYPES (2026-11-19), so a wake that reaches a finished thread —
+// a watcher's merge notice, another thread's message — and the worker's "nothing new" reply to it leave
+// the thread finished, and its Goal has nothing to prompt. The control is the human typing after the done.
+test("a done stands through a Frizz wake: the Goal stays quiet until the human types", async () => {
+  for (const [what, restFromAt, prompted] of [
+    ["a wake after the done", "2026-08-11T23:59:00.000Z", false],
+    ["the human typing after the done", "2026-08-12T00:00:30.000Z", true],
+  ] as const) {
+    const h = restingThread({ restFromAt, lastUserAt: "2026-08-12T00:00:30.000Z", lastAssistant: "That is the merge I already reported." })
+    try {
+      h.storage.setRecurringPromptBySlug(h.slug, goal)
+      h.storage.markThreadDone(h.slug, "- **Shipped** it.", Date.parse("2026-08-12T00:00:10.000Z"))
+      await h.s.tick()
+      assert.equal(h.delivered.length, prompted ? 1 : 0, what)
+    } finally { h.close() }
+  }
+})

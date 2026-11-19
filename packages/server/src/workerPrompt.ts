@@ -343,8 +343,9 @@ PARK TAKES THE THREAD OUT OF THE QUEUE, EVEN RIGHT AFTER A \`needs_input\` SIGN-
 \`watching\`. A page to review, a result to try, an open question, or your reply that is all you wait on
 still does, so \`status: needs_input\` — with nothing running, that fence names nothing else and waits
 on the human. Only \`steps:\` and questions keep the thread in their queue by themselves, until they type to
-this thread, answer a question or snooze it. Anything new for the human is a new sign-off, carrying only
-what is new.
+this thread, answer a question or snooze it. A done you recorded with \`frizzctl done\` stands through
+every wake until the human types, so on a finished thread a wake with nothing new takes one line and no
+second done. Anything new for the human is a new sign-off, carrying only what is new.
 
 **A REPLY NEEDS NO FENCE.** When what the human needs is your message itself — the answer to their
 question, a finding, a result they asked to see — and nothing is running and nothing needs their

@@ -1846,12 +1846,26 @@ export function resolveSessionTitle(
   }
 }
 
+/** When a registered done stops standing: the last message the human TYPED (`restFromAt`), not any user
+ *  record, so a wake Frizz delivers leaves a finished thread finished. A tail folded before `restFromAt`
+ *  existed falls back to `lastUserAt`. See registeredDoneFence. */
+export function doneEndsAt(tele: { restFromAt?: string; lastUserAt?: string } | undefined): string | undefined {
+  return tele?.restFromAt ?? tele?.lastUserAt
+}
+
 /** A registered completion as the ```done fence it replaces, or undefined when it no longer stands.
  *
  *  ITS LIFETIME IS "NOTHING NEWER FROM THE HUMAN". A fence is superseded the moment the worker writes
  *  again; a ROW cannot be, so something has to spend it — and the human SENDING MORE WORK is exactly
  *  the moment a completion stops being true. Deciding that by comparing two timestamps means there is
  *  no sweep to forget one, and no window where a thread that was reopened still cards as finished.
+ *
+ *  THE HUMAN, NOT ANY USER RECORD (2026-11-19). This read `lastUserAt` until then, which every wake
+ *  Frizz delivers also moves: a watcher's merge notice or another thread's message ended the done, the
+ *  worker's "nothing new" reply was then a bare rest, and the sign-off reminder made it file the same done
+ *  again (33 of 36 such reminders measured on the maintainer's Mac followed a registered done). So the
+ *  boundary is the one questions use, `restFromAt` (a message the human typed), falling back to
+ *  `lastUserAt` only on a tail folded before `restFromAt` existed: `doneEndsAt`.
  *
  *  The comparison is `<=`, not `<`: the two instants come from different clocks (the row's is frizz's
  *  own `Date.now()`, the telemetry's is the transcript record's), and a same-millisecond tie is the
@@ -1867,11 +1881,11 @@ export function resolveSessionTitle(
  *  own card and not this one (registeredDone.ts). */
 export function registeredDoneFence(
   done: { body: string; doneAt: number } | undefined,
-  lastUserAt: string | undefined,
+  humanTypedAt: string | undefined,
   awaitingAt?: string,
 ): FenceView | undefined {
   if (!done) return undefined
-  const userAt = lastUserAt ? Date.parse(lastUserAt) : Number.NaN
+  const userAt = humanTypedAt ? Date.parse(humanTypedAt) : Number.NaN
   if (Number.isFinite(userAt) && userAt > done.doneAt) return undefined
   const parkedAt = awaitingAt ? Date.parse(awaitingAt) : Number.NaN
   if (Number.isFinite(parkedAt) && parkedAt > done.doneAt) return undefined
@@ -2130,7 +2144,7 @@ function sessionThreadView(
     lastFence: undefined, lastAssistantAllDone: false,
   } : rawTele
   const done = supersededDone || providerError ? undefined
-    : registeredDoneFence(registries.done.get(row.slug), rawTele?.lastUserAt, rawTele?.lastFence?.kind === "awaiting" ? rawTele.lastAssistantAt : undefined)
+    : registeredDoneFence(registries.done.get(row.slug), doneEndsAt(rawTele), rawTele?.lastFence?.kind === "awaiting" ? rawTele.lastAssistantAt : undefined)
   const tele: SessionTelemetry | undefined = done && failedTele ? { ...failedTele, lastFence: done } : failedTele
   // A headless thread mid-turn with nobody driving it is a crash/stall, not a rest. For codex that is
   // an app-server that stopped advancing the rollout; for the broker it is a dead ownerless daemon (its
