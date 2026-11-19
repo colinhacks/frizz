@@ -3,7 +3,7 @@ import { rpc } from "../api/rpc.ts"
 import { closeDrawersById, openThread, showToast, store } from "../store.ts"
 import { appPushedCurrentEntry, boardThreadHref, queueDestination, spaNavigate } from "./router.ts"
 import { standaloneThreadSlug } from "./standaloneThreadRoute.ts"
-import { displayTitle, needsAction, partitionActive, sectionThreads, type SectionedThreads } from "../groups.ts"
+import { displayTitle, needsAction, orderQueue, partitionActive, sectionThreads, type QueueDirection, type SectionedThreads } from "../groups.ts"
 import { prefs } from "./prefs.ts"
 import { archivingAtNow, clearArchived, markArchived, optimisticallyArchived } from "./optimisticArchive.ts"
 import { completionArchivesImmediately } from "./threadLifecycle.ts"
@@ -17,32 +17,50 @@ import { completionArchivesImmediately } from "./threadLifecycle.ts"
 // ⋯ sheet. Both must pick the same next thread and restore the same way, so neither owns a copy.
 
 /**
- * The phone board's Queue and Running tabs, cut from the rail's own Queue/Running split
- * (`partitionActive`), so a row sits in the same band on both shells.
+ * The phone board's Pinned, Queue and Running tabs, cut from the rail's own bands (`sectionThreads`'s
+ * pinned shelf, then `partitionActive`'s Queue/Running split), so a row sits in the same band on both
+ * shells.
  *
- * Queue, top to bottom: pinned first (the phone has no pinned band, and `sectionThreads` diverts a pinned
- * thread out of every other band, so the shelf folds into the top of the Queue rather than rowing
- * nowhere), then the asks, then the rested handoffs, each in the queue's own order. Running is the rail's
+ * Pinned is the rail's Pinned shelf, in its order (oldest pin first). It was folded into the top of the
+ * Queue until 2026-11-19 (maintainer: "pinned threads show up in the queue tab, which I hate. It should
+ * be its own thing"), since the phone had no band for it and `sectionThreads` diverts a pinned thread out
+ * of every other one.
+ *
+ * Queue is every other waiting row in the ONE time order the desktop cue uses (`orderQueue`), asks and
+ * handoffs together, so "Oldest first" / "Newest first" is true of every row it lists. An ask is told
+ * apart by its "?" mark and the header's "N need you", not by its place. (Asks led the Queue until
+ * colinhacks/frizz#78: the desktop cue dropped its own attention band on 2026-07-21, and since the
+ * Running tab split off on 2026-11-11 the phone's Queue holds the cue's rows.) Running is the rail's
  * Running band, newest entry first.
  *
  * ONE DEPARTURE FROM THE RAIL: every ask is in the Queue, whichever band the server's queue bit puts it
- * in. The tab's lit count is every ask on the board (`boardAskThread`), and a phone shows one band at a
- * time, so an ask rowed under Running would be counted on a tab that does not list it.
+ * in. The header's "N need you" counts every ask on the board (`boardAskThread`), and a phone shows one
+ * band at a time, so an ask rowed under Running would be counted where nobody looks for it.
  */
-export function phoneBands(sections: SectionedThreads): { queue: ThreadView[]; running: ThreadView[] } {
+export function phoneBands(sections: SectionedThreads, direction: QueueDirection): { pinned: ThreadView[]; queue: ThreadView[]; running: ThreadView[] } {
   const { running, rested } = partitionActive(sections.active)
+  const runningAsks = running.filter(needsAction)
+  // `rested` arrives in `orderQueue` order already (sectionThreads → orderActive); only an ask lifted
+  // out of Running needs sorting into it.
+  if (runningAsks.length === 0) return { pinned: sections.pinned, queue: rested, running }
   return {
-    queue: [...sections.pinned, ...sections.active.filter(needsAction), ...rested.filter((t) => !needsAction(t))],
+    pinned: sections.pinned,
+    queue: orderQueue([...rested, ...runningAsks], direction),
     running: running.filter((t) => !needsAction(t)),
   }
 }
 
 /**
- * The phone's Queue tab, the SAME composition MobileBoard renders (`phoneBands`) — Done advancing to a row
- * the board would not have put next would make the loop feel random.
+ * The triage loop's order: the Pinned tab, then the Queue tab, the order the tabs sit in, as the desktop
+ * pane steps through the pinned band before the queue (ThreadPane usePaneQueue). Built from the SAME bands
+ * MobileBoard renders (`phoneBands`): Done advancing to a row the board would not have put next would make
+ * the loop feel random. Only a row holding a queue card takes a turn (`nextThreadNeedingYou`), and a
+ * pinned thread queues only its asks (maintainer 2026-11-06), so the loop stops at a pinned thread's
+ * question and passes over its plain report.
  */
 export function phoneQueue(threads: readonly ThreadView[], direction = prefs.queueOrder): ThreadView[] {
-  return phoneBands(sectionThreads(threads, direction)).queue
+  const { pinned, queue } = phoneBands(sectionThreads(threads, direction), direction)
+  return [...pinned, ...queue]
 }
 
 /**
