@@ -86,6 +86,8 @@ import type {
   OwnThreadActivityResult,
   ListThreadsInput,
   ListThreadsResult,
+  FindThreadsInput,
+  FindThreadsResult,
   OwnThreadTimersResult,
   SetThreadPinnedInput,
   ReorderPinnedThreadsInput,
@@ -368,6 +370,8 @@ export interface Api {
   listOwnThreadActivity(input: ListOwnThreadActivityInput): Promise<OwnThreadActivityResult>
   // `frizzctl threads` — a worker's read of a board; the browser has the board itself.
   listThreads(input: ListThreadsInput): Promise<ListThreadsResult>
+  // `frizzctl threads --find` — a worker's search of every board by a thread's name.
+  findThreads(input: FindThreadsInput): Promise<FindThreadsResult>
   // Event-snooze the awaiting-background card: hide it until the thread's own background work returns
   // (the parent comes to a NEW rest). No deadline and no scheduler — the board re-surfaces it the moment
   // rested_at advances. `sessionId` binds the click to the session the tab was looking at.
@@ -579,6 +583,7 @@ export const PROCEDURES = {
   listOwnThreadTimers: "mutation",
   listOwnThreadActivity: "mutation",
   listThreads: "mutation",
+  findThreads: "mutation",
   snoozeAwaitingBackground: "mutation",
   setHumanTodo: "mutation",
   forgetThread: "mutation",

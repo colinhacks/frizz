@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
-import { parseThreadMessage, type BoardSnapshot } from "@frizz/shared"
+import { parseThreadMessage, type BoardSnapshot, type ThreadView } from "@frizz/shared"
 import type { BoardManager } from "./board.ts"
 import { Bus, Emitter } from "./bus.ts"
 import type { AppContext } from "./context.ts"
@@ -191,6 +191,39 @@ test("refusals name the fix: an ambiguous slug, an unknown project, a closed one
     /no thread `no-such-thread` in this project or any other open one/,
   )
   assert.equal(nub.sent.length + zod.sent.length + other.sent.length + frizz.sent.length, 0, "a refused steer reaches no worker")
+})
+
+// A worker is told about threads by name ("tell the releaser"), and a steer takes a slug. Handed a name, it
+// sends nothing and says which threads the name matches, wherever they are.
+test("a steer handed a thread's name instead of its slug sends nothing and names the threads it matches", async (t) => {
+  const home = homeSandbox(t)
+  const frizz = tenant(home, FRIZZ, "frizz")
+  const nub = tenant(home, NUB, "nub")
+  t.after(serve(frizz, nub))
+  frizz.thread("sender")
+  frizz.thread("cut-a-patch", "Releaser")
+  nub.thread("ship-nub", "Releaser for nub")
+  const view = (slug: string, title: string, over: Record<string, unknown> = {}) =>
+    ({ id: slug, title, titleAuto: false, kind: "session", state: "open", runtime: "turn-idle", subAgents: [], bgShells: [], watches: [], questions: [], ...over }) as unknown as ThreadView
+  ;(await frizz.ctx.board.snapshot()).threads.push(view("sender", "sender"), view("cut-a-patch", "Releaser", { runtime: "running" }))
+  ;(await nub.ctx.board.snapshot()).threads.push(view("ship-nub", "Releaser for nub", { needsYou: true }))
+
+  await assert.rejects(
+    frizz.router.steerThread.handler({ input: { from: "sender", to: "the releaser", message: "0.15.60 is ready" } }),
+    new RegExp(
+      "no thread has the slug `the releaser`, so nothing was sent\\. Threads whose name matches it: " +
+      "`cut-a-patch` «Releaser» \\(this project, active\\); `ship-nub` «Releaser for nub» \\(project `nub`, rested\\)\\. " +
+      "Pass the slug of the one you mean",
+    ),
+  )
+  assert.equal(frizz.sent.length + nub.sent.length, 0, "a name is never delivered on a guess")
+  // A slug still goes straight through, and a name nothing matches keeps the plain refusal.
+  await frizz.router.steerThread.handler({ input: { from: "sender", to: "cut-a-patch", message: "0.15.60 is ready" } })
+  assert.equal(frizz.sent.length, 1)
+  await assert.rejects(
+    frizz.router.steerThread.handler({ input: { from: "sender", to: "nothing called this", message: "x" } }),
+    /no thread `nothing called this` in this project or any other open one/,
+  )
 })
 
 // A worker knows a sibling by the session id in its scratch path as often as by the slug in its link, and

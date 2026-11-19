@@ -186,9 +186,11 @@ test("a child's last words are waited for, and a child that spoke again meanwhil
   await scheduler.stop()
 })
 
-test("a child rest Frizz is still nudging is not reported until the child has answered", async (t) => {
+// A CHILD'S BARE REST IS ITS HANDOFF (2026-11-19). Until the sign-off reminder was retired (scheduler SOURCE 9)
+// the child was nudged first and its parent heard nothing until it answered; now the rest is reported as it
+// stands, and nothing is sent to the child.
+test("a child's bare rest is reported to its parent at once, with nothing sent to the child", async (t) => {
   const { storage, project } = sandbox(t)
-  // Dispatched after the cut that requires a `status:` answer, so a bare rest earns the sign-off nudge.
   storage.upsertSession(row("parent", { spawned_at: new Date().toISOString() }))
   storage.upsertSession(row("child", { spawned_at: new Date().toISOString() }))
   storage.setParentSlug("child", "parent")
@@ -199,18 +201,52 @@ test("a child rest Frizz is still nudging is not reported until the child has an
   ])
   const tailer = tailerOf(map)
   const board = createBoard(project, storage, new Bus(), tailer, "boot")
-  const delivered: unknown[] = []
+  const delivered: { message: string }[] = []
   const resumes: string[] = []
   const scheduler = createScheduler({
     storage, tailer, log: () => {}, wakeQuietWindowMs: 0, now: () => now,
     resume: (slug) => void resumes.push(slug),
     boardThreads: async () => (await board.rebuild()).threads,
     lastAssistantText: () => "Looked into it.",
+    deliverToThread: async (sent) => void delivered.push(sent as { message: string }),
+  })
+  await scheduler.tick()
+  assert.deepEqual(resumes, [], "nothing is sent to the child")
+  assert.equal(delivered.length, 1, "its parent hears the rest")
+  assert.match(delivered[0]!.message, /Looked into it\./)
+  await scheduler.stop()
+})
+
+// …BUT NOT WHILE FRIZZ IS STILL CORRECTING THE CHILD: a park naming a dead shell earns the child a correction,
+// and its parent hears nothing until the child has answered it.
+test("a child rest Frizz is still correcting is not reported until the child has answered", async (t) => {
+  const { storage, project } = sandbox(t)
+  storage.upsertSession(row("parent", { spawned_at: new Date().toISOString() }))
+  storage.upsertSession(row("child", { spawned_at: new Date().toISOString() }))
+  storage.setParentSlug("child", "parent")
+  const now = Date.now()
+  const park = "```awaiting\nshells: [bghost]\nstatus: working\nfor: 1h\n```"
+  const map = new Map<string, SessionTelemetry>([
+    ["parent", tele({ turn: "in-flight" })],
+    ["child", tele({
+      lastUserAt: new Date(now - 120_000).toISOString(), lastAssistantAt: new Date(now - 60_000).toISOString(), lastAssistant: park,
+      lastFence: { kind: "awaiting", body: "", hints: [{ kind: "shell", value: "bghost" }, { kind: "status", value: "working" }, { kind: "for", value: "1h" }] },
+    })],
+  ])
+  const tailer = tailerOf(map)
+  const board = createBoard(project, storage, new Bus(), tailer, "boot")
+  const delivered: unknown[] = []
+  const resumes: string[] = []
+  const scheduler = createScheduler({
+    storage, tailer, log: () => {}, wakeQuietWindowMs: 0, now: () => now,
+    resume: (slug) => void resumes.push(slug),
+    boardThreads: async () => (await board.rebuild()).threads,
+    lastAssistantText: () => park,
     deliverToThread: async (sent) => void delivered.push(sent),
   })
   await scheduler.tick()
-  assert.deepEqual(resumes, ["child"], "the child is nudged to sign off")
-  assert.equal(delivered.length, 0, "and its parent hears nothing while that nudge is out")
+  assert.deepEqual(resumes, ["child"], "the child is told its park names nothing running")
+  assert.equal(delivered.length, 0, "and its parent hears nothing while that correction is out")
   await scheduler.stop()
 })
 

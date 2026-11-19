@@ -12,7 +12,7 @@ import { registerProject } from "./project-registry.ts"
 import { createRouter } from "./router.ts"
 import { createStorage } from "./storage.ts"
 import type { Tailer } from "./tailer.ts"
-import { listBoardThreads } from "./thread-listing.ts"
+import { findBoardThreads, listBoardThreads, nameMatch, queryWords } from "./thread-listing.ts"
 
 // `frizzctl threads` reads a board through `listThreads`. What is pinned: each thread lands in the band
 // the SIDEBAR draws it in (the shared predicates, not a re-derivation), with the title the sidebar shows;
@@ -190,4 +190,65 @@ test("`listThreads` reads this board, or another project's from that project's o
     assert.match(err.message, /`nub`/)
     return true
   })
+})
+
+// `frizzctl threads --find`: a thread by the words a human uses for it. The releaser is the case it exists
+// for: the human calls it "the releaser", its title is "Releaser", and its slug is `cut-a-patch`.
+
+test("a name matches when every word in it starts a word of the thread's title, slug or other name", () => {
+  assert.deepEqual(queryWords("the releaser thread"), ["releaser"], "the words around a name are dropped")
+  assert.deepEqual(queryWords("the thread"), ["the", "thread"], "unless they are all there is")
+  const releaser = { id: "cut-a-patch", title: "cut a patch", aiTitle: undefined, shown: "Releaser" }
+  assert.deepEqual(nameMatch(releaser, "Releaser"), { rank: 0 }, "the title itself")
+  assert.deepEqual(nameMatch(releaser, "the release thread"), { rank: 1 }, "a word the title's word starts with")
+  assert.deepEqual(nameMatch(releaser, "releasers"), { rank: 1 }, "a longer form of the title's word")
+  assert.deepEqual(nameMatch(releaser, "cut-a-patch"), { rank: 0 }, "the slug itself")
+  assert.deepEqual(nameMatch(releaser, "patch"), { rank: 2 }, "a word of the slug")
+  assert.equal(nameMatch(releaser, "lease"), null, "the middle of a word is not a match")
+  assert.equal(nameMatch({ id: "prep", title: "", aiTitle: undefined, shown: "Prepare the nub release" }, "the releaser"), null, "a longer word is not a match, only a plural")
+  assert.equal(nameMatch(releaser, "releaser cache"), null, "every word has to match")
+
+  // Claude named it; the name it was dispatched with still finds it, and says so.
+  const renamedByWorker = { id: "if-we-dont-already", title: "Thread listing command", aiTitle: "Frizz CLI thread listing", shown: "Frizz CLI thread listing" }
+  assert.deepEqual(nameMatch(renamedByWorker, "listing command"), { rank: 3, matchedName: "Thread listing command" })
+  // A placeholder is not a name anybody uses.
+  assert.equal(nameMatch({ id: "x-y", title: "", aiTitle: undefined, shown: "Spinning up a thread…" }, "spinning up"), null)
+})
+
+test("a search reads every board and every band, Done included, best match first, then open before Done", () => {
+  const frizz = { slug: "frizz", id: "proj-frizz", name: "frizz" }
+  const nub = { slug: "nub", id: "proj-nub", name: "nub" }
+  const found = findBoardThreads("release", [
+    { project: frizz, threads: [
+      thread("cut-a-patch", { title: "Releaser", titleAuto: false, runtime: "running", lastActivityAt: at(1_000) }),
+      thread("old-release-notes", { title: "Release notes for 0.15.28", titleAuto: false, state: "archived", archived: true, runtime: "exited", archivedAt: at(86400_000) }),
+      thread("unrelated", { title: "Fix the resolver cache", titleAuto: false }),
+    ] },
+    { project: nub, threads: [
+      thread("nub-release-prep", { title: "Prepare the 0.10 release", titleAuto: false, needsYou: true, lastActivityAt: at(60_000) }),
+      thread("legacy-file-row", { kind: "legacy", title: "release" }),
+    ] },
+  ], { nowMs: NOW })
+  assert.equal(found.projects, 2)
+  assert.equal(found.total, 3, "the legacy row the sidebar never draws is not a match")
+  assert.deepEqual(found.matches.map((m) => [m.project.slug, m.slug, m.band]), [
+    ["frizz", "cut-a-patch", "active"],
+    ["nub", "nub-release-prep", "rested"],
+    ["frizz", "old-release-notes", "done"],
+  ])
+  assert.equal(found.matches[0].title, "Releaser", "the title the sidebar shows")
+  assert.equal(findBoardThreads("release", [{ project: frizz, threads: [thread("a-release", { title: "A release", titleAuto: false })] }], { nowMs: NOW, limit: 0 }).total, 1, "the cap leaves the total")
+})
+
+test("`findThreads` searches this board and every other open project's", async (t) => {
+  const home = homeSandbox(t)
+  const frizz = tenant(home, "5d6e7f80-1a2b-4c3d-8e9f-0a1b2c3d4e5f", "frizz", [thread("cut-a-patch", { title: "Releaser", titleAuto: false, runtime: "running" })])
+  const nub = tenant(home, "0b1f3a52-58c4-4c6e-9d0e-7f8a2b3c4d5e", "nub", [thread("ship-it", { title: "Releaser for nub", titleAuto: false, state: "archived", archived: true, runtime: "exited" })])
+  for (const a of [frizz, nub]) a.tenants.push(...[frizz, nub].map((o) => ({ project: o.project, board: o.board, storage: o.storage })))
+  t.after(() => { frizz.storage.close(); nub.storage.close() })
+
+  const found = await frizz.router.findThreads.handler({ input: { query: "the releaser" } })
+  assert.equal(found.projects, 2)
+  assert.deepEqual(found.matches.map((m) => [m.project.slug, m.slug, m.band]), [["frizz", "cut-a-patch", "active"], ["nub", "ship-it", "done"]])
+  assert.equal((await frizz.router.findThreads.handler({ input: { query: "nothing like it" } })).total, 0)
 })

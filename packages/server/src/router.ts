@@ -54,6 +54,8 @@ import {
   ListOwnThreadActivityInput,
   ListThreadsInput,
   ListThreadsResult,
+  FindThreadsInput,
+  FindThreadsResult,
   OwnThreadActivityResult,
   UpsertOwnLinkInput,
   UpsertOwnLinkResult,
@@ -232,7 +234,7 @@ import { openLocalFile, readLocalMarkdown, resolveOpenableFile, readLocalTextFil
 import { openableFileRoots } from "./project.ts"
 import { registeredCheckoutRoot, registeredWorktreeRoots, resolvesToCommit } from "./worktree-changes.ts"
 import { resolveThreadLink, threadLinkView } from "./thread-links.ts"
-import { listBoardThreads } from "./thread-listing.ts"
+import { findBoardThreads, listBoardThreads } from "./thread-listing.ts"
 import { ghInstalled, ghAuthed, ghRepo, gitGithubRemote, gitRemoteConfig, isSearchRefusal, listItems, hydrateIssue, hydratePr, renderGithubPrompt, effectiveTemplate, DEFAULT_GITHUB_PROMPT } from "./github.ts"
 import { createGithubHovercardService } from "./github-hovercard.ts"
 import { cancelGithubSignIn, clearGithubCredential, githubAppClientId, githubCredentialStatus, githubSignInState, startGithubSignIn } from "./github-credential.ts"
@@ -1147,6 +1149,17 @@ export function createRouter(ctx: AppContext) {
    */
   function threadNamed(storage: Pick<Storage, "getSession" | "allSessions">, to: string): SessionRow | undefined {
     return storage.getSession(to) ?? storage.allSessions().find((row) => row.session_id === to)
+  }
+
+  /** Every board a name search reads: this project's first, then each other one this process has open.
+   *  The snapshots are the boards' cached ones. A board that has stopped (its project closing) is skipped. */
+  async function searchableBoards(): Promise<{ project: { slug: string; id: string; name: string }; threads: ThreadView[] }[]> {
+    const sources = [{ project: ctx.project, board: ctx.board }, ...otherOpenProjects()]
+    const read = await Promise.all(sources.map(async ({ project, board }) => {
+      const threads = await board.snapshot().then((snap) => snap.threads, () => undefined)
+      return threads ? { project: { slug: projectSlugOf(project.id), id: project.id, name: project.name }, threads } : undefined
+    }))
+    return read.filter((b) => b !== undefined)
   }
 
   /**
@@ -3178,6 +3191,20 @@ export function createRouter(ctx: AppContext) {
       }, async () => {
         const sender = ctx.storage.getSession(input.from)
         if (!sender) throw new RpcRefusal(`the calling thread ${input.from} is not registered in this project`)
+        // A NAME WHERE A SLUG GOES. Workers are told about threads by name ("tell the releaser"), and a
+        // steer only takes a slug. Handed a name, it says which threads that name matches and sends
+        // nothing: a message delivered to a thread picked by its title is a guess at who reads it.
+        const known = threadNamed(ctx.storage, input.to) || otherOpenProjects().some((open) => open.storage && threadNamed(open.storage, input.to))
+        if (!known) {
+          const { matches } = findBoardThreads(input.to, await searchableBoards(), { limit: 5 })
+          if (matches.length) {
+            const named = matches.map((m) => `\`${m.slug}\` «${m.title}» (${m.project.slug === projectSlugOf(ctx.project.id) ? "this project" : `project \`${m.project.slug}\``}, ${m.band})`)
+            throw new RpcRefusal(
+              `no thread has the slug \`${input.to}\`, so nothing was sent. Threads whose name matches it: ${named.join("; ")}. ` +
+              "Pass the slug of the one you mean, with `--project <slug>` for a thread on another project",
+            )
+          }
+        }
         const target = resolveSteerTarget(input.to, input.project)
         if (!target) {
           if (input.from === (threadNamed(ctx.storage, input.to)?.slug ?? input.to)) {
@@ -4207,6 +4234,14 @@ export function createRouter(ctx: AppContext) {
         const { threads } = await (open?.board ?? ctx.board).snapshot()
         return listBoardThreads(threads, { slug: projectSlugOf(project.id), id: project.id, name: project.name }, { all: input.all })
       },
+    }),
+
+    // `frizzctl threads --find`: a thread by the words a human uses for it, on every board this Frizz has
+    // open and in every band, Done included (thread-listing.ts findBoardThreads). A read, like listThreads.
+    findThreads: mutation({
+      input: FindThreadsInput,
+      output: FindThreadsResult,
+      handler: async ({ input }) => findBoardThreads(input.query, await searchableBoards()),
     }),
 
     // THE WATCHER REGISTRY WAS DELETED ON 2026-08-14 AND CAME BACK ON 2026-08-26, under two narrow verbs

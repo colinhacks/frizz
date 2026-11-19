@@ -14,9 +14,10 @@
 // LAST rounds: two PR-review wakes the worker quietly parked on pushed the hand-off they followed into the
 // collapsed middle, behind "7 more rounds" (maintainer 2026-11-06: "the sign-off is hidden by default").
 //
-// A REST WITH NO FENCE IS READ BY THE ANSWER TO FRIZZ'S REMINDER ABOUT IT. Frizz nudges a bare rest
-// (scheduler SOURCE 9, SIGNOFF_NUDGE_MARKER), and what the worker rests on next says who the bare one was
-// for: a sign-off makes it part of that sign-off (the worker wrote its write-up, forgot the fence, and
+// A REST WITH NO FENCE IS A SIGN-OFF: the worker's reply, waiting on the human. In a transcript written
+// while Frizz still reminded a bare rest to sign off (scheduler SOURCE 9, retired 2026-11-19, its wakes
+// carrying SIGNOFF_NUDGE_MARKER), it is read by the answer to that reminder, since what the worker rested
+// on next says who the bare one was for: a sign-off makes it part of that sign-off (the worker wrote its write-up, forgot the fence, and
 // added the fence on its own), and a quiet park takes it back (it was a status line). A bare rest nobody
 // has answered yet stays a sign-off, because that is what the board queued it as.
 //
