@@ -6,8 +6,8 @@
 //
 //   • signoff-buried — the human's ask, a first hand-off, a CI wake that ends in the big hand-off
 //                      (`status: needs_input`), then a review wake and a CI wake that each end in a
-//                      fence-only quiet park (`status: watching`). The big hand-off must stay on the card,
-//                      its awaiting card drawn, while the review round collapses.
+//                      fence-only quiet park (`status: watching`). Both hand-offs stay in view; the big
+//                      one draws its awaiting card, and the first keeps its words with no card.
 //   • signoff-nudged — the same, except the big write-up rests with NO fence, Frizz's sign-off reminder
 //                      wakes the worker, and it answers with the fence alone. Both stay.
 //

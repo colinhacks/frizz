@@ -2174,11 +2174,11 @@ function blankText(m: ChatMessage, text: string, staleAwaiting?: boolean, restin
 function settledFenceDraws(hints: readonly AwaitingHint[]): boolean {
   return awaitingSteps(hints).length > 0
 }
-// …or the newest sign-off's, which draws its card, or only its prose where it names questions or is a quiet
-// park (renderText).
+// …or a kept sign-off's: the newest draws its card, and an earlier one, one that names questions, or a quiet
+// park draws only its prose (renderText).
 function signOffFenceDraws(m: ChatMessage, fence: { hints: readonly AwaitingHint[]; body: string }): boolean {
   if (!m.keptSignOff) return false
-  return !(awaitingDefersToQuestions(fence.hints) || quietPark(fence.hints)) || awaitingProseBlock(fence.body) !== null
+  return (m.keptSignOff === "newest" && !(awaitingDefersToQuestions(fence.hints) || quietPark(fence.hints))) || awaitingProseBlock(fence.body) !== null
 }
 // A `status: working` or `watching` fence: the server keeps such a rest in view only for the words it carries
 // (server sign-offs.ts), and its wait was never the human's to read, so a kept one draws its prose alone.
@@ -4061,12 +4061,13 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, done
         // review parks quietly on the next rest, and the hand-off it is still standing on went with the
         // settled fences. The newest one since the human last spoke keeps its card, stated with no thread
         // as the steps card above is — no live rows, no verb — while the thread is at rest
-        // (ChatMessage.keptSignOff, lib/signOffs). Since 2026-11-16 every sign-off since then does: each
-        // says what is new since the one before it, so an earlier card is no copy of the newest. A fence
-        // that names questions keeps only its prose, which is all it draws when it is live, and so does a
-        // quiet park, kept since 2026-11-17 for its words alone (server sign-offs.ts).
+        // (ChatMessage.keptSignOff, lib/signOffs). Since 2026-11-16 every sign-off since then is kept too:
+        // each says what is new since the one before it, so an earlier one's words are no copy of the
+        // newest. Its wait is over, though, so it draws its prose and no card (`"earlier"`): one rest, one
+        // awaiting card. A fence that names questions keeps only its prose, which is all it draws when it
+        // is live, and so does a quiet park, kept since 2026-11-17 for its words alone (server sign-offs.ts).
         if (fseg.fenceKind === "awaiting" && staleAwaiting && !m.fenceRefused && !restingCardShown && m.keptSignOff) {
-          if (awaitingDefersToQuestions(fseg.hints) || quietPark(fseg.hints)) {
+          if (m.keptSignOff === "earlier" || awaitingDefersToQuestions(fseg.hints) || quietPark(fseg.hints)) {
             const prose = awaitingProseBlock(fseg.body)
             if (prose) push(<ProseHtml key={`${keyBase}-f${fi}`} md={prose} />)
           } else push(<AwaitingBackgroundCard key={`${keyBase}-f${fi}`} fence={{ body: fseg.body, hints: fseg.hints }} />)

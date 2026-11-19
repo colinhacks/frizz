@@ -19,7 +19,7 @@ import { restatedByRestingCard } from "../lib/restatedFences.ts"
 import { useSendNowKey } from "../lib/sendNowKey.ts"
 import { ComposerSendContext, SendScopeContext, useComposerSendHandle, useComposerSendPresent, useSendScope, type SendScope } from "../lib/sendScope.tsx"
 import { settledQuestionPositions, type SettledPlacement } from "../lib/settledQuestions.ts"
-import { restingDoneIndex, stretchSignOffs } from "../lib/signOffs.ts"
+import { latestSignOffs, restingDoneIndex, stretchSignOffs } from "../lib/signOffs.ts"
 import { stepsDoneReplies, type StepsReply } from "../lib/stepsAnswer.ts"
 import { replaceEqualDeep } from "@tanstack/react-query"
 import { QueueDismissContext, QueuedRunContext, ThreadSlugContext, type SurfaceExit } from "../lib/threadContexts.ts"
@@ -119,19 +119,24 @@ export function useThreadMessages(thread: ThreadView | undefined, loaded: ChatMe
 }
 
 /** Step 5: every sign-off since the human last spoke, marked `keptSignOff` on a thread AT REST, so each
- *  one's ```awaiting card is still drawn after a later round has made its fence stale (lib/signOffs). A
- *  sign-off says what is new since the one before it, so an earlier one's card is not a copy of the newest:
- *  a worker that writes its hand-off in the fence body, under `---`, says it there and nowhere else.
+ *  one's ```awaiting fence still says what it said after a later round has made it stale (lib/signOffs). A
+ *  sign-off says what is new since the one before it, so an earlier one's words are not a copy of the
+ *  newest: a worker that writes its hand-off in the fence body, under `---`, says it there and nowhere else.
+ *  Only the NEWEST keeps its card (`"newest"`, lib/signOffs latestSignOffs): it is the wait the thread rests
+ *  on. An earlier one's wait is over, so its fence draws its words and no card (`"earlier"`), and the queue
+ *  never shows two awaiting cards for one rest (signOffCard.e2e.test.ts).
  *  Not while the thread runs: a spinning thread is resting on nothing, and no awaiting card is drawn then
  *  (maintainer 2026-09-24: "When the agent is running, an awaiting card should never be shown at all"). */
 function useKeptSignOffs(messages: ChatMessage[], thread: ThreadView | undefined): ChatMessage[] {
   const running = thread?.runtime === "running" || thread?.runtime === "spawning"
   return useMemo(() => {
     if (running) return messages
-    const keep = stretchSignOffs(messages, lastHumanTurnIndex(messages))
+    const from = lastHumanTurnIndex(messages)
+    const keep = stretchSignOffs(messages, from)
     if (keep.length === 0) return messages
+    const newest = new Set(latestSignOffs(messages, from))
     const out = [...messages]
-    for (const i of keep) out[i] = { ...out[i], keptSignOff: true }
+    for (const i of keep) out[i] = { ...out[i], keptSignOff: newest.has(i) ? "newest" : "earlier" }
     return out
   }, [messages, running])
 }

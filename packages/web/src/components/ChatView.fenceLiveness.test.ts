@@ -148,7 +148,7 @@ test("a settled fence that handed the human steps keeps its card, with no thread
 // sign-off block is made visible"). A hand-off followed by quiet parks on PR reviews went with the settled
 // fences. Drawn with no thread, like the steps card, and only on the message the surface marked
 // (ChatMessage.keptSignOff, ThreadSurface useKeptSignOffs); a fence naming questions keeps only its
-// prose, as it does live. The emptiness predicates read the same mark, so the spacer walk sees the row
+// prose, as it does live, and so does an earlier sign-off, whose wait is over. The emptiness predicates read the same mark, so the spacer walk sees the row
 // it will draw. signOffCard.e2e.test.ts drives it on a real stack.
 test("the newest sign-off's settled fence keeps its card, with no thread behind it", () => {
   const render = renderText()
@@ -158,9 +158,10 @@ test("the newest sign-off's settled fence keeps its card, with no thread behind 
   assert.match(render, /staleAwaiting && !m\.fenceRefused && !restingCardShown && m\.keptSignOff\)/, "never for a refused fence, nor one the resting card states")
   const branch = render.slice(keep, render.indexOf("continue", keep + render.slice(keep).indexOf("} else push(")))
   // …and so does a quiet park, which the server keeps only for its words (server sign-offs.ts).
-  assert.match(branch, /if \(awaitingDefersToQuestions\(fseg\.hints\) \|\| quietPark\(fseg\.hints\)\) \{\n\s*const prose = awaitingProseBlock\(fseg\.body\)\n\s*if \(prose\) push\(<ProseHtml /)
+  // An EARLIER sign-off's wait is over: it keeps its words and no card, so one rest draws one card.
+  assert.match(branch, /if \(m\.keptSignOff === "earlier" \|\| awaitingDefersToQuestions\(fseg\.hints\) \|\| quietPark\(fseg\.hints\)\) \{\n\s*const prose = awaitingProseBlock\(fseg\.body\)\n\s*if \(prose\) push\(<ProseHtml /)
   assert.match(branch, /\} else push\(<AwaitingBackgroundCard key=\{`[^`]+`\} fence=\{\{ body: fseg\.body, hints: fseg\.hints \}\} \/>\)/, "no `thread`, so no rows and no verb")
-  assert.match(source, /function signOffFenceDraws\(m: ChatMessage, fence: \{ hints: readonly AwaitingHint\[\]; body: string \}\): boolean \{\n\s*if \(!m\.keptSignOff\) return false\n\s*return !\(awaitingDefersToQuestions\(fence\.hints\) \|\| quietPark\(fence\.hints\)\) \|\| awaitingProseBlock\(fence\.body\) !== null\n\}/)
+  assert.match(source, /function signOffFenceDraws\(m: ChatMessage, fence: \{ hints: readonly AwaitingHint\[\]; body: string \}\): boolean \{\n\s*if \(!m\.keptSignOff\) return false\n\s*return \(m\.keptSignOff === "newest" && !\(awaitingDefersToQuestions\(fence\.hints\) \|\| quietPark\(fence\.hints\)\)\) \|\| awaitingProseBlock\(fence\.body\) !== null\n\}/)
   assert.match(source, /function quietPark\(hints: readonly AwaitingHint\[\]\): boolean \{\n\s*const status = awaitingStatus\(hints\)\n\s*return status === "working" \|\| status === "watching"\n\}/)
 })
 
