@@ -701,19 +701,31 @@ a[href] {
 :root {
   --sbw: 7px;
 }
-::-webkit-scrollbar {
-  width: var(--sbw);
-  height: var(--sbw);
+/* ONLY UNDER A POINTER. A touch browser draws its own scrollbar over the content while a surface scrolls
+   and takes no width for it, until a page styles `::-webkit-scrollbar`: Chrome for Android answers that
+   with a classic bar of the width asked for, and `scrollbar-gutter: stable` (below) then reserves it for
+   good. Every sheet on a phone stopped 7px short of the screen's right edge, its hairlines with it
+   (2026-11-19). So under a finger there is no bar of ours, no gutter and no width to allow for. */
+@media (pointer: coarse) {
+  :root {
+    --sbw: 0px;
+  }
 }
-::-webkit-scrollbar-thumb {
-  background: var(--color-scrollbar);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-scrollbar-hover);
-}
-::-webkit-scrollbar-track {
-  background: transparent;
+@media not (pointer: coarse) {
+  ::-webkit-scrollbar {
+    width: var(--sbw);
+    height: var(--sbw);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-scrollbar);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-scrollbar-hover);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 .scrollbar-none {
   scrollbar-width: none; /* Firefox */
@@ -749,11 +761,13 @@ a[href] {
    which every scroll surface in the app uses) rather than `*` so that horizontal code/diff blocks
    (`overflow-x-auto`) don't grow a permanent bottom gutter, and `.scrollbar-none` surfaces — which
    have no scrollbar — reserve nothing. */
-.overflow-y-auto,
-.overflow-y-scroll,
-.overflow-auto,
-.overflow-scroll {
-  scrollbar-gutter: stable;
+@media not (pointer: coarse) {
+  .overflow-y-auto,
+  .overflow-y-scroll,
+  .overflow-auto,
+  .overflow-scroll {
+    scrollbar-gutter: stable;
+  }
 }
 
 ::selection {
