@@ -19,8 +19,8 @@ import { completionArchivesImmediately } from "./threadLifecycle.ts"
  * The phone board's Queue and Running tabs, cut from the rail's own Queue/Running split
  * (`partitionActive`), so a row sits in the same band on both shells.
  *
- * The pinned shelf leads the Queue, then all other rows share the selected time order. Running keeps
- * the rail's order, newest entry first.
+ * The pinned shelf always leads. Oldest first keeps the phone's default asks-first grouping;
+ * Newest first sorts the unpinned Queue as one list. Running keeps the rail's order.
  *
  * ONE DEPARTURE FROM THE RAIL: every ask is in the Queue, whichever band the server's queue bit puts it
  * in. The tab's lit count is every ask on the board (`boardAskThread`), and a phone shows one band at a
@@ -28,11 +28,13 @@ import { completionArchivesImmediately } from "./threadLifecycle.ts"
  */
 export function phoneBands(sections: SectionedThreads, direction: QueueDirection): { queue: ThreadView[]; running: ThreadView[] } {
   const { running, rested } = partitionActive(sections.active)
-  const asks = running.filter(needsAction)
-  if (asks.length === 0) return { queue: [...sections.pinned, ...rested], running }
+  const runningAsks = running.filter(needsAction)
+  const queue = direction === "fifo"
+    ? [...rested.filter(needsAction), ...runningAsks, ...rested.filter((t) => !needsAction(t))]
+    : runningAsks.length > 0 ? orderQueue([...rested, ...runningAsks], direction) : rested
   return {
-    queue: [...sections.pinned, ...orderQueue([...rested, ...asks], direction)],
-    running: running.filter((t) => !needsAction(t)),
+    queue: [...sections.pinned, ...queue],
+    running: runningAsks.length > 0 ? running.filter((t) => !needsAction(t)) : running,
   }
 }
 

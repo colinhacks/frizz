@@ -493,7 +493,7 @@ export function MobileBoard() {
   const statusView = snap.view.startsWith("status:") ? snap.view.slice(7) : null
 
   // A ROW ARRIVING, MOVING OR CHANGING HEIGHT ABOVE THE READER NEVER MOVES THEM (lib/readerPin). A thread
-  // that rests moves up into the asks, and iOS Safari has no scroll anchoring at all, so the list holds
+  // that rests can move into the Queue, and iOS Safari has no scroll anchoring at all, so the list holds
   // the row the reader is on itself: read here, off the rows this render replaces, measured from under
   // the fixed header, and put back by the layout effect below. On every change of the rows rather than
   // only of their order, because without anchoring a row above that grows a line pushes just the same.

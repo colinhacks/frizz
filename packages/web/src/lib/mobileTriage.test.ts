@@ -22,35 +22,40 @@ const ask = (id: string, at: string) => row(id, { pendingAsk, lastAssistantAt: a
 const rested = (id: string, at: string) => row(id, { lastAssistantAt: at })
 const running = (id: string) => row(id, { runtime: "running", needsYou: false })
 
-test("the phone Queue sorts asks and handoffs together in either direction, below pins", () => {
-  const older = ask("project-a~question", "2026-10-18T09:00:00Z")
-  const newer = rested("project-b~handoff", "2026-11-18T09:00:00Z")
+test("Newest first sorts the whole unpinned Queue; Oldest first still puts asks first", () => {
+  const oldAsk = ask("project-a~question", "2026-10-18T09:00:00Z")
+  const older = rested("project-a~older-handoff", "2026-09-18T09:00:00Z")
+  const newer = rested("project-b~recent-handoff", "2026-11-18T09:00:00Z")
   const pin = row("project-b~pin", { pinnedAt: "2026-10-15T09:00:00Z" })
   const worker = running("project-a~running")
-  const threads = [older, worker, pin, newer]
+  const threads = [older, oldAsk, worker, pin, newer]
   const fifo = phoneBands(sectionThreads(threads, "fifo"), "fifo")
   const lifo = phoneBands(sectionThreads(threads, "lifo"), "lifo")
-  assert.deepEqual(fifo.queue, [pin, older, newer])
-  assert.deepEqual(lifo.queue, [pin, newer, older])
+  assert.deepEqual(fifo.queue, [pin, oldAsk, older, newer])
+  assert.deepEqual(lifo.queue, [pin, newer, oldAsk, older])
   assert.deepEqual(lifo.running, [worker])
   assert.deepEqual(phoneQueue(threads, "lifo"), lifo.queue, "the triage loop walks the tab the board shows")
 })
 
-test("a native ask from Running still appears in the Queue at its sorted position", () => {
+test("a native ask from Running appears in Queue in both modes", () => {
   // A thread frozen at a native question dialog while its turn reads running: an ask by needsAction,
   // with no queue card from the server yet.
   const frozen = row("frozen", { runtime: "running", needsYou: false, pendingAsk, lastUserAt: "2026-09-30T09:00:00Z" })
   const older = rested("older", "2026-09-30T08:00:00Z")
   const newer = rested("newer", "2026-09-30T10:00:00Z")
-  const { queue, running: spinning } = phoneBands(sectionThreads([older, newer, frozen, running("w1")], "lifo"), "lifo")
-  assert.deepEqual(queue, [newer, frozen, older])
-  assert.deepEqual(spinning.map((t) => t.id), ["w1"])
+  const threads = [older, newer, frozen, running("w1")]
+  const lifo = phoneBands(sectionThreads(threads, "lifo"), "lifo")
+  const fifo = phoneBands(sectionThreads(threads, "fifo"), "fifo")
+  assert.deepEqual(lifo.queue, [newer, frozen, older])
+  assert.deepEqual(fifo.queue, [frozen, older, newer])
+  assert.deepEqual(lifo.running.map((t) => t.id), ["w1"])
+  assert.deepEqual(fifo.running, lifo.running)
 })
 
-test("Done opens the next queue card in the selected time order", () => {
-  const threads = [rested("r1", "2026-09-30T09:00:00.000Z"), ask("a1", "2026-09-30T09:30:00.000Z"), rested("current", "2026-09-30T08:00:00.000Z")]
-  assert.equal(nextThreadNeedingYou(threads, "current", "fifo", {})?.id, "r1")
-  assert.equal(nextThreadNeedingYou(threads, "current", "lifo", {})?.id, "a1")
+test("Done opens the next queue card in the tab's order", () => {
+  const threads = [rested("r1", "2026-09-30T10:00:00.000Z"), ask("a1", "2026-09-30T09:30:00.000Z"), rested("current", "2026-09-30T08:00:00.000Z")]
+  assert.equal(nextThreadNeedingYou(threads, "current", "fifo", {})?.id, "a1")
+  assert.equal(nextThreadNeedingYou(threads, "current", "lifo", {})?.id, "r1")
 })
 
 test("a running thread never needs you, so the loop skips it; with nothing left it is undefined", () => {
