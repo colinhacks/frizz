@@ -19,8 +19,14 @@ import { completionArchivesImmediately } from "./threadLifecycle.ts"
  * The phone board's Queue and Running tabs, cut from the rail's own Queue/Running split
  * (`partitionActive`), so a row sits in the same band on both shells.
  *
- * The pinned shelf always leads. Oldest first keeps the phone's default asks-first grouping;
- * Newest first sorts the unpinned Queue as one list. Running keeps the rail's order.
+ * Queue, top to bottom: pinned first (the phone has no pinned band, and `sectionThreads` diverts a pinned
+ * thread out of every other band, so the shelf folds into the top of the Queue rather than rowing
+ * nowhere), then every other row in the ONE time order the desktop cue uses (`orderQueue`), asks and
+ * handoffs together, so "Oldest first" / "Newest first" is true of every row it lists. An ask is told
+ * apart by its "?" mark and the tab's lit count, not by its place. (Asks led the Queue until
+ * colinhacks/frizz#78: the desktop cue dropped its own attention band on 2026-07-21, and since the
+ * Running tab split off on 2026-11-11 the phone's Queue holds the cue's rows.) Running is the rail's
+ * Running band, newest entry first.
  *
  * ONE DEPARTURE FROM THE RAIL: every ask is in the Queue, whichever band the server's queue bit puts it
  * in. The tab's lit count is every ask on the board (`boardAskThread`), and a phone shows one band at a
@@ -29,12 +35,12 @@ import { completionArchivesImmediately } from "./threadLifecycle.ts"
 export function phoneBands(sections: SectionedThreads, direction: QueueDirection): { queue: ThreadView[]; running: ThreadView[] } {
   const { running, rested } = partitionActive(sections.active)
   const runningAsks = running.filter(needsAction)
-  const queue = direction === "fifo"
-    ? [...rested.filter(needsAction), ...runningAsks, ...rested.filter((t) => !needsAction(t))]
-    : runningAsks.length > 0 ? orderQueue([...rested, ...runningAsks], direction) : rested
+  // `rested` arrives in `orderQueue` order already (sectionThreads → orderActive); only an ask lifted
+  // out of Running needs sorting into it.
+  if (runningAsks.length === 0) return { queue: [...sections.pinned, ...rested], running }
   return {
-    queue: [...sections.pinned, ...queue],
-    running: runningAsks.length > 0 ? running.filter((t) => !needsAction(t)) : running,
+    queue: [...sections.pinned, ...orderQueue([...rested, ...runningAsks], direction)],
+    running: running.filter((t) => !needsAction(t)),
   }
 }
 
