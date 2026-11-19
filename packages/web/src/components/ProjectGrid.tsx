@@ -687,6 +687,7 @@ function MobileProjectList({ projects, home }: { projects: readonly ProjectCard[
         <p className="m-0 px-10 pt-24 text-center text-[15px] text-muted">No projects yet. Add one from Frizz on a computer.</p>
       ) : (
         <ul className="m-0 list-none p-0 pb-[env(safe-area-inset-bottom)]">
+          <MobileAllProjectsRow projects={projects} counts={counts.data} />
           {projects.map((project) => {
             const c = counts.data?.[project.id]
             return (
@@ -701,8 +702,11 @@ function MobileProjectList({ projects, home }: { projects: readonly ProjectCard[
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate text-[15.5px] font-medium leading-[20px] text-fg">{project.name}</span>
-                    <span className="truncate font-mono-keep text-[12.5px] leading-[17px] text-muted" title={project.path}>
-                      {project.stale ? "Directory is missing" : shortPath(project.path, home)}
+                    {/* A path keeps its END, the folder that tells it from its neighbours: the box runs right
+                        to left so the ellipsis lands on the left, and the isolate keeps the path itself
+                        left to right. Cut at the end, five projects under one parent read as one line. */}
+                    <span className={`truncate font-mono-keep text-[12.5px] leading-[17px] text-muted ${project.stale ? "" : "text-left [direction:rtl]"}`} title={project.path}>
+                      {project.stale ? "Directory is missing" : <bdi>{shortPath(project.path, home)}</bdi>}
                     </span>
                   </span>
                   {c && (c.asks > 0 || c.running > 0) ? (
@@ -719,6 +723,57 @@ function MobileProjectList({ projects, home }: { projects: readonly ProjectCard[
       )}
       {showSettings ? <SettingsDrawer /> : null}
     </div>
+  )
+}
+
+/** The phone folder's insides, the tile's at the list's 34px: 1 + 3 + 11.5 + 3 + 11.5 + 3 + 1. */
+const ROW_FOLDER_ICON = 11.5
+const ROW_FOLDER_INSET = 3
+
+/**
+ * THE PHONE'S WAY TO THE CONSOLE: the list's first row, the grid's "All projects" tile as a row
+ * (AllProjectsTile has the folder's and the two-projects rules). The phone had no way there but a typed
+ * address until 2026-11-19, though its board draws the Console and that board's ← comes back to this list:
+ * the page that answers "what needs me" across every project, which is what a phone is opened for. Its
+ * numbers are the rows' own, summed: what awaits an answer in the accent, what is running beside it.
+ */
+function MobileAllProjectsRow({ projects, counts }: { projects: readonly ProjectCard[]; counts: Record<string, ProjectRailCounts> | undefined }) {
+  const open = projects.filter((p) => !p.stale)
+  if (open.length < 2) return null
+  let asks = 0
+  let running = 0
+  for (const p of open) {
+    asks += counts?.[p.id]?.asks ?? 0
+    running += counts?.[p.id]?.running ?? 0
+  }
+  const inPlay = (p: ProjectCard) => (counts?.[p.id]?.queued ?? 0) + (counts?.[p.id]?.running ?? 0)
+  const shown = [...open].sort((a, b) => inPlay(b) - inPlay(a)).slice(0, FOLDER_PROJECTS)
+  return (
+    <li>
+      <Link to={CONSOLE_PATH} data-mobile-console-row className="flex min-h-[62px] items-center gap-3 border-b border-border/70 px-[18px] py-2 active:bg-hover">
+        <span
+          aria-hidden
+          className="grid shrink-0 content-start rounded-[30%] border border-border bg-elevated"
+          style={{ width: CARD_ICON, height: CARD_ICON, padding: ROW_FOLDER_INSET, gap: ROW_FOLDER_INSET, gridTemplateColumns: `repeat(2, ${ROW_FOLDER_ICON}px)` }}
+        >
+          {shown.map((project) => (
+            <ProjectSquare key={project.id} project={project} size={ROW_FOLDER_ICON} />
+          ))}
+        </span>
+        {/* One line of text, so the numbers share the name's BASELINE. Centred as two boxes, the way a
+            project's row centres its numbers on a name and a path, they rode 1.75px above it (measured
+            2026-11-19, 393px wide: 91.75 against 93.5). */}
+        <span className="flex min-w-0 flex-1 items-baseline gap-3">
+          <span className="min-w-0 flex-1 truncate text-[15.5px] font-medium leading-[20px] text-fg">All projects</span>
+          {asks > 0 || running > 0 ? (
+            <span data-mobile-project-counts className="flex shrink-0 items-baseline gap-2.5 whitespace-nowrap text-[13px] text-muted">
+              {asks > 0 ? <span className="font-bold tabular-nums text-accent">{asks}</span> : null}
+              {running > 0 ? <span className="tabular-nums">{running} working</span> : null}
+            </span>
+          ) : null}
+        </span>
+      </Link>
+    </li>
   )
 }
 
