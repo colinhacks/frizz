@@ -29,7 +29,9 @@ export function DrawerStopCheck({
         disabled={stopping}
         onClick={onStop}
         onMouseDown={(event) => event.preventDefault()}
-        className={HEADER_ICON_CLASS}
+        // On a touch screen the 28px square keeps its place on the bar and takes a 44px hit area: the one
+        // control on a phone's sheet that ends a run, it was the smallest target on it.
+        className={`${HEADER_ICON_CLASS} relative pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:[&>svg]:size-[18px]`}
       >
         {stopping ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} strokeWidth={2} />}
       </button>
