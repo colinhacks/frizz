@@ -1481,8 +1481,8 @@ async function activity() {
     return (
       "Nothing is running on this thread — no background shells, no sub-agents, no armed timers, no " +
       "registered PRs, and no open questions.\n\nSo there is nothing to wait on: an ```awaiting fence " +
-      "would have nothing to name, and a fence naming nothing is not a park. End with ```done, or " +
-      "ask a ```question if you need the human." + linksBlock
+      "would have nothing to name. End finished work with ```done, ask a ```question if you need the " +
+      "human's decision, or rest on your reply with no fence if your message is what they need." + linksBlock
     )
   }
   const lines = items.map((i) => {

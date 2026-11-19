@@ -2287,8 +2287,8 @@ export function parkExpiredWakeMessage(status: readonly string[]): string {
     ...status,
     "",
     "Re-park if they are genuinely still going — there is no limit on that, and a long job is not a",
-    "failure. If something is finished, read its result. If nothing is left, end in ```done, or ask",
-    "the human in a ```question fence.",
+    "failure. If something is finished, read its result. If nothing is left, end in ```done, ask the",
+    "human in a ```question fence, or rest on your reply with no fence.",
   ].join("\n")
 }
 
@@ -2302,7 +2302,7 @@ export function parkFinishedWakeMessage(status: readonly string[], several: bool
     "READ ITS OUTPUT AND CARRY ON. This is not a broken fence and there is nothing to fix: the wait",
     "you declared simply ended. Do NOT relaunch the same work — its result is already on disk.",
     "",
-    "Then park on whatever comes next, or end in ```done or a ```question if nothing is left.",
+    "Then park on whatever comes next. If nothing is left, end in ```done, a ```question, or your reply with no fence.",
   ].join("\n")
 }
 

@@ -2960,8 +2960,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           "in a sentence breaks the YAML, which is why `reason:` is gone.",
           "",
           "`frizzctl activity` lists everything you have running, and prints it back as a ready-to-paste",
-          "fence. If you are not waiting on anything, you are not awaiting — end with ```done, or ask the",
-          "human in a ```question fence.",
+          "fence. If you are not waiting on anything, you are not awaiting — end with ```done, ask the",
+          "human in a ```question fence, or rest on your reply with no fence.",
         ].join("\n")
         : nameless
         ? [
@@ -3000,8 +3000,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           ...status,
           "",
           "Use `frizzctl activity` to read back what you actually have out, with the exact id each line",
-          "needs, then re-fence naming only those — or end in ```done or a ```question fence if there is",
-          "nothing left to wait for.",
+          "needs, then re-fence naming only those. With nothing left to wait for, end in ```done, a",
+          "```question fence, or your reply with no fence.",
         ].join("\n")
 
       const cause = retired.length > 0 ? "retired" : nameless ? "nameless" : expired ? "expired" : "dead"
