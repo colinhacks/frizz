@@ -137,17 +137,18 @@ export function RestartOverlay({
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-danger-fill/15 text-danger-soft">
               <AlertTriangle aria-hidden="true" size={14} strokeWidth={2.25} />
             </span>
-            <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg">{STALLED_HEADING}</h2>
+            <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-fg pointer-coarse:text-[16px]">{STALLED_HEADING}</h2>
             <button
               type="button"
               aria-label="Dismiss"
               onClick={() => setDismissed(true)}
-              className="icon-focus-outline -mr-1 ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong"
+              // On a touch screen the 24px square keeps its place in the row and takes a 44px hit area around it.
+              className="icon-focus-outline relative -mr-1 ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5"
             >
               <X aria-hidden="true" size={14} strokeWidth={2.25} />
             </button>
           </div>
-          <p aria-live="polite" className="mt-2.5 text-[12px] leading-relaxed text-muted">{stalledRestartCopy(silentFor)}</p>
+          <p aria-live="polite" className="mt-2.5 text-[12px] leading-relaxed text-muted pointer-coarse:text-[14.5px]">{stalledRestartCopy(silentFor)}</p>
         </div>
       </div>
     )
@@ -197,11 +198,11 @@ export function RestartOverlay({
         <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-fg/10 text-fg">
           <RefreshCw size={20} strokeWidth={2.25} className="animate-spin" aria-hidden="true" />
         </span>
-        <h2 className="mt-4 text-[15px] font-semibold tracking-[-0.01em] text-fg">{RESTART_HEADING}</h2>
-        <p className="mt-2 text-[12.5px] leading-relaxed text-muted">{RESTART_BODY}</p>
+        <h2 className="mt-4 text-[15px] font-semibold tracking-[-0.01em] text-fg pointer-coarse:text-[17px]">{RESTART_HEADING}</h2>
+        <p className="mt-2 text-[12.5px] leading-relaxed text-muted pointer-coarse:text-[15px]">{RESTART_BODY}</p>
         {/* Only the supervisor's changing status line is a live region, so a screen reader isn't
             re-read the whole dialog each poll; alertdialog already announces the rest once on open. */}
-        {detail && <p aria-live="polite" className="mt-2 text-[11.5px] leading-relaxed text-muted-80">{detail}</p>}
+        {detail && <p aria-live="polite" className="mt-2 text-[11.5px] leading-relaxed text-muted-80 pointer-coarse:text-[13px]">{detail}</p>}
       </div>
     </div>
   )

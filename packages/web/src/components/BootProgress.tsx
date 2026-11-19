@@ -9,6 +9,10 @@ import { LiveDot } from "./LiveDot.tsx"
 // update button. Every word and number comes from the view, so the three agree: this file only lays
 // them out, in the recovery page's rhythm (a 14px mark column, the label with a mono version, a short
 // reading at the right, and under a download a bar and a line of bytes, speed and time left).
+//
+// ON A TOUCH SCREEN the card takes the phone shell's sizes, as the recovery page does (its
+// `@media(pointer:coarse)` rules carry the same numbers, and the reason for each): 15px prose under a 17px
+// title, the readings a step up, and "Open Frizz now" a thumb's height where it was 28px.
 
 /** The recovery page's sentence under its heading (supervisor-pages.ts RECOVERY_PROGRESS_DETAIL). */
 export const BOOT_PROGRESS_DETAIL = "Running threads keep working. The board opens when it is ready."
@@ -64,10 +68,10 @@ export function BootSteps({ steps, className = "" }: { steps: BootViewStep[]; cl
             <div className="flex items-baseline gap-2.5">
               <span className={`min-w-0 ${step.state === "done" ? "text-muted" : step.state === "todo" ? "text-muted/70" : "text-fg"}`}>
                 {step.label}
-                {step.version ? <> <span className="font-mono text-[11.5px]">{step.version}</span></> : null}
+                {step.version ? <> <span className="font-mono text-[11.5px] pointer-coarse:text-[13.5px]">{step.version}</span></> : null}
                 <span className="sr-only">, {STEP_STATE_WORD[step.state]}</span>
               </span>
-              {step.note ? <span className="ml-auto whitespace-nowrap font-mono text-[11px] tabular-nums text-muted">{step.note}</span> : null}
+              {step.note ? <span className="ml-auto whitespace-nowrap font-mono text-[11px] tabular-nums text-muted pointer-coarse:text-[12.5px]">{step.note}</span> : null}
             </div>
             {typeof step.fraction === "number" ? (
               <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-fg/[0.09]">
@@ -78,7 +82,7 @@ export function BootSteps({ steps, className = "" }: { steps: BootViewStep[]; cl
               </div>
             ) : null}
             {step.meta ? (
-              <div className={`mt-[5px] font-mono text-[11px] tabular-nums ${step.state === "stalled" ? "text-[color-mix(in_srgb,var(--color-accent)_80%,var(--color-muted))]" : "text-muted"}`}>{step.meta}</div>
+              <div className={`mt-[5px] font-mono text-[11px] tabular-nums pointer-coarse:text-[12px] ${step.state === "stalled" ? "text-[color-mix(in_srgb,var(--color-accent)_80%,var(--color-muted))]" : "text-muted"}`}>{step.meta}</div>
             ) : null}
           </div>
         </li>
@@ -118,9 +122,9 @@ export function BootProgressCard({
       data-boot-progress={view.kind}
       // 28rem, two over the plain restart card: the sentence under the title fits one line, and a
       // download's line of bytes, speed and time left fits beside nothing.
-      className="w-[min(28rem,calc(100vw-2rem))] rounded-2xl border border-border-strong bg-elevated p-5 text-left text-[12.5px] leading-[1.55] text-fg shadow-2xl shadow-shadow-ink/60 outline-none"
+      className="w-[min(28rem,calc(100vw-2rem))] rounded-2xl border border-border-strong bg-elevated p-5 text-left text-[12.5px] leading-[1.55] text-fg shadow-2xl shadow-shadow-ink/60 outline-none pointer-coarse:text-[15px]"
     >
-      <h2 className="flex items-baseline gap-2.5 text-[15px] font-semibold tracking-[-0.01em] text-fg">
+      <h2 className="flex items-baseline gap-2.5 text-[15px] font-semibold tracking-[-0.01em] text-fg pointer-coarse:text-[17px]">
         {/* A baseline-aligned item with no text of its own contributes its border-box BOTTOM as its
             baseline, so the 6px dot's ink centre sits 3px above the baseline; `0.5cap` is half the
             resolved font's cap height, which puts it on the cap band's centre at any size (the
@@ -131,13 +135,13 @@ export function BootProgressCard({
           <LiveDot hue="agent" aria-hidden="true" style={{ transform: "translateY(calc(3px - 0.5cap))" }} />
         )}
         <span className="min-w-0">{view.title}</span>
-        {elapsed ? <span className="ml-auto whitespace-nowrap pl-2.5 font-mono text-[11px] font-normal tracking-normal tabular-nums text-muted">{elapsed}</span> : null}
+        {elapsed ? <span className="ml-auto whitespace-nowrap pl-2.5 font-mono text-[11px] font-normal tracking-normal tabular-nums text-muted pointer-coarse:text-[12.5px]">{elapsed}</span> : null}
       </h2>
       <p className="mt-1.5 text-muted">{BOOT_PROGRESS_DETAIL}</p>
       <BootSteps steps={view.steps} className="mt-3 border-t border-border pt-[11px]" />
       {callout || openNowError ? (
         <div data-boot-callout className="mt-3.5 rounded-[9px] border border-[color-mix(in_srgb,var(--color-accent)_22%,var(--color-border))] bg-panel px-3 pb-3 pt-[11px]">
-          <p aria-live="polite" className="text-[12px] leading-[1.55] text-muted">
+          <p aria-live="polite" className="text-[12px] leading-[1.55] text-muted pointer-coarse:text-[14px]">
             {openNowError ?? (
               <>
                 {callout?.lead ? <b className="font-semibold text-fg">{callout.lead} </b> : null}
@@ -152,7 +156,7 @@ export function BootProgressCard({
                 data-open-now
                 disabled={opening}
                 onClick={onOpenNow}
-                className="button-outline inline-flex items-center rounded-md bg-accent-fill px-2.5 py-[5px] text-[11.5px] font-semibold leading-[1.4] text-on-accent outline-none transition-[filter,opacity] hover:brightness-110 disabled:opacity-60"
+                className="button-outline inline-flex items-center rounded-md bg-accent-fill px-2.5 py-[5px] text-[11.5px] font-semibold leading-[1.4] text-on-accent outline-none transition-[filter,opacity] hover:brightness-110 disabled:opacity-60 pointer-coarse:min-h-[42px] pointer-coarse:rounded-[9px] pointer-coarse:px-4 pointer-coarse:py-0 pointer-coarse:text-[15px]"
               >
                 {opening ? "Opening" : "Open Frizz now"}
               </button>

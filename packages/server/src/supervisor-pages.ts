@@ -47,6 +47,10 @@ export function retryTarget(url: string): string {
 // -strong/--fg/--muted/--accent are styles.css @theme verbatim; --danger is Tailwind red-300, the tone
 // RestartFailureNotice already uses; the 12px radius is --block-radius; the 120ms ease-out transition
 // is the app's --default-transition-* pair. The `main` box is ErrorPanel's own shell one size up.
+//
+// ON A TOUCH SCREEN (the last rule; RECOVERY_STYLE has its own half) the page takes the phone shell's
+// sizes: 15px prose under a 17px heading, where the desktop's 12.5px and 14px were a caption read at
+// arm's length. A phone lands here on every update it starts from its own Settings, and on a stale link.
 const BASE_STYLE = `
 *,*::before,*::after{box-sizing:border-box}
 :root{
@@ -89,6 +93,11 @@ p{margin:0;text-wrap:pretty}
 .note{margin-top:12px;padding-top:11px;border-top:1px solid var(--border);color:var(--muted);font-size:11.5px;line-height:1.6}
 code{font-family:var(--mono);font-size:.92em;padding:.1em .35em;border-radius:4px;background:var(--panel);border:1px solid var(--border);white-space:nowrap}
 [hidden]{display:none!important}
+@media(pointer:coarse){
+  body{padding:16px;font-size:15px}
+  h1{gap:9px;font-size:17px}
+  .note{font-size:13.5px}
+}
 `.trim()
 
 // THE RECOVERY HALF: the live dot, the checklist, the buttons and the failure log. Appended only for
@@ -185,6 +194,20 @@ const RECOVERY_STYLE = `
   .dot[data-state=bad]{border-color:var(--danger);background:transparent}
   .spin{animation:none;border-color:var(--accent)}
   .bar>b{transition:none}
+}
+
+/* A TOUCH SCREEN (BASE_STYLE sets the prose): the readings a step up, and every button a thumb's
+   height. They were 28px tall at 11.5px, and "Restart Frizz" beside "Try again" is the one pair on this
+   page a miss costs something. The board's own card takes the same sizes (web BootProgress.tsx,
+   RestartOverlay.tsx): keep them in step. The download's line stays at 12px, the largest that holds
+   "118 MB of 190 MB · 1.4 MB/s · 51s left" on one line of a 375px phone. */
+@media(pointer:coarse){
+  .elapsed,.row em{font-size:12.5px}
+  .v{font-size:13.5px}
+  .meta,.probe,.log{font-size:12px}
+  .callout p{font-size:14px}
+  .actions{gap:10px}
+  .btn{min-height:42px;padding:0 16px;border-radius:9px;font-size:15px}
 }
 
 /* The app's \`.shimmer-text\`: a highlight sweeping muted text is how this product says "working", and
