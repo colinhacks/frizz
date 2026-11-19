@@ -135,9 +135,25 @@ test("a thread at rest opens on the human's latest message and the first sign-of
     await page.waitForSelector(row("land-queued"), { timeout: 30_000 })
     await page.click(row("land-queued"))
     readsAsAPair(await settled(pane("land-queued")), "the pane, a queued thread opened for the first time")
+    // A thread that fits its pane is on its tail wherever it lands, so "Jump to latest" never draws over
+    // it. A landing called itself off the tail for as long as it held (900ms) and took that back when it
+    // let go, which drew the button over every such thread and broke queueOpsPanels.e2e.test.ts, whose
+    // fixture is one.
+    await page.evaluate(() => {
+      const seen = window as unknown as { __jumpAdds: number }
+      seen.__jumpAdds = 0
+      new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node instanceof Element && (node.matches("[data-jump-to-latest]") || node.querySelector("[data-jump-to-latest]"))) seen.__jumpAdds++
+          }
+        }
+      }).observe(document.body, { childList: true, subtree: true })
+    })
     await page.click(row("land-short"))
     const short = await settled(pane("land-short"))
     assert.ok(short.steer && short.first && short.steer.top >= 0 && short.first.bottom <= short.pane, "a thread shorter than the pane is drawn whole")
+    assert.equal(await page.evaluate(() => (window as unknown as { __jumpAdds: number }).__jumpAdds), 0, "a thread that fits its pane never draws Jump to latest, even while its landing holds")
     await page.click(row("land-queued"))
     readsAsAPair(await settled(pane("land-queued")), "the pane, the same thread opened again")
     await page.click(row("land-long-steer"))

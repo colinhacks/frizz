@@ -1312,7 +1312,6 @@ function VirtualizedThreadTranscript({
       // Claimed HERE, before this commit's tail-follow pass (declared below, so it runs after this): a
       // transcript starts attached to its tail, and that pass would otherwise put the first frame there.
       followingTailRef.current = false
-      setAtEnd(false)
       tailReadyRef.current = true
       const until = performance.now() + OPEN_AT_MESSAGE_HOLD_MS
       anchorRestoreUntilRef.current = until
@@ -1341,6 +1340,10 @@ function VirtualizedThreadTranscript({
           top = index >= 0 ? virtualizer.getOffsetForIndex(index, "start")?.[0] : undefined
         }
         if (top !== undefined && Math.abs(scroller.scrollTop - top) >= 0.5) scroller.scrollTop = top
+        // "Jump to latest" says where the reader IS, from the first frame: a thread that fits its pane
+        // lands on its tail. Until 2026-11-18 a landing called itself off the tail for the whole hold and
+        // took that back when it ended, so every such thread opened with the button over it for 900ms.
+        setAtEnd(scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= TAIL_FOLLOW_PX)
       }
       // Then every frame while the rows around the landing correct from their estimates: nothing above it
       // has ever been measured on a cold open. A touch on the scroller ends the hold at once.
