@@ -15,7 +15,6 @@ import { setTimeout as delay } from "node:timers/promises"
 import { launchHeadless } from "./lib/headless-browser.mjs"
 import { resolveNpmCli } from "../src/server-release.ts"
 import { SESSION_EPOCH } from "../packages/server/src/access-codes.ts"
-import { frizzPaths } from "../packages/server/src/frizz-paths.ts"
 import { ensureProjectIdFile } from "../packages/server/src/project-root.ts"
 import { createRpcClient } from "./lib/rpc-client.mjs"
 
@@ -48,7 +47,12 @@ Object.assign(env, {
   XDG_STATE_HOME: join(home, "state"), XDG_CACHE_HOME: join(home, "cache"),
   npm_config_cache: join(root, "npm-cache"), npm_config_userconfig: join(root, "empty.npmrc"),
   npm_config_fetch_retries: "0", FRIZZ_ORPHAN_REAPER_OFF: "1", FRIZZ_TEST_CHILD_EVENTS: eventFile,
-  FRIZZ_RUNTIMES_DIR: join(frizzPaths().cache, "runtimes"),
+  // The sandbox's own runtimes, never the live cache: a sandbox server provisions its old release's pins,
+  // writes pin-history.json and claude-float.json, and prunes by its own pins, all in whatever folder this
+  // names. Pointed at frizzPaths().cache (the REAL one, read before HOME moved) it put claude 2.1.296 and
+  // codex 0.161.0 into the cache live workers run from on 2026-11-19, and could retire a runtime the live
+  // server leases. Each run downloads its runtimes once instead.
+  FRIZZ_RUNTIMES_DIR: join(root, "runtimes"),
 })
 writeFileSync(env.npm_config_userconfig, "")
 execFileSync("git", ["init", "-q"], { cwd: repo })
