@@ -1889,9 +1889,13 @@ function JumpToLatest({ overlay, hidden, onJump }: { overlay: HTMLElement | null
       type="button"
       data-jump-to-latest
       onClick={onJump}
-      className="flex items-center gap-1.5 rounded-full border border-border-strong bg-elevated px-3 py-1.5 text-[11px] font-medium text-fg shadow-lg shadow-shadow-ink/30 hover:bg-panel-2"
+      // A finger's size on a touch screen: 36px tall at 13px where the desktop pill is 31 at 11 (measured
+      // 2026-11-19 at 393px: a 44x28 hit, floating over text the reader is trying to scroll past).
+      className="flex items-center gap-1.5 rounded-full border border-border-strong bg-elevated px-3 py-1.5 text-[11px] font-medium text-fg shadow-lg shadow-shadow-ink/30 hover:bg-panel-2 pointer-coarse:min-h-9 pointer-coarse:px-3.5 pointer-coarse:text-[13px] pointer-coarse:active:bg-panel-2"
     >
-      <ArrowDown size={12} />
+      {/* Lifted half a pixel at the touch size: centred as a box the 14px arrow's ink read 0.5px below
+          the 13px label's cap band (ink-align, 2026-11-19). */}
+      <ArrowDown size={12} className="pointer-coarse:size-[14px] pointer-coarse:-translate-y-[0.5px]" />
       Jump to latest
     </button>,
     overlay,
