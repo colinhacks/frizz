@@ -17,10 +17,12 @@
 
 import type { ThreadFence } from "./index.ts"
 
-/** Block markers at the head of a message: a fence opener, a heading's `#`, a quote's `>`, a bullet.
- *  The phone row strips these before it reads a line (web lib/mobileBoardRow.ts), and the head below has
- *  to know where they end — so this is the one copy both read. */
-export const HEAD_MARKERS = /^(?:```[\w-]*\s*|#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)+/
+/** Block markers at the head of a message: a fence opener, a heading's `#`, a quote's `>`, a bullet, and
+ *  what can follow those two: a callout's `[!WARNING]` and a task's `[x]`. The phone row strips these
+ *  before it reads a line (web lib/mobileBoardRow.ts), and the head below has to know where they end — so
+ *  this is the one copy both read. The last two joined on 2026-11-19: a row read "[!WARNING] Before you
+ *  merge" and "[x] Move the settings store" until then. */
+export const HEAD_MARKERS = /^(?:```[\w-]*\s*|#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+|\[![A-Za-z]+\]\s*|\[[ xX/?-]\]\s+)+/
 
 /** The leading part of a fence body that a reader of its first line needs: everything through the first
  *  line of content after the block markers (which may themselves span blank lines), and on through the

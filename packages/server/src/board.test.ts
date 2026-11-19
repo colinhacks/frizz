@@ -2364,18 +2364,28 @@ test("deriveAwaitingBackground: a limit fault silences the declared-wait card �
 // registered question is a hard queue member, and it is deliberately NOT wired into
 // degradeIfAwaitingAnswer, which pins a RUNNING thread to turn-idle. That is right for a fence (the
 // question was the last thing said) and wrong for a row (the worker asked and kept working).
-test("an open registered question is a hard queue member, and outranks the awaiting card", () => {
+test("an open registered question is a hard queue member, and the awaiting card still states the wait", () => {
   const live = tele({ turn: "idle", bgShells: [LIVE_SHELL], lastAssistantAt: FENCE_AT })
   const watches = [registeredWatch()]
   // Without a question the registered park excuses the thread from the queue.
   assert.equal(deriveNeedsYou(row(), live, "turn-idle", false, NOW, undefined, true, false, {}, new Set(), new Set(), watches, 0), false)
   // WITH one, the human owes an answer — so it queues, park or no park.
   assert.equal(deriveNeedsYou(row(), live, "turn-idle", false, NOW, undefined, true, false, {}, new Set(), new Set(), watches, 1), true)
-  // …and the awaiting card stands down, because at rest with both outstanding the human should be
-  // looking at the QUESTION. Two expanded surfaces compete for one glance; the watches collapse behind
-  // a count on the question card instead.
-  assert.equal(deriveAwaitingBackground(row(), live, "turn-idle", false, NOW, undefined, false, {}, new Set(), new Set(), watches, 1), false)
-  assert.equal(deriveAwaitingBackground(row(), live, "turn-idle", false, NOW, undefined, false, {}, new Set(), new Set(), watches, 0), true)
+  // …and the awaiting card still states the park, Snooze and all, since 2026-11-19: the question's card
+  // is in the sign-off that asked it, and the card at the bottom of a queued thread lost only its Snooze
+  // when it stood down. The flag no longer takes the question count at all.
+  assert.equal(deriveAwaitingBackground(row(), live, "turn-idle", false, NOW, undefined, false, {}, new Set(), new Set(), watches), true)
+})
+
+test("an event-snooze takes a thread queued on a question out of the queue while its park can wake it", () => {
+  // What the card's Snooze does to the thread above. The click stamps the rest instant; the queue honours
+  // it ahead of the question (deriveNeedsYou's event-snooze line), so the thread leaves the queue and
+  // comes back on the park's own wake. Without a wake to come back on it would stay snoozed for good,
+  // which is why the router refuses that click (snoozeAwaitingBackground's wakesOnItsOwn).
+  const live = tele({ turn: "idle", bgShells: [LIVE_SHELL], lastAssistantAt: FENCE_AT })
+  const watches = [registeredWatch()]
+  const snoozed = row({ rested_at: FENCE_AT, bg_snooze_rested_at: FENCE_AT })
+  assert.equal(deriveNeedsYou(snoozed, live, "turn-idle", false, NOW, undefined, true, false, {}, new Set(), new Set(), watches, 1), false)
 })
 
 test("a registered question does NOT degrade a running thread to turn-idle", () => {

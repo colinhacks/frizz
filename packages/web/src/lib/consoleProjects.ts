@@ -24,17 +24,27 @@ export interface ConsoleProjects {
   ready: boolean
 }
 
-/** `enabled` false reads nothing — for a component that renders on a project's page too. */
+const NO_PROJECTS: ConsoleProjects = { projects: [], bySlug: new Map(), ready: false }
+
+/**
+ * `enabled` false reads nothing and ANSWERS nothing — for a component that renders on a project's page too.
+ *
+ * Turning the queries off is not enough for the second half. Both keys are machine-wide and the project rail,
+ * the crumb and the projects page keep them filled, so a disabled query still hands back their cached list.
+ * Until 2026-11-19 that put the Console's project chip on every project page's New thread dialog, naming the
+ * remembered or first project ("docs" on mobile-app's board) while the thread started in the page's own.
+ */
 export function useConsoleProjectList(enabled = true): ConsoleProjects {
   const list = useQuery({ queryKey: ["projectsList"], queryFn: () => rpc.projectsList(), enabled })
   const counts = useQuery({ queryKey: ["projectsRailCounts"], queryFn: () => rpc.projectsRailCounts(), refetchInterval: 5_000, enabled })
   const openIds = counts.data ? Object.keys(counts.data).sort().join("\n") : null
   return useMemo(() => {
+    if (!enabled) return NO_PROJECTS
     const open = new Set(openIds ? openIds.split("\n") : [])
     const projects = (list.data ?? []).filter((project) => !project.stale && open.has(project.id))
     return { projects, bySlug: new Map(projects.map((project) => [project.slug, project])), ready: list.data !== undefined && openIds !== null }
     // `openIds` is the set as a string, so a poll that answers the same projects keeps the same list.
-  }, [list.data, openIds])
+  }, [enabled, list.data, openIds])
 }
 
 /** The Console's list, and the one place that points its feed at it. Mounted once, by the Console's route. */

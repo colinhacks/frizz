@@ -316,8 +316,8 @@ test("a steps fence queues the thread — new contract, legacy, and with a false
   assert.equal(needsYou(row(), tele({ subAgents: [LIVE_AGENT], ...stepsFence({ kind: "agent", value: "a01b2d20" }, { kind: "for", value: "2h" }, { kind: "needs_input", value: "false" }) })), true, "steps outrank a false on a live park")
   assert.equal(deriveAwaitingBackground(row(), tele(stepsFence()), "turn-idle", false, NOW), true, "the card is where the steps are performed from")
   assert.equal(hasDeclaredWait(tele(stepsFence()), NOW), true)
-  // A question still outranks it, exactly as it outranks every awaiting card.
-  assert.equal(deriveAwaitingBackground(row(), tele(stepsFence()), "turn-idle", false, NOW, undefined, false, {}, new Set(), new Set(), [], 1), false)
+  // An open question no longer stands it down (2026-11-19, board deriveAwaitingBackground): the flag does
+  // not read the question count, so the steps card states its rest beside one as it does without.
 })
 
 // AN EMPTY `steps:` SAYS NOTHING ON THE TO-DO LIST IS OWED (maintainer 2026-11-12): the one way a worker can
