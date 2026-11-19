@@ -150,7 +150,7 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     // `threads` (2026-11-03) — a READ of any board, so nothing is required, and no caller parameter at all.
     assert.equal(list.result.tools[18].name, "threads")
     assert.deepEqual(list.result.tools[18].inputSchema.required, [])
-    assert.deepEqual(Object.keys(list.result.tools[18].inputSchema.properties), ["project", "all", "json"])
+    assert.deepEqual(Object.keys(list.result.tools[18].inputSchema.properties), ["project", "all", "find", "json"])
     assert.deepEqual(list.result.tools[10].inputSchema.required, [])
     assert.deepEqual(Object.keys(list.result.tools[10].inputSchema.properties), [])
     // `watch_issue` — the issue twin of `watch_pr`, same shape: `action` alone is required, and NO thread

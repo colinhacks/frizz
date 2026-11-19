@@ -37,6 +37,7 @@ function plausible(procedure: string, body: any): unknown {
     case "dropOwnWorktree": return { dropped: true, worktrees: [] }
     case "listOwnWorktrees": return { worktrees: [] }
     case "listThreads": return { project: { slug: "frizz", id: "proj-1", name: "frizz" }, threads: [], counts: { rested: 0, active: 0, snoozed: 0, done: 0 } }
+    case "findThreads": return { query: body.query, matches: [], total: 0, projects: 1 }
     case "setOwnThreadTitle": return { accepted: true, title: body.title }
     case "mcpReload": return { backend: "claude", agent: "Claude Code", supported: true, thread: { added: [], removed: [], changed: [], unchanged: 0, errors: {}, unapproved: [] }, others: { reloaded: 0, stale: 0, failed: 0 }, servers: [] }
     case "ask": return { registered: body.questions.map((q: any, i: number) => ({ id: `qst_${i}`, spec: q, ...(q.secret ? { secretPath: "/tmp/a dir/secret" } : {}) })) }
@@ -437,7 +438,7 @@ test("`threads` lists a board by band, marks the caller, reads a project out of 
     project: { slug: "frizz", id: "proj-1", name: "frizz" },
     threads: [
       { slug: "fix-queue-focus", title: "Fix queue focus", band: "rested", runtime: "turn-idle", fence: "done", questions: 0, subAgents: 0, shells: 0, watches: [], lastLine: "**Fixed** — the queue keeps focus.", lastActivityAt: ago(2 * 3600_000 + 5 * 60_000) },
-      { slug: "the-caller", title: "List the threads", band: "active", runtime: "running", doing: "Running the focused tests", questions: 0, subAgents: 1, shells: 0, watches: [], lastActivityAt: ago(30_000) },
+      { slug: "the-caller", title: "List the threads", band: "active", runtime: "running", doing: "Running the focused tests", questions: 0, subAgents: 1, shells: 0, watches: [], lastActivityAt: ago(5 * 60_000) },
       { slug: "bump-the-pin", title: "Bump the pin", band: "snoozed", runtime: "turn-idle", fence: "awaiting", questions: 0, subAgents: 0, shells: 0, watches: ["acme/app#391"], pinned: true, lastActivityAt: ago(3 * 86400_000) },
     ],
     counts: { rested: 1, active: 1, snoozed: 1, done: 122 },
@@ -457,7 +458,7 @@ test("`threads` lists a board by band, marks the caller, reads a project out of 
       "",
       "Active — spinning",
       "  the-caller  List the threads  (this thread)",
-      "    turn in flight: Running the focused tests · 1 sub-agent running · last moved 30s ago",
+      "    turn in flight: Running the focused tests · 1 sub-agent running · last moved 5m ago",
       "",
       "Snoozed — parked",
       "  bump-the-pin  Bump the pin  (pinned)",
@@ -487,6 +488,61 @@ test("`threads` lists a board by band, marks the caller, reads a project out of 
     const json = await run(["threads", "--json"], { env: { FRIZZ_STATE_DIR: fake.stateDir } })
     assert.equal(json.code, 0, json.stderr)
     assert.deepEqual(JSON.parse(json.stdout), listing)
+  } finally {
+    fake.close()
+  }
+})
+
+// `threads --find` asks `findThreads`, which searches every board, and prints the matches best first with
+// the project each is on; the caller is marked only on its own project.
+test("`threads --find` names each match's project and band, marks the caller, and refuses a board to narrow to", async () => {
+  const now = Date.now()
+  const found = {
+    query: "releaser",
+    matches: [
+      { slug: "cut-a-patch", title: "Releaser", band: "active", runtime: "running", questions: 0, subAgents: 0, shells: 0, watches: [], pinned: true, lastActivityAt: new Date(now - 60_000).toISOString(), project: { slug: "frizz", id: "proj-1", name: "frizz" } },
+      { slug: "ship-nub", title: "Ship 0.10", band: "done", runtime: "exited", questions: 0, subAgents: 0, shells: 0, watches: [], archivedAt: new Date(now - 2 * 86400_000).toISOString(), matchedName: "Releaser for nub", project: { slug: "nub", id: "proj-nub", name: "nub" } },
+    ],
+    total: 2,
+    projects: 25,
+  }
+  const fake = await fakeFrizz((procedure) => (procedure === "findThreads" ? { result: found } : undefined))
+  try {
+    const ran = await run(["threads", "--find", "the releaser"], { env: worker(fake, "cut-a-patch") })
+    assert.equal(ran.code, 0, ran.stderr)
+    assert.deepEqual(fake.seen, [{ url: "/_frizz/proj-1/rpc/findThreads", body: { query: "the releaser" } }])
+    assert.equal(ran.stdout, [
+      "2 threads on 25 projects match “releaser”, best first:",
+      "",
+      "  cut-a-patch  Releaser  (this project, active, this thread, pinned)",
+      "    turn in flight · last moved 1m ago",
+      "  ship-nub  Ship 0.10  (project `nub`, done)",
+      "    matched its other name «Releaser for nub»",
+      "    archived 2d ago",
+      "",
+      "Message one with `frizzctl steer <slug>`, adding `--project <slug>` for a thread on another project. `--json` prints every field.",
+      "",
+    ].join("\n"))
+
+    const json = await run(["threads", "--find", "releaser", "--json"], { env: worker(fake, "cut-a-patch") })
+    assert.deepEqual(JSON.parse(json.stdout), found)
+
+    fake.seen.length = 0
+    const narrowed = await run(["threads", "nub", "--find", "releaser"], { env: worker(fake, "cut-a-patch") })
+    assert.notEqual(narrowed.code, 0)
+    assert.match(narrowed.stdout + narrowed.stderr, /`--find` already searches every project/)
+    assert.deepEqual(fake.seen, [], "nothing was asked")
+  } finally {
+    fake.close()
+  }
+})
+
+test("`threads --find` with no match says how many projects it searched", async () => {
+  const fake = await fakeFrizz((procedure) => (procedure === "findThreads" ? { result: { query: "zzz", matches: [], total: 0, projects: 3 } } : undefined))
+  try {
+    const ran = await run(["threads", "--find", "zzz"], { env: worker(fake, "the-caller") })
+    assert.equal(ran.code, 0, ran.stderr)
+    assert.match(ran.stdout, /^No thread on 3 projects has a name matching “zzz”, in any band\./)
   } finally {
     fake.close()
   }
