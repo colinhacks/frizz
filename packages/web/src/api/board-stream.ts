@@ -140,6 +140,19 @@ export function refreshProjectList(queryClient: QueryClient | null | undefined):
   void queryClient?.invalidateQueries({ queryKey: ["projectsList"] })
 }
 
+/**
+ * A notification raised from the page, or null where the browser will not have one. Chrome for Android
+ * keeps `Notification` and its permission but throws from the constructor (a notification there comes
+ * from a service worker), and a throw here was a throw out of the socket's message handler.
+ */
+export function raiseNotification(title: string, options: NotificationOptions): Notification | null {
+  try {
+    return new Notification(title, options)
+  } catch {
+    return null
+  }
+}
+
 // Fire a desktop notification for a server-pushed event, but only when the user opted in
 // (settings.notifications, mirrored on the store) and the app isn't the focused/visible window —
 // we never notify for what the user is already looking at. Clicking focuses the thread.
@@ -149,7 +162,8 @@ export function notify(event: Extract<ServerEvent, { type: "notify" }>): void {
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return
   // The tag is the browser's REPLACE key, so a bare slug collapses two projects' identically-named
   // threads into one notification — and the click would open whichever tab happened to fire it.
-  const n = new Notification(event.title, { body: event.body, tag: `${basePath()}/${event.slug}` })
+  const n = raiseNotification(event.title, { body: event.body, tag: `${basePath()}/${event.slug}` })
+  if (!n) return
   // THE PROJECT THIS NOTIFICATION IS ABOUT, frozen now — the last place in the client where "which
   // project" was resolved at the moment of USE rather than travelling with the thing that needed it.
   // A notification is clicked when the operator gets back to their machine, which can be long after it

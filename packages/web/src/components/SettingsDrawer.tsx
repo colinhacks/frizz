@@ -25,9 +25,21 @@ import { Z_MODAL } from "../lib/layers.ts"
 import { ModalSurface } from "./ui/ModalSurface.tsx"
 
 export type NotifPerm = "default" | "granted" | "denied" | "unsupported"
+// A PHONE'S BROWSER CANNOT SHOW THESE, whatever `Notification.permission` says. Frizz raises a notification
+// from the page itself (`new Notification`, api/board-stream.ts) once the page is hidden. Chrome for Android
+// refuses that constructor (it throws: a notification there comes from a service worker, and Frizz has
+// none), and iOS suspends a hidden page before the event that would raise one reaches it. Until 2026-11-19
+// a phone's Settings offered the switch and "Allow notifications", took the permission, and nothing ever
+// came of it; the denied state then gave the desktop Safari's menu path. A phone reads as unsupported, and
+// its settings page draws no row for it (MobileSettings).
 function currentPerm(): NotifPerm {
-  if (typeof Notification === "undefined") return "unsupported"
+  if (typeof Notification === "undefined" || isPhoneBrowser()) return "unsupported"
   return Notification.permission as NotifPerm
+}
+/** A phone's or tablet's browser. An iPad asks for the desktop site, so it is told by its touch points. */
+function isPhoneBrowser(): boolean {
+  if (typeof navigator === "undefined") return false
+  return /Android|iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
 }
 
 // The drawer holds ONLY what belongs to the machine and this browser — appearance, the rail, how local
@@ -419,16 +431,20 @@ function MobileSettingsPage({
               if (isSnoozePreset(v)) prefs.snoozePreset = v
             }}
           />
-          <div className={MOBILE_ROW}>
-            <span className="min-w-0 flex-1 truncate">Notifications</span>
-            <MobileSwitch
-              label="Notifications"
-              checked={notifications === true}
-              disabled={notifications === null}
-              onChange={onNotifications}
-            />
-          </div>
-          {notifications ? (
+          {/* Not where the browser cannot show one (`currentPerm`): the switch is the machine's setting, and
+              on a phone it would be a switch for the desktop's notifications with nothing to show here. */}
+          {perm !== "unsupported" && (
+            <div className={MOBILE_ROW}>
+              <span className="min-w-0 flex-1 truncate">Notifications</span>
+              <MobileSwitch
+                label="Notifications"
+                checked={notifications === true}
+                disabled={notifications === null}
+                onChange={onNotifications}
+              />
+            </div>
+          )}
+          {notifications && perm !== "unsupported" ? (
             <div className="border-b border-border/70 px-[18px] py-2.5">
               <PermHint perm={perm} onAllow={onAllowNotifications} touch />
             </div>

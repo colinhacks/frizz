@@ -8,7 +8,7 @@ import { setProjectGithubRepo } from "../lib/githubAutolink.ts"
 import { localFileQueryKey } from "../lib/localFileQuery.ts"
 import { splitThreadKey, threadKey } from "../lib/threadKey.ts"
 import { noteServerBootId } from "./boot.ts"
-import { refreshProjectList } from "./board-stream.ts"
+import { raiseNotification, refreshProjectList } from "./board-stream.ts"
 import { BoardResume } from "./board-resume.ts"
 import { invalidateInteractionQueries } from "./interaction-cache.ts"
 import { rpcFor } from "./rpc.ts"
@@ -792,7 +792,8 @@ function notifyConsole(project: string, event: Extract<ServerEvent, { type: "not
   if (!store.notificationsEnabled) return
   if (!document.hidden) return
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return
-  const n = new Notification(event.title, { body: event.body, tag: `${projectHref(project)}/${event.slug}` })
+  const n = raiseNotification(event.title, { body: event.body, tag: `${projectHref(project)}/${event.slug}` })
+  if (!n) return
   n.onclick = () => {
     window.focus()
     if (isConsolePath()) openThread(threadKey(project, event.slug))
