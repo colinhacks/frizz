@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useSnapshot } from "valtio"
 import { ArrowLeft, Check, Clock, Plus, Settings as SettingsIcon } from "lucide-react"
-import { activeBandThread, boardAskThread, type ThreadView } from "@frizz/shared"
+import { activeBandThread, boardAskThread, type ProjectCard, type ThreadView } from "@frizz/shared"
 import { openThread, store } from "../store.ts"
 import { useBoard, useBoardThreads, useChildThreads } from "../hooks.ts"
 import { childThreadState } from "../lib/childThreads.ts"
@@ -31,6 +31,10 @@ import { useSupervisorStatus } from "../api/supervisorStatus.ts"
 import { settleCompletion } from "../lib/completionPins.ts"
 import { captureReaderPin, restoreReaderPin, type ReaderPin } from "../lib/readerPin.ts"
 import { Z_CHROME } from "../lib/layers.ts"
+import { isConsolePath } from "../lib/base-path.ts"
+import { useConsoleProjectList } from "../lib/consoleProjects.ts"
+import { keyProject } from "../lib/threadKey.ts"
+import { ProjectSquare } from "./ProjectRail.tsx"
 import { useShownTitle } from "../lib/pendingRename.ts"
 
 // THE PHONE'S BOARD — a header, four text tabs, ONE list, and a "New thread" button.
@@ -275,6 +279,7 @@ function MobileThreadRow({
   t,
   tab,
   last,
+  project,
   openSwipe,
   onOpenSwipe,
   onLongPress,
@@ -282,6 +287,8 @@ function MobileThreadRow({
   t: ThreadView
   tab: Tab
   last?: boolean
+  /** The row's project, on the all-projects board alone (see the square below). */
+  project?: ProjectCard
   openSwipe: boolean
   onOpenSwipe: (open: boolean) => void
   onLongPress: () => void
@@ -366,7 +373,7 @@ function MobileThreadRow({
               <span data-mobile-row-right className="shrink-0 text-[12px] leading-[21px] tabular-nums text-faint">{right}</span>
             ) : null}
           </span>
-          {line || agents ? (
+          {line || agents || project ? (
             // The agent count sits OUTSIDE the truncating span, so a long activity line ellipsizes before
             // it and never swallows it.
             <span data-mobile-row-line className="flex min-w-0 text-[13.5px] leading-[19px] text-muted">
@@ -377,6 +384,15 @@ function MobileThreadRow({
                 </span>
               ) : null}
               {agents ? <span className="shrink-0 whitespace-pre">{line ? ` · ${agents}` : agents}</span> : null}
+              {/* WHOSE THREAD IT IS, on the all-projects board: the project's square, the mark the desktop
+                  Console leads each row with (ConsoleSidebar RowSquare). Until 2026-11-19 the phone drew
+                  none, and 29 rows from five projects read as one project's. Under the rest time, so the
+                  row's right edge says when and where, and the title keeps its width. */}
+              {project ? (
+                <span data-mobile-row-project={project.slug} className="ml-auto flex h-[19px] shrink-0 items-center pl-2.5" title={project.name}>
+                  <ProjectSquare project={project} size={16} />
+                </span>
+              ) : null}
             </span>
           ) : null}
         </span>
@@ -458,6 +474,9 @@ export function MobileBoard() {
   // does not — frizz-server ships those most days, and a dot that is always on says nothing. A frizz-dev
   // build names no version and never lights it. The update itself, patch or not, is in Settings.
   const updateBadge = showsUpdateBadge(useSupervisorStatus().data ?? null)
+  // The all-projects board names each row's project; a project's own board has one, in its header.
+  const onConsole = isConsolePath()
+  const consoleProjects = useConsoleProjectList(onConsole)
   const [pickedTab, setTab] = useState<Tab>("queue")
   // ONE row open at a time — two half-open rows read as a rendering fault.
   const [openSwipe, setOpenSwipe] = useState<string | null>(null)
@@ -617,6 +636,7 @@ export function MobileBoard() {
                 t={t}
                 tab={tab}
                 last={i === rows.length - 1}
+                project={onConsole ? consoleProjects.bySlug.get(keyProject(t.id) ?? "") : undefined}
                 openSwipe={openSwipe === t.id}
                 onOpenSwipe={(open) => setOpenSwipe(open ? t.id : null)}
                 onLongPress={() => {

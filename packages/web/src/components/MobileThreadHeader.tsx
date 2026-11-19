@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react"
 import { ArrowLeft, MoreHorizontal } from "lucide-react"
 import { useThreadSnapshot, useTranscript } from "../hooks.ts"
+import { useConsoleProjectList } from "../lib/consoleProjects.ts"
+import { keyProject } from "../lib/threadKey.ts"
+import { ProjectSquare } from "./ProjectRail.tsx"
 import { appPushedCurrentEntry } from "../lib/router.ts"
 import { leaveFiledThread } from "../lib/mobileTriage.ts"
 import { useShownTitle } from "../lib/pendingRename.ts"
@@ -34,6 +37,12 @@ import { ThreadActionsSheet, useModelEffortLabel } from "./MobileThreadActionsSh
 // "Needs you" in the accent (the one thing the accent is for), "Working" in the live green while a turn
 // runs, otherwise "Rested" — then the age, then the model and effort. See lib/mobileThread.ts.
 //
+// ON THE ALL-PROJECTS BOARD the subtitle also names the thread's PROJECT, its square and its name, after
+// the age: the one fact a thread there has that a project's own board never needs (the desktop header
+// leads its facts line with it, ThreadHeaderFacts). The phone's drew none until 2026-11-19, so a thread
+// opened from that board said nowhere whose it was. Before the model and effort, which is what gives way
+// when the line runs out.
+//
 // Everything the desktop header and the prompt box's rail hold — Snooze, Goal, the registered files,
 // Rename, Copy link, and Retry / Restart worker where the header offers them — is in the ⋯ sheet
 // (ThreadActionsSheet).
@@ -48,6 +57,9 @@ export function MobileThreadHeader({ slug, onClose }: { slug: string; onClose: (
   const transcript = useTranscript(slug, { poll: running })
   const turnStart = useMemo(() => turnStartedAt(transcript.data?.messages ?? []), [transcript.data])
   const modelEffort = useModelEffortLabel(thread)
+  // A keyed id is the Console's (lib/threadKey.ts); a project's own board names none, and reads nothing.
+  const projectSlug = thread ? keyProject(thread.id) : undefined
+  const project = useConsoleProjectList(projectSlug !== undefined).bySlug.get(projectSlug ?? "")
   if (!thread) return null
   const state = mobileThreadState(thread)
   const age = mobileThreadAge(thread, state, turnStart, now)
@@ -78,6 +90,19 @@ export function MobileThreadHeader({ slug, onClose }: { slug: string; onClose: (
         <div data-mobile-thread-subtitle data-state={state} className="truncate text-[13px] text-muted">
           <span className={stateClass}>{MOBILE_STATE_WORD[state]}</span>
           {age && <> · {age}</>}
+          {projectSlug && (
+            <>
+              {" · "}
+              <span data-mobile-thread-project={projectSlug} className="font-medium text-fg/80">
+                {project ? (
+                  // Centred on the 13px line's cap band: the square is a 13px box, and `-0.14em` under the
+                  // baseline stands its middle where a capital's is.
+                  <span className="mr-[5px] inline-block align-[-0.14em]"><ProjectSquare project={project} size={13} /></span>
+                ) : null}
+                {project?.name ?? projectSlug}
+              </span>
+            </>
+          )}
           {modelEffort && <> · {modelEffort}</>}
         </div>
       </div>
