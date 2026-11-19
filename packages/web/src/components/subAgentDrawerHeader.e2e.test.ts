@@ -61,9 +61,17 @@ test("the sub-agent drawer states its facts in the header and stops from the hea
     assert.match(after.text, /Stopped/)
 
     // A narrow drawer keeps the lone check on the title's row rather than wrapping it onto its own.
-    const narrow = await header(await open("rich", 430))
+    const narrow = await header(await open("rich", 760))
     assert.equal(narrow.height, 48)
     assert.ok(narrow.stop)
+
+    // On a phone the sheet is the whole screen and wears the phone's bar (ui/SheetHeader, since
+    // 2026-11-19): the thread header's own 56px, the facts on a second line under the title, and the
+    // check still on the bar.
+    const phone = await header(await open("rich", 430))
+    assert.equal(phone.height, 56, "the phone thread header's height")
+    assert.ok(phone.stop)
+    assert.match(phone.text, /Last active \d+s ago/)
 
     for (const [state, outcome, word] of [["settled", "completed", "Finished"], ["stopped", "killed", "Stopped"], ["failed", "failed", "Failed"]] as const) {
       const settled = await header(await open(state))
