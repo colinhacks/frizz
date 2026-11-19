@@ -88,8 +88,9 @@ test("a child drawn under its parent is in no band, no count and no pin, on any 
     assert.deepEqual(ids(sections[key]).filter((id) => id !== "parent"), [], `no child in ${key}`)
   }
   assert.deepEqual(ids(sections.active), ["parent"])
-  assert.deepEqual(ids(phoneBands(sections).queue), [])
-  assert.deepEqual(ids(phoneBands(sections).running), ["parent"], "the phone board rows the parent alone")
+  const { queue, running } = phoneBands(sections, "fifo")
+  assert.deepEqual(ids(queue), [])
+  assert.deepEqual(ids(running), ["parent"], "the phone board rows the parent alone")
   assert.deepEqual(ids(consoleQueue(board, "fifo", "project")), [])
   assert.deepEqual(ids(consoleRunning(board)), ["parent"])
   assert.deepEqual(ids(consolePinned(board)), [])

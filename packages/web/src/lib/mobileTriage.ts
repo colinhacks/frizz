@@ -2,7 +2,7 @@ import { boardQueuedThread, type CompletionHold, type ThreadView } from "@frizz/
 import { rpc } from "../api/rpc.ts"
 import { closeDrawersById, openThread, showToast, store } from "../store.ts"
 import { appPushedCurrentEntry } from "./router.ts"
-import { displayTitle, needsAction, partitionActive, sectionThreads, type SectionedThreads } from "../groups.ts"
+import { displayTitle, needsAction, orderQueue, partitionActive, sectionThreads, type QueueDirection, type SectionedThreads } from "../groups.ts"
 import { prefs } from "./prefs.ts"
 import { archivingAtNow, clearArchived, markArchived, optimisticallyArchived } from "./optimisticArchive.ts"
 import { completionArchivesImmediately } from "./threadLifecycle.ts"
@@ -19,19 +19,19 @@ import { completionArchivesImmediately } from "./threadLifecycle.ts"
  * The phone board's Queue and Running tabs, cut from the rail's own Queue/Running split
  * (`partitionActive`), so a row sits in the same band on both shells.
  *
- * Queue, top to bottom: pinned first (the phone has no pinned band, and `sectionThreads` diverts a pinned
- * thread out of every other band, so the shelf folds into the top of the Queue rather than rowing
- * nowhere), then the asks, then the rested handoffs, each in the queue's own order. Running is the rail's
- * Running band, newest entry first.
+ * The pinned shelf leads the Queue, then all other rows share the selected time order. Running keeps
+ * the rail's order, newest entry first.
  *
  * ONE DEPARTURE FROM THE RAIL: every ask is in the Queue, whichever band the server's queue bit puts it
  * in. The tab's lit count is every ask on the board (`boardAskThread`), and a phone shows one band at a
  * time, so an ask rowed under Running would be counted on a tab that does not list it.
  */
-export function phoneBands(sections: SectionedThreads): { queue: ThreadView[]; running: ThreadView[] } {
+export function phoneBands(sections: SectionedThreads, direction: QueueDirection): { queue: ThreadView[]; running: ThreadView[] } {
   const { running, rested } = partitionActive(sections.active)
+  const asks = running.filter(needsAction)
+  if (asks.length === 0) return { queue: [...sections.pinned, ...rested], running }
   return {
-    queue: [...sections.pinned, ...sections.active.filter(needsAction), ...rested.filter((t) => !needsAction(t))],
+    queue: [...sections.pinned, ...orderQueue([...rested, ...asks], direction)],
     running: running.filter((t) => !needsAction(t)),
   }
 }
@@ -41,7 +41,7 @@ export function phoneBands(sections: SectionedThreads): { queue: ThreadView[]; r
  * the board would not have put next would make the loop feel random.
  */
 export function phoneQueue(threads: readonly ThreadView[], direction = prefs.queueOrder): ThreadView[] {
-  return phoneBands(sectionThreads(threads, direction)).queue
+  return phoneBands(sectionThreads(threads, direction), direction).queue
 }
 
 /**

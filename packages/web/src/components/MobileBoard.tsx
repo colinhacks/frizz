@@ -479,11 +479,8 @@ export function MobileBoard() {
   const queueOrder = useSnapshot(prefs).queueOrder
   const sections = useMemo(() => sectionThreads(all, queueOrder), [all, queueOrder])
 
-  // QUEUE AND RUNNING are the rail's two bands, split the rail's way (lib/mobileTriage phoneBands, which
-  // the Done button's triage loop walks too). The Queue is ordered asks first: the rail orders the cue by
-  // rest time, which is right for a column you scan beside a workpane; on the one screen a phone has,
-  // "what needs me" earns the top. Both groups keep their queue order within themselves.
-  const { queue, running } = useMemo(() => phoneBands(sections), [sections])
+  // The Done button's triage loop walks this same Queue order (lib/mobileTriage).
+  const { queue, running } = useMemo(() => phoneBands(sections, queueOrder), [sections, queueOrder])
   // Counted with `boardAskThread` — the queue rows `needsAction` calls asks — which is also what the server
   // counts for the projects list's accent number, so the list and this header cannot disagree.
   const askCount = useMemo(() => all.filter(boardAskThread).length, [all])
