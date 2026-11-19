@@ -678,7 +678,8 @@ const STEER = {
           "The thread to message: its slug (`fix-queue-focus`), or any link naming it — the " +
           "`[title](/thread/<slug>)` link `frizzctl spawn-thread` prints, or a full board URL such as " +
           "`http://localhost:9393/project/frizz/thread/<slug>`, whose `/project/<slug>/` also " +
-          "names the thread's project.",
+          "names the thread's project. Not its title: a name is refused, sending nothing, with the " +
+          "threads it matches (`frizzctl threads --find <words>` searches the same way).",
       },
       project: {
         type: "string",
@@ -1068,6 +1069,11 @@ const THREADS = {
     "USE IT BEFORE YOU DUPLICATE SOMEONE'S WORK, AND TO FIND WHO TO TELL. Another thread may already be on " +
     "the bug you just found, or waiting on the commit you just landed; the slug in the first column is " +
     "what `frizzctl steer` takes (with `--project` for a thread on another board).\n\n" +
+    "FIND ONE BY ITS NAME WITH `--find`. Told about a thread by name (\"tell the releaser\", \"the resolver " +
+    "cache thread\"), search for it: `frizzctl threads --find releaser`. It looks at every project this Frizz " +
+    "has open and every band, Done included, matching each word against the start of a word in the title " +
+    "the human sees, the slug, and the other names it has had, best match first. The slug comes from the " +
+    "thread's first prompt and never changes, so it often reads nothing like the name.\n\n" +
     "`--json` prints the whole listing — every field, ISO timestamps — for `jq`. It only reads: nothing is " +
     "changed, and no thread is woken by being listed.",
   inputSchema: {
@@ -1080,6 +1086,12 @@ const THREADS = {
           "into that board. Omitted ⇒ your own project.",
       },
       all: { type: "boolean", description: "Also list the Done band — every archived thread, newest first." },
+      find: {
+        type: "string",
+        description:
+          "Words from a thread's name (`releaser`, `resolver cache`): list the threads they match on EVERY " +
+          "project and in every band, Done included, instead of one board. Not combined with `project` or `all`.",
+      },
       json: { type: "boolean", description: "Print the listing as JSON instead of text." },
     },
     required: [],
@@ -1170,6 +1182,14 @@ async function steer(args) {
 async function threads(args) {
   const raw = typeof args.project === "string" ? args.project.trim() : ""
   const project = raw ? decodeURIComponent(PROJECT_SEGMENT.exec(raw)?.[1] ?? raw) : ""
+  const find = typeof args.find === "string" ? args.find.trim() : ""
+  if (find) {
+    if (project || args.all === true) throw new Error("`--find` already searches every project and every band, Done included; drop `--project` and `--all`")
+    const found = (await callRpc("findThreads", { query: find }))?.result
+    if (!Array.isArray(found?.matches)) throw new Error(`findThreads returned no matches: ${JSON.stringify(found)?.slice(0, 300)}`)
+    if (args.json === true) return JSON.stringify(found, null, 2)
+    return foundReport(found, { caller: process.env.FRIZZ_THREAD_SLUG || process.env.FRIZZ_THREAD || "", nowMs: Date.now() })
+  }
   const result = (await callRpc("listThreads", { ...(project ? { project } : {}), ...(args.all === true ? { all: true } : {}) }))?.result
   if (!result?.project || !Array.isArray(result.threads) || !result.counts) {
     throw new Error(`listThreads returned no listing: ${JSON.stringify(result)?.slice(0, 300)}`)
@@ -1266,6 +1286,31 @@ function threadsReport(result, { caller, all, nowMs }) {
     ? "Message one with `frizzctl steer <slug>`."
     : `Message one with \`frizzctl steer <slug> --project ${result.project.slug}\`.`
   return `${head}\n\n${blocks.join("\n\n")}\n\n${steerHint} \`--json\` prints every field.`
+}
+
+/** The `--find` readout: the matches, best first, each with its project and band and the facts a listing row
+ *  carries. @param {any} found @param {{ caller: string, nowMs: number }} opts */
+function foundReport(found, { caller, nowMs }) {
+  const boards = plural(found.projects, "project")
+  if (found.matches.length === 0) {
+    return `No thread on ${boards} has a name matching “${found.query}”, in any band. \`frizzctl threads --all\` lists one ` +
+      "board's threads, Done included, if the name the human used is not one the thread has."
+  }
+  const shown = found.total > found.matches.length ? `the best ${found.matches.length} of ${found.total} threads` : plural(found.total, "thread")
+  const own = projectSegment()
+  const lines = found.matches.map((/** @type {any} */ t) => {
+    const here = t.project.id === own
+    const where = [here ? "this project" : `project \`${t.project.slug}\``, t.band, here && t.slug === caller ? "this thread" : "", t.pinned ? "pinned" : ""]
+    const out = [`  ${t.slug}  ${t.title}  (${where.filter(Boolean).join(", ")})`]
+    if (t.matchedName) out.push(`    matched its other name «${t.matchedName}»`)
+    const facts = threadFacts(t, nowMs)
+    if (facts) out.push(`    ${facts}`)
+    if (t.lastLine) out.push(`    > ${t.lastLine.replace(/\s+/g, " ").slice(0, 160)}`)
+    return out.join("\n")
+  })
+  const verb = found.total === 1 ? "matches" : "match"
+  return `${shown[0].toUpperCase()}${shown.slice(1)} on ${boards} ${verb} “${found.query}”, best first:\n\n${lines.join("\n")}\n\n` +
+    "Message one with `frizzctl steer <slug>`, adding `--project <slug>` for a thread on another project. `--json` prints every field."
 }
 
 /** @param {Record<string, unknown>} args @returns {Promise<string>} */
@@ -2840,9 +2885,9 @@ const CLI = {
   },
   threads: {
     group: "Other threads",
-    summary: "List a project's threads: each one's slug, title and where it sits on the board",
+    summary: "List a project's threads, or find one by name on every project: slug, title and where it sits",
     positional: ["project"],
-    examples: ["frizzctl threads", "frizzctl threads nub", "frizzctl threads --all --json"],
+    examples: ["frizzctl threads", "frizzctl threads nub", "frizzctl threads --all --json", "frizzctl threads --find releaser"],
   },
   steer: {
     group: "Other threads",

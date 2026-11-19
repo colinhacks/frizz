@@ -5529,7 +5529,10 @@ export type FollowUpInput = z.infer<typeof FollowUpInput>
 // wrapped by formatThreadMessage so the receiver and the chat both know it is not the human's.
 export const SteerThreadInput = z.object({
   from: ThreadSlug,
-  to: ThreadSlug,
+  // A slug or a session id, which is what delivers. NOT ThreadSlug: a worker told about a thread by name
+  // passes the name ("the releaser"), and the router answers that with the threads it matches, sending
+  // nothing, which a slug-shaped schema refused before the router could say so.
+  to: z.string().trim().min(1).max(200),
   project: z.string().min(1).max(200).optional(),
   message: z.string().min(1).max(100_000),
 }).strict()
@@ -5971,6 +5974,33 @@ export const ListThreadsResult = z.object({
   counts: z.object({ rested: z.number().int(), active: z.number().int(), snoozed: z.number().int(), done: z.number().int() }).strict(),
 }).strict()
 export type ListThreadsResult = z.infer<typeof ListThreadsResult>
+
+/** `frizzctl threads --find`: a thread by the words a human or a message uses for it, on every board. */
+export const FindThreadsInput = z.object({
+  /** Words from the thread's name ("the releaser", "resolver cache fix"), not its slug. */
+  query: z.string().trim().min(1).max(200),
+}).strict()
+export type FindThreadsInput = z.infer<typeof FindThreadsInput>
+
+export const ThreadMatch = ThreadListing.extend({
+  /** The board the thread is on. */
+  project: z.object({ slug: z.string(), id: z.string(), name: z.string() }).strict(),
+  /** The other name the query matched, when it was not the title the sidebar shows: the name Claude
+   *  gave it, or the one it was dispatched with. */
+  matchedName: z.string().optional(),
+}).strict()
+export type ThreadMatch = z.infer<typeof ThreadMatch>
+
+export const FindThreadsResult = z.object({
+  query: z.string(),
+  /** Best first: the title itself, then every word in the title, then the slug, then another name; open
+   *  threads before Done ones, newest activity first. Capped; `total` says how many matched. */
+  matches: z.array(ThreadMatch),
+  total: z.number().int(),
+  /** The boards searched: this project's and every other one this Frizz has open. */
+  projects: z.number().int(),
+}).strict()
+export type FindThreadsResult = z.infer<typeof FindThreadsResult>
 
 export const SetOwnThreadTimerResult = z.object({
   id: z.string(),

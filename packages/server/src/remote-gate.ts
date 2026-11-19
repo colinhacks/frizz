@@ -178,6 +178,7 @@ export const REMOTE_ACCESS = {
   spawnThread: "deny",
   spawnChild: "deny",
   listThreads: "deny",
+  findThreads: "deny",
   ask: "deny",
   unask: "deny",
   markOwnDone: "deny",
