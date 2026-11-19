@@ -244,8 +244,9 @@ nub scripts/adhoc-stack.mjs --port=47611 --wakers --keep --project=/abs/throwawa
 `scripts/verify-question-fence-wakes.mjs` is the worked example, including a tool call that holds a turn
 open until the verifier releases it, and a restart of the stack by pid.
 
-- **`--wakers` arms every scheduler source**, the sign-off reminder included: a scripted rest with no
-  sign-off is reminded within a tick (10s). Script a reply for it or end the turn on a fence.
+- **`--wakers` arms every scheduler source.** A scripted rest with no sign-off draws nothing (it is the
+  worker's reply; the sign-off reminder was retired on 2026-11-19); a fence Frizz refuses draws its
+  correction within a tick (10s), so script a reply for that.
 - **Boot it from a shell with no Frizz worker variables** (`env -u FRIZZ_STATE_DIR -u FRIZZ_SERVER_LOCK
   -u FRIZZ_PROJECT_ID -u FRIZZ_NODE -u FRIZZ_THREAD -u FRIZZ_PERM_DIR -u FRIZZ_NATIVE_ASK …`). Claude
   Code APPENDS its plugin's `bin/` to the PATH it inherited, and so does the scripted worker, so a

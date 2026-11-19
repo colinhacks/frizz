@@ -12,7 +12,7 @@
 // handoff. A STALL — the process exited mid-turn (`crashed`) — is not a rest at all, and the
 // card says that instead, beside the header's Retry. Both are last in ChatView's chain: every rung above
 // is a harder reading of the same slot and wins it.
-import { MessageCircle, TriangleAlert } from "lucide-react"
+import { MessageSquare, TriangleAlert } from "lucide-react"
 import { hasStandingQuestion, questionFencesLive, questionHandles, type ThreadView } from "@frizz/shared"
 import { splitFenceBlocks } from "../lib/fenceBlocks.ts"
 import { hasQuestionBlock, splitMessageQuestions } from "../lib/questionBlocks.ts"
@@ -100,5 +100,5 @@ export function RestedCard({ thread }: { thread: Pick<ThreadView, "crashed"> }) 
       </TranscriptCard>
     )
   }
-  return <TranscriptCard data-rested-card="bare" icon={MessageCircle} label="Waiting on your reply" />
+  return <TranscriptCard data-rested-card="bare" icon={MessageSquare} label="Waiting on your reply" />
 }
