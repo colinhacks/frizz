@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react"
 import { useNavigate } from "react-router"
 import { useSnapshot } from "valtio"
-import { closeGithubPicker, store, pushDrawer, resolveRoutedThread, topDrawer, topThreadSlug, showToast } from "./store.ts"
+import { closeGithubPicker, openGithubPicker, store, pushDrawer, resolveRoutedThread, topDrawer, topThreadSlug, showToast, toastShowing } from "./store.ts"
 import { useBoard, useBoardIsEmpty } from "./hooks.ts"
 import { closeDrawerAnimated } from "./lib/overlays.ts"
 import { pageHasScrollRange, pageScrollY } from "./lib/pageScrollLock.ts"
@@ -32,11 +32,29 @@ import { FrizzLoader } from "./components/FrizzLoader.tsx"
 
 // The not-signed-in hint fires at most once per page load. A module-scoped flag (not React state)
 // keeps it from re-firing across re-renders, effect re-runs, or a StrictMode double-invoke.
+//
+// AND AT MOST ONCE A DAY PER BROWSER (2026-11-19). A phone loads the page every time the app is opened, and
+// every install starts signed out, so "once per load" was a toast over the bottom of the transcript on
+// every visit. It carries its own Sign in, because the words it used to end on ("the GitHub button by the
+// prompt box") name a button the phone's board does not have. And it waits for a toast that is still up:
+// the board mounts as the phone's Done leaves a thread's page, and the hint replaced that toast's Undo.
+const SIGN_IN_HINT_KEY = "frizz:github-sign-in-hint-at"
+const SIGN_IN_HINT_EVERY_MS = 24 * 60 * 60 * 1000
 let signInHintShown = false
 function maybeShowSignInHint() {
   if (signInHintShown) return
+  if (toastShowing()) {
+    window.setTimeout(maybeShowSignInHint, 2000)
+    return
+  }
   signInHintShown = true
-  showToast("Frizz isn't signed in to GitHub, so PR and issue watchers are off. Sign in from the GitHub button by the prompt box.", { duration: 6000 })
+  try {
+    if (Date.now() - Number(localStorage.getItem(SIGN_IN_HINT_KEY)) < SIGN_IN_HINT_EVERY_MS) return
+    localStorage.setItem(SIGN_IN_HINT_KEY, String(Date.now()))
+  } catch {
+    // No storage (a private window): the hint shows once per load, as it always has.
+  }
+  showToast("Frizz isn't signed in to GitHub, so PR and issue watchers are off.", { duration: 6000, action: { label: "Sign in", run: openGithubPicker } })
 }
 
 export function App() {

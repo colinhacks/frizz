@@ -163,6 +163,19 @@ export interface ToastAction {
 
 export function showToast(text: string, opts?: { spinner?: boolean; sticky?: boolean; duration?: number; link?: { label: string; slug: string }; action?: ToastAction }) {
   store.toast = { id: ++toastSeq, text, ...opts }
+  toastUntil = opts?.sticky ? Number.POSITIVE_INFINITY : Date.now() + toastLifeMs(opts ?? {})
+}
+
+/** How long a toast stays up: its own `duration`, else long enough to reach a button it carries. */
+export function toastLifeMs(toast: { duration?: number; link?: unknown; action?: unknown }): number {
+  return toast.duration ?? (toast.link || toast.action ? 5000 : 1600)
+}
+
+let toastUntil = 0
+
+/** Is a toast on screen now? `store.toast` alone cannot say: a toast that faded out stays in the store. */
+export function toastShowing(): boolean {
+  return store.toast !== null && Date.now() < toastUntil
 }
 
 export function openLightbox(images: LightboxImage[], index: number): void {

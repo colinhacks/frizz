@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useSnapshot } from "valtio"
 import { Loader2 } from "lucide-react"
-import { store, pushDrawer } from "../store.ts"
+import { store, pushDrawer, toastLifeMs } from "../store.ts"
 import { Z_TOAST } from "../lib/layers.ts"
 
 // Minimal toast (no dep): rises in at the BOTTOM RIGHT, holds, then sinks back down and fades.
@@ -9,6 +9,10 @@ import { Z_TOAST } from "../lib/layers.ts"
 // running, say) flashes again. Variants: `spinner` (in-flight feel), `sticky` (no auto-hide — replaced by the
 // next toast, e.g. "Starting agent…" → the started confirmation), `link` (a button that opens
 // the named thread in the side drawer), and `action` (a button that runs the caller's own verb).
+// A toast's button. On a phone it is the only way back from a Done (its Undo), so it is a thumb's target
+// there: 36px tall where the desktop pill is 22 (measured 2026-11-19, 393px wide: 44x22 before).
+const TOAST_BUTTON = "shrink-0 rounded-md border border-border px-2 py-0.5 text-[12px] text-fg/90 transition-colors hover:bg-panel-2 max-[700px]:min-h-9 max-[700px]:rounded-lg max-[700px]:px-3.5 max-[700px]:text-[14px] max-[700px]:active:bg-panel-2"
+
 export function Toaster() {
   const snap = useSnapshot(store)
   const toast = snap.toast
@@ -28,7 +32,7 @@ export function Toaster() {
     if (!toast) return
     setVisible(true)
     if (toast.sticky) return
-    const t = setTimeout(() => setVisible(false), toast.duration ?? (toast.link || toast.action ? 5000 : 1600))
+    const t = setTimeout(() => setVisible(false), toastLifeMs(toast))
     return () => clearTimeout(t)
   }, [toast?.id])
 
@@ -45,7 +49,7 @@ export function Toaster() {
         // passed it a supervisor's raw build log — the text has to wrap inside a strip-sized box
         // instead. `break-words` covers the other half of that failure: a long unbroken token (an
         // absolute path, a URL) would otherwise push straight past the cap.
-        className={`flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-2.5 break-words rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[13px] font-medium text-fg shadow-xl shadow-shadow-ink/40 transition-all duration-200 ease-out ${
+        className={`flex max-w-[min(30rem,calc(100vw-2rem))] items-center gap-2.5 break-words rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[13px] font-medium max-[700px]:gap-3 max-[700px]:text-[14px] text-fg shadow-xl shadow-shadow-ink/40 transition-all duration-200 ease-out ${
           visible ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0"
         }`}
       >
@@ -57,7 +61,7 @@ export function Toaster() {
               pushDrawer("thread", toast.link!.slug)
               store.toast = null
             }}
-            className="pointer-events-auto shrink-0 rounded-md border border-border px-2 py-0.5 text-[12px] text-fg/90 transition-colors hover:bg-panel-2"
+            className={`pointer-events-auto ${TOAST_BUTTON}`}
           >
             {toast.link.label}
           </button>
@@ -73,7 +77,7 @@ export function Toaster() {
               action.run()
             }}
             // Clickable only while the toast shows: a faded-out Undo must not still undo.
-            className={`${visible ? "pointer-events-auto" : ""} shrink-0 rounded-md border border-border px-2 py-0.5 text-[12px] text-fg/90 transition-colors hover:bg-panel-2`}
+            className={`${visible ? "pointer-events-auto" : ""} ${TOAST_BUTTON}`}
           >
             {toast.action.label}
           </button>
