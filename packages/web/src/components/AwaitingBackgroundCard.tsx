@@ -521,7 +521,11 @@ function Chevron() {
   // toward the content edge the mark column already sits on. A further -1px to close the last 1.88px was
   // drafted and rejected: 1.88px of optical inset at a card's edge reads as intentional, and dead flush
   // against a 12px rounded corner does not.
-  return <ChevronRight size={13} aria-hidden className={`${ON_CAP} ml-[3px] -mr-[4px] text-muted-35 transition-colors group-hover:text-muted-70`} />
+  //
+  // `pointer-events-none`: the cap-band translate lifts the glyph over the name's stretched overlay, so a
+  // press on the chevron, the row's own "this opens" mark, landed on the glyph and opened nothing
+  // (measured 2026-11-19 on a phone, where the right end of a row is where a thumb goes).
+  return <ChevronRight size={13} aria-hidden className={`${ON_CAP} pointer-events-none ml-[3px] -mr-[4px] text-muted-35 transition-colors group-hover:text-muted-70`} />
 }
 
 export function WaitRow({ mark, name, status, onOpen, onPrewarm, href, ghRef, title, testKind, testId, indent, dismiss, oneLine, dragPath }: {
