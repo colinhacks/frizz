@@ -86,8 +86,12 @@ function errorLine(error: Error): string {
   return text.length > 300 ? `${text.slice(0, 300)}…` : text
 }
 
+// On a touch screen the panel takes the phone's sizes: it is what a crashed thread leaves on a phone,
+// and its three ways out were 27px tall at 11px. The label's cap band sits 0.38px low in the 40px box
+// (ink-align.mjs, 2026-11-19, sans) and stays there: the box places its line on a whole pixel, and the
+// next step up, from any more padding under it, reads 0.63px high.
 const ACTION_CLASS =
-  "shrink-0 rounded-md border border-border px-2 py-1 text-[11px] text-fg/90 transition-colors hover:bg-panel"
+  "shrink-0 rounded-md border border-border px-2 py-1 text-[11px] text-fg/90 transition-colors hover:bg-panel pointer-coarse:min-h-10 pointer-coarse:rounded-lg pointer-coarse:px-3.5 pointer-coarse:text-[14.5px] pointer-coarse:active:bg-panel"
 
 /** The default fallback: a quiet bordered card that states what broke, why, and the two ways out. */
 export function ErrorPanel({
@@ -102,10 +106,10 @@ export function ErrorPanel({
   onClose?: () => void
 }): ReactElement {
   return (
-    <div data-error-panel className="m-4 rounded-md border border-border-strong bg-panel-2 px-3.5 py-3 text-[12.5px]">
+    <div data-error-panel className="m-4 rounded-md border border-border-strong bg-panel-2 px-3.5 py-3 text-[12.5px] pointer-coarse:rounded-xl pointer-coarse:px-4 pointer-coarse:py-3.5 pointer-coarse:text-[15px]">
       <p className="text-fg/90">Something went wrong rendering {label}.</p>
-      <p className="font-mono-keep mt-1.5 break-words text-[11.5px] text-muted">{errorLine(error)}</p>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <p className="font-mono-keep mt-1.5 break-words text-[11.5px] text-muted pointer-coarse:text-[13px]">{errorLine(error)}</p>
+      <div className="mt-3 flex flex-wrap gap-2 pointer-coarse:mt-3.5 pointer-coarse:gap-2.5">
         <button type="button" className={ACTION_CLASS} onClick={onRetry}>
           Try again
         </button>
