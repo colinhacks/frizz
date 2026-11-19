@@ -10,6 +10,8 @@ import { isLightboxVideo, lightboxFileName, lightboxImage, lightboxLabel, parseL
 import { useBackClosesLayer } from "../lib/backDismiss.ts"
 import { HEADER_ICON_SQUARE } from "../lib/headerIcon.ts"
 import { openLocalPath } from "../lib/local-file-links.ts"
+import { tildePath } from "../lib/paths.ts"
+import { useHomeDir } from "../hooks.ts"
 import { localImageUrl } from "../lib/markdownTargets.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { handleDialogEscape } from "../lib/selectOverlay.ts"
@@ -335,6 +337,7 @@ function LightboxViewer({ images, index }: { images: readonly LightboxImage[]; i
   // On a phone the viewer takes a history entry of its own, so Back closes it and not the thread under
   // it (lib/backDismiss) — the same rule every sheet over a phone thread follows.
   useBackClosesLayer(useIsMobile(), false, closeLightbox)
+  const homeDir = useHomeDir()
   // Frizz opens this by writing store state, not through a Radix Trigger, so Radix has no element to
   // hand focus back to on close. Remember the thumbnail that opened it, as NewThreadDialog does.
   const opener = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null)
@@ -673,7 +676,13 @@ function LightboxViewer({ images, index }: { images: readonly LightboxImage[]; i
               <RadixDialog.Title className={`truncate text-[13px] font-medium leading-5 text-white/90 ${image.titled ? "" : "font-mono-keep"}`}>
                 {image.label}
               </RadixDialog.Title>
-              <div className="truncate font-mono-keep text-[11px] leading-4 text-white/45">{image.path}</div>
+              {/* A path keeps its END, the folder that tells this file's from another's, and reads from `~`:
+                  the box runs right to left so the ellipsis lands on the left, and the isolate keeps the
+                  path itself left to right. Cut at the end, a phone showed "/Users/<name>/Documents/scra…"
+                  under every picture (2026-11-19, 393px wide). */}
+              <div className="truncate text-left font-mono-keep text-[11px] leading-4 text-white/45 [direction:rtl]" title={image.path}>
+                <bdi>{tildePath(image.path, homeDir)}</bdi>
+              </div>
             </div>
             {/* THE THREAD HEADER'S ACTION STRIP, on the viewer's field (HeaderActions; ViewerButton below):
                 the same squares on the same `gap-0.5`, so the marks stand at that strip's ink rhythm.
