@@ -134,17 +134,30 @@ async function readKeychainToken(): Promise<string | undefined> {
   }
 }
 
-// The OAuth access token, tried in the order Claude Code itself resolves it: the on-disk
-// .credentials.json first (Linux, and macOS installs that opted out of the Keychain), then the macOS
-// login Keychain. Returns undefined only when NEITHER source yields a token.
-async function readAccessToken(configDir: string): Promise<string | undefined> {
-  try {
-    const fromFile = tokenFromCredentialsJson(await readFile(join(configDir, ".credentials.json"), "utf8"))
-    if (fromFile) return fromFile
-  } catch {
-    // Missing/unreadable file is expected on a Keychain-backed macOS install — fall through.
+// The OAuth access token, tried in the order Claude Code itself resolves it. Its store on macOS is the
+// login Keychain with .credentials.json as a fallback it reads only when the Keychain yields nothing
+// (`keychain-with-plaintext-fallback`, read in the 2.1.328 binary). A file can outlive the Keychain's
+// copy: Claude Code does not delete it once the Keychain holds a token, and a credential rotator such
+// as ccbroker writes both. Reading the file first would show the quota of an account no worker is
+// using whenever the two disagree. Off macOS the Keychain reader returns undefined, leaving the file.
+//
+// With CLAUDE_CONFIG_DIR set, Claude Code names its Keychain item with a hash of that directory, which
+// readKeychainToken does not reproduce, so that install keeps its own directory's file first.
+export async function readAccessToken(
+  configDir: string,
+  readKeychain: () => Promise<string | undefined> = readKeychainToken,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  const readFileToken = async () => {
+    try {
+      return tokenFromCredentialsJson(await readFile(join(configDir, ".credentials.json"), "utf8"))
+    } catch {
+      // Missing/unreadable file is expected on a Keychain-backed macOS install.
+      return undefined
+    }
   }
-  return readKeychainToken()
+  if (env.CLAUDE_CONFIG_DIR?.trim()) return (await readFileToken()) ?? readKeychain()
+  return (await readKeychain()) ?? readFileToken()
 }
 
 function isoToUnix(value: unknown): number | undefined {

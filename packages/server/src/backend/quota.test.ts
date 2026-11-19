@@ -5,7 +5,7 @@ import { createHash } from "node:crypto"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { parseCodexQuotaFromRollout, parseCodexQuotaFromRateLimits, queryCodexRateLimits, readCodexQuota, resetCodexQuotaMemo } from "./codex-quota.ts"
-import { parseClaudeUsage, parseClaudeUsageOutput, tokenFromCredentialsJson, readClaudeQuota, refreshClaudeQuotaInBackground, claudeQuotaRefreshSettled, withObservedClaudeQuota, resolveConfiguredRoute } from "./claude-quota.ts"
+import { parseClaudeUsage, parseClaudeUsageOutput, tokenFromCredentialsJson, readAccessToken, readClaudeQuota, refreshClaudeQuotaInBackground, claudeQuotaRefreshSettled, withObservedClaudeQuota, resolveConfiguredRoute } from "./claude-quota.ts"
 import { recordObservedClaudeQuota, resetObservedClaudeQuotaThrottle } from "./claude-quota-observed.ts"
 import { frizzRoots, resetFrizzRoots } from "../frizz-paths.ts"
 import { readQuota } from "../quota.ts"
@@ -508,6 +508,23 @@ test("claude creds: garbage / empty / no token → undefined, never throws", () 
   assert.equal(tokenFromCredentialsJson("null"), undefined)
   assert.equal(tokenFromCredentialsJson(JSON.stringify({ claudeAiOauth: { accessToken: "" } })), undefined)
   assert.equal(tokenFromCredentialsJson(JSON.stringify({ other: 1 })), undefined)
+})
+
+// Claude Code reads the Keychain first and the file only when the Keychain yields nothing, so a file
+// the Keychain has moved past (here, a rotator's stale copy) must not decide whose quota is shown.
+test("claude creds: the Keychain's token wins over a stale credentials file, as in Claude Code", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "frizz-claude-creds-"))
+  try {
+    await writeFile(join(dir, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "tok-file" } }))
+    assert.equal(await readAccessToken(dir, async () => "tok-keychain", {}), "tok-keychain")
+    assert.equal(await readAccessToken(dir, async () => undefined, {}), "tok-file")
+    // A CLAUDE_CONFIG_DIR install's Keychain item is not the one readKeychainToken reads.
+    assert.equal(await readAccessToken(dir, async () => "tok-keychain", { CLAUDE_CONFIG_DIR: dir }), "tok-file")
+    await rm(join(dir, ".credentials.json"))
+    assert.equal(await readAccessToken(dir, async () => undefined, {}), undefined)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 // ---- Claude Code `/usage` parsing + cross-window cache ----

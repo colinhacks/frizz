@@ -62,9 +62,11 @@ async function claudeKeychainState(): Promise<CredState> {
   }
 }
 
-// The Claude credential state, resolved in the order Claude Code itself resolves it: the on-disk file
-// first, then the macOS Keychain. A token from EITHER source ⇒ authed. When neither yields a token, we
-// distinguish a clean "no credential anywhere" (signed-out) from a source that errored (unknown).
+// The Claude credential state. A token from EITHER source ⇒ authed, so the order decides nothing but
+// cost: the file is a read, the Keychain a `security` exec. (Claude Code itself reads the Keychain
+// first, and that order does matter for WHICH token, which is claude-quota.ts readAccessToken's job.)
+// When neither yields a token, we distinguish a clean "no credential anywhere" (signed-out) from a
+// source that errored (unknown).
 export async function readClaudeAuthState(configDir = claudeConfigDir()): Promise<ProviderAuth> {
   const file = claudeFileState(configDir)
   if (file === "token") return "authed"
