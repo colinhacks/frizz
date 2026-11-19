@@ -5191,7 +5191,7 @@ export function needsAction(t: ThreadView): boolean {
   // THE OPERATOR'S OWN PARK COMES FIRST, exactly as the server orders it (deriveNeedsYou checks
   // futureSnooze ahead of every ask gate). Without it this predicate promoted rows the server had
   // already dequeued — a snoozed thread with an unanswered ask sorted to the top of the attention order
-  // and led the mobile asks-first list, with no card behind it to open. Same pair of guards as
+  // and was counted among the board's asks, with no card behind it to open. Same pair of guards as
   // sessionIndicatorKind, for the same reasons.
   if (futureSnoozedUntil(t) !== undefined && isSnoozed(t)) return false
   // Paused on an interactive permission prompt: the process is parked waiting on the human's answer.
@@ -5220,7 +5220,7 @@ export function needsAction(t: ThreadView): boolean {
   if (t.pendingQuestion && t.runtime !== "running" && t.runtime !== "spawning") return true
   // A REGISTERED question (open thread_question rows on the view) is the same ask through the durable
   // channel — the server queues it once at rest (deriveNeedsYou's openQuestions), and this predicate
-  // must agree so the mobile asks-first ordering and the attention sort count it. Same rest-gate as the
+  // must agree so the board's ask count (boardAskThread) and the attention sort count it. Same rest-gate as the
   // fence net above: the worker keeps working after registering, and the card lands at its rest.
   // STANDING ones only (hasStandingQuestion): a question the worker has rested past since is still
   // open, but it is not what queues the thread, so it is not what makes the row an ask.
