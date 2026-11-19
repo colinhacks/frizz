@@ -8,6 +8,7 @@ import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import { setFaviconBadge } from "../lib/faviconBadge.ts"
 import { SPLIT_MIN_PX } from "../lib/sheet.ts"
 import { prefs } from "../lib/prefs.ts"
+import { useIsMobile } from "../lib/mobile.ts"
 import { trackQueueDock } from "../lib/queueDockInset.ts"
 import { boardQueuedThread, type ThreadView } from "@frizz/shared"
 import { ThreadView as ThreadViewSurface } from "./lazySurfaces.tsx"
@@ -28,6 +29,14 @@ import { layoutVars, THREAD_WIDTH_PX } from "../lib/fullLayout.ts"
 
 export function StandaloneThreadPage({ slug }: { slug: string }) {
   const snap = useSnapshot(store)
+  // ON A PHONE THE PAGE WEARS THE PHONE'S CHROME, the drawer's own: MobileThreadHeader and the reply bar
+  // (ThreadView draws them for a thread that has a way to close). Until 2026-11-19 it kept the desktop
+  // header and prompt box at every width, on the reasoning that a phone never linked here. But since
+  // 2026-11-11 a thread's own path draws this page on a phone ONLY, and it is where the phone's own Copy
+  // link points, so a thread opened by its link read as a different, older app: a model chip cut to
+  // "Opus 5.5 ·…", five 20px icons, and none of Back, Done or the ⋯ sheet. Its ← goes where the collapse
+  // icon went, the board.
+  const phone = useIsMobile()
   const fileOpen = snap.filePanels.some((panel) => !panel.closing)
   const threadPx = THREAD_WIDTH_PX[useSnapshot(prefs).threadWidth]
   const board = useBoard()
@@ -160,7 +169,8 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
               // panel / queue card the door was clicked in wears the same name (tagged at click time,
               // ExpandThreadLink), and the browser morphs that surface into this column. Inert
               // outside a transition — no navigation but the door's opts in.
-              className="flex h-full w-[var(--full-thread-narrow)] min-w-0 shrink-0 flex-col overflow-hidden border-border bg-panel sm:border-x split:w-[var(--full-thread)] [view-transition-name:thread-chat]"
+              // The phone's page owns the top safe area, as its drawer does (styles.css `.frizz-sheet-panel`).
+              className="flex h-full w-[var(--full-thread-narrow)] min-w-0 shrink-0 flex-col overflow-hidden border-border bg-panel max-[700px]:pt-[env(safe-area-inset-top)] sm:border-x split:w-[var(--full-thread)] [view-transition-name:thread-chat]"
             >
               {route.kind === "loading" ? (
                 <div className="flex flex-1 items-center justify-center" role="status" aria-label="Loading thread">
@@ -171,7 +181,7 @@ export function StandaloneThreadPage({ slug }: { slug: string }) {
               ) : (
                 // The page's own frame outlives its thread's render error (ErrorBoundary.tsx).
                 <ErrorBoundary label="this thread" resetKeys={[slug]}>
-                  <ThreadViewSurface slug={slug} showReturnToQueue />
+                  <ThreadViewSurface slug={slug} showReturnToQueue onClose={phone ? () => exitFullscreen(slug) : undefined} />
                 </ErrorBoundary>
               )}
             </main>

@@ -178,11 +178,11 @@ function useChildDrillSlug(): string | null {
 // to reach it is a control that now points at nothing — so the toggle, the Radix tab shell it needed,
 // and the per-thread persisted tab preference all go with it. The thread is its conversation.
 //
-// ON A PHONE (below 700px, in the drawer — the only way a phone opens a thread) the chrome is the phone's
-// own (mockup v2 §2): a 56px MobileThreadHeader in place of the two-row header and its icon strip —
-// Snooze, Goal, the context reading and Restart worker live in the header's ⋯ sheet, and the one
-// lifecycle verb that matters at rest belongs to the bottom bar. The /full page (no `onClose`) keeps the
-// desktop chrome on every width; a phone never links to it. (Desktop had a lifecycle footer under the
+// ON A PHONE (below 700px: the drawer, and the thread's own page, which passes `onClose` there) the chrome
+// is the phone's own (mockup v2 §2): a 56px MobileThreadHeader in place of the two-row header and its icon
+// strip — Snooze, Goal, the context reading and Restart worker live in the header's ⋯ sheet, and the one
+// lifecycle verb that matters at rest belongs to the bottom bar. A surface with no way to close (a fixture,
+// the pane) keeps the desktop chrome. (Desktop had a lifecycle footer under the
 // prompt box until 2026-10-05; its verbs and the context reading moved into ThreadHeader, and the Goal
 // into the prompt box's rail.)
 /** What the one-thread pane hands the thread view it hosts: where acting on the thread takes

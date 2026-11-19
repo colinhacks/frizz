@@ -1,7 +1,8 @@
 import { boardQueuedThread, type CompletionHold, type ThreadView } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { closeDrawersById, openThread, showToast, store } from "../store.ts"
-import { appPushedCurrentEntry } from "./router.ts"
+import { appPushedCurrentEntry, boardThreadHref, queueDestination, spaNavigate } from "./router.ts"
+import { standaloneThreadSlug } from "./standaloneThreadRoute.ts"
 import { displayTitle, needsAction, partitionActive, sectionThreads, type SectionedThreads } from "../groups.ts"
 import { prefs } from "./prefs.ts"
 import { archivingAtNow, clearArchived, markArchived, optimisticallyArchived } from "./optimisticArchive.ts"
@@ -77,6 +78,13 @@ export function leaveFiledThread(slug: string): void {
   if (appPushedCurrentEntry()) {
     if (next) window.addEventListener("popstate", () => setTimeout(() => openThread(next.id), 0), { once: true })
     history.back()
+    return
+  }
+  // THE THREAD'S OWN PAGE (a cold link to it) has no drawer to close and none to open the next one in, so
+  // the page itself moves: to the next thread over the board, or to the board. A thread filed in a drawer
+  // OVER that page is not the page's, and takes the drawer's path below.
+  if (standaloneThreadSlug() === slug) {
+    spaNavigate(next ? boardThreadHref(next.id) : queueDestination("/"), { replace: true })
     return
   }
   if (next) {

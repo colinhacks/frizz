@@ -54,6 +54,11 @@ export function threadPageIsStandalone(pathname?: string): boolean {
   return parseStandaloneThreadPath(innerPath(pathname)) !== null && !isConsolePath(pathname) && isMobileViewport()
 }
 
+/** The thread whose full-screen page this is, or null anywhere else (a board, the Console, a desktop). */
+export function standaloneThreadSlug(pathname?: string): string | null {
+  return threadPageIsStandalone(pathname) ? parseStandaloneThreadPath(innerPath(pathname)) : null
+}
+
 /**
  * Is this click one the SPA should handle itself? The fullscreen affordance is a real `<a href>` so the
  * browser owns every "open elsewhere" gesture — ⌘/Ctrl-click, middle-click, shift-click, right-click
