@@ -191,6 +191,7 @@ export function FileViewerPanel({ slug, path, active }: { slug: string; path: st
         // Written from `~`, as the rail beneath writes the row that opened it. Display only: links and
         // context items keep the canonical `resolved`.
         subtitle={tildePath(resolved, homeDir)}
+        subtitlePath
         onClose={closeFilePanel}
         actions={
           // The active segment's fill must contrast the HEADER it sits on (bg-panel) — an earlier

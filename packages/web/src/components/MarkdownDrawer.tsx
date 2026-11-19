@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { ExternalLink } from "lucide-react"
 import { showToast } from "../store.ts"
 import { fileRpc, localFileUrl } from "../lib/consoleProjects.ts"
-import { useLiveLocalFile } from "../hooks.ts"
+import { useHomeDir, useLiveLocalFile } from "../hooks.ts"
 import { settleLocalOpen } from "../lib/local-file-links.ts"
 import { useInnerHtml } from "../lib/innerHtml.ts"
 import { LOCAL_FILE_POLL_MS, localFileQuery } from "../lib/localFileQuery.ts"
@@ -13,6 +13,7 @@ import { useMarkdownHtml } from "../lib/useMarkdown.ts"
 import { splitFrontmatter } from "../lib/frontmatter.ts"
 import { browserShowsPdf, isLocalMarkdownFile, isLocalPdfFile, localFileDir } from "../lib/markdownTargets.ts"
 import { useIsMobile } from "../lib/mobile.ts"
+import { tildePath } from "../lib/paths.ts"
 import { CodeBody } from "./CodeBody.tsx"
 import { useMermaidIslands } from "./CodexRichOutput.tsx"
 import { useLightboxIslands } from "./Lightbox.tsx"
@@ -141,6 +142,8 @@ export function MarkdownDrawer({ id, path, title, depth, widthDepth }: { id: num
   // it shows as highlighted source — the /full split viewer's source view, same read, same highlighter.
   // The desktop opens only Markdown and PDFs here, so the source view never reaches it.
   const phone = useIsMobile()
+  // Written from `~`, as the file viewer's bar writes it. Display only.
+  const homeDir = useHomeDir()
   const raw = body.data?.markdown ?? ""
   const sourceHtml = useInnerHtml(useMemo(() => (markdown ? "" : highlightedSource(resolved, raw)), [markdown, raw, resolved]))
 
@@ -152,7 +155,7 @@ export function MarkdownDrawer({ id, path, title, depth, widthDepth }: { id: num
               an icon on the whole title+subtitle block, so beside a two-line header a 14px glyph measured
               7.00px below the title's cap band and read as floating between the lines. The basename is the
               title and the path is the subtitle; neither needs a glyph to say "file". */}
-          <SheetHeader title={title} subtitle={resolved} onClose={close} />
+          <SheetHeader title={title} subtitle={tildePath(resolved, homeDir)} subtitlePath onClose={close} />
           {/* A PDF's frame fills the body edge to edge; its viewer scrolls and pads itself. */}
           <div className={`flex-1 min-h-0 ${pdf && body.data ? "flex flex-col" : "overflow-y-auto px-5 py-4"}`}>
             {pdf && body.data ? (
