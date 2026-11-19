@@ -2,7 +2,7 @@ import { boardQueuedThread, type CompletionHold, type ThreadView } from "@frizz/
 import { rpc } from "../api/rpc.ts"
 import { closeDrawersById, openThread, showToast, store } from "../store.ts"
 import { appPushedCurrentEntry } from "./router.ts"
-import { displayTitle, needsAction, partitionActive, sectionThreads, type SectionedThreads } from "../groups.ts"
+import { displayTitle, needsAction, orderQueue, partitionActive, sectionThreads, type QueueDirection, type SectionedThreads } from "../groups.ts"
 import { prefs } from "./prefs.ts"
 import { archivingAtNow, clearArchived, markArchived, optimisticallyArchived } from "./optimisticArchive.ts"
 import { completionArchivesImmediately } from "./threadLifecycle.ts"
@@ -21,17 +21,25 @@ import { completionArchivesImmediately } from "./threadLifecycle.ts"
  *
  * Queue, top to bottom: pinned first (the phone has no pinned band, and `sectionThreads` diverts a pinned
  * thread out of every other band, so the shelf folds into the top of the Queue rather than rowing
- * nowhere), then the asks, then the rested handoffs, each in the queue's own order. Running is the rail's
+ * nowhere), then every other row in the ONE time order the desktop cue uses (`orderQueue`), asks and
+ * handoffs together, so "Oldest first" / "Newest first" is true of every row it lists. An ask is told
+ * apart by its "?" mark and the tab's lit count, not by its place. (Asks led the Queue until
+ * colinhacks/frizz#78: the desktop cue dropped its own attention band on 2026-07-21, and since the
+ * Running tab split off on 2026-11-11 the phone's Queue holds the cue's rows.) Running is the rail's
  * Running band, newest entry first.
  *
  * ONE DEPARTURE FROM THE RAIL: every ask is in the Queue, whichever band the server's queue bit puts it
  * in. The tab's lit count is every ask on the board (`boardAskThread`), and a phone shows one band at a
  * time, so an ask rowed under Running would be counted on a tab that does not list it.
  */
-export function phoneBands(sections: SectionedThreads): { queue: ThreadView[]; running: ThreadView[] } {
+export function phoneBands(sections: SectionedThreads, direction: QueueDirection): { queue: ThreadView[]; running: ThreadView[] } {
   const { running, rested } = partitionActive(sections.active)
+  const runningAsks = running.filter(needsAction)
+  // `rested` arrives in `orderQueue` order already (sectionThreads → orderActive); only an ask lifted
+  // out of Running needs sorting into it.
+  if (runningAsks.length === 0) return { queue: [...sections.pinned, ...rested], running }
   return {
-    queue: [...sections.pinned, ...sections.active.filter(needsAction), ...rested.filter((t) => !needsAction(t))],
+    queue: [...sections.pinned, ...orderQueue([...rested, ...runningAsks], direction)],
     running: running.filter((t) => !needsAction(t)),
   }
 }
@@ -41,7 +49,7 @@ export function phoneBands(sections: SectionedThreads): { queue: ThreadView[]; r
  * the board would not have put next would make the loop feel random.
  */
 export function phoneQueue(threads: readonly ThreadView[], direction = prefs.queueOrder): ThreadView[] {
-  return phoneBands(sectionThreads(threads, direction)).queue
+  return phoneBands(sectionThreads(threads, direction), direction).queue
 }
 
 /**
