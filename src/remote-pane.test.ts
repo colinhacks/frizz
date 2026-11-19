@@ -375,7 +375,7 @@ test("Cloudflare Tunnel, Tailscale, something else and Off ask nothing, and offe
   ] as CloudConfig[] | null[]) {
     const { pane, out } = build({ current: () => config });
     pane.open();
-    assert.doesNotMatch(out.text(), /What they can do/);
+    assert.doesNotMatch(out.text(), /Access|Signed-in devices/);
     for (const row of ["4", "5", "6"]) {
       pane.key(row);
       pane.key("\r");
@@ -395,7 +395,7 @@ test("the last row of a board on the relay says what a device may do, and change
     claim: async () => { throw new Error("changing this claims nothing"); },
   });
   pane.open();
-  assert.match(lastScreen(out.text()), /What they can do\s+Full control: start and steer threads, answer cards/);
+  assert.match(lastScreen(out.text()), /Signed-in devices\s+Full control: start and steer threads, answer cards/);
   pane.key("7");
   pane.key("\r");
   assert.match(lastScreen(out.text()), QUESTION);
@@ -409,7 +409,7 @@ test("the last row of a board on the relay says what a device may do, and change
 
   assert.equal(pane.key("x"), "close");
   pane.open();
-  assert.match(prose(lastScreen(out.text())), /What they can do Read and answer: read the board and pick options on cards/);
+  assert.match(prose(lastScreen(out.text())), /Signed-in devices Read and answer: read the board and pick options on cards/);
   pane.key("7");
   pane.key("\r");
   assert.match(lastScreen(out.text()), /❯ Read and answer/, "the question opens on what is in force");
@@ -426,13 +426,13 @@ test("escape on that question changes nothing, and a change that cannot be saved
   pane.key("7");
   pane.key("\r");
   pane.key("\x1b");
-  assert.match(lastScreen(out.text()), /❯ {3}What they can do/);
+  assert.match(lastScreen(out.text()), /❯ {3}Signed-in devices/);
   pane.key("\r");
   pane.key("1");
   pane.key("\r");
   assert.match(lastScreen(out.text()), /the disk is full/);
   assert.equal(pane.key("x"), "keep", "any key returns to the menu");
-  assert.match(lastScreen(out.text()), /❯ {3}What they can do/);
+  assert.match(lastScreen(out.text()), /❯ {3}Signed-in devices/);
 });
 
 test("serving the name a board already has again keeps its answer", async () => {
@@ -496,6 +496,15 @@ test("each signed-in device is a row of its own under Devices, named by its brow
     "under their own heading, below the setups",
   );
   assert.doesNotMatch(screen, /remote devices? signed in/, "no count standing in for the list");
+});
+
+test("on the relay, what a device may do is a section of its own, apart from the devices", () => {
+  const { pane, out } = withDevices([device("s1", "Safari on iPhone", 3)], { current: () => ({ hostname: "ada.frizz.sh", claim: "ada", serve: "relay" }) });
+  pane.open();
+  assert.match(
+    lastScreen(out.text()),
+    /Something else.*\n {2}\n {2}Access\n {6}Signed-in devices {3}Full control: start and steer threads, answer cards\n {2}\n {2}Devices\n {6}Safari on iPhone {4}signed in 3h ago\n {2}\n/,
+  );
 });
 
 test("a device's row asks before it signs that one device out, and escape keeps it", () => {

@@ -68,7 +68,7 @@ Pick it and answer one question. It needs no account, no domain, no Tailscale, a
     Read and answer   read the board and pick options on cards
 ```
 
-To change the answer later, press **R** and pick **What they can do** under **Devices**. The new answer applies to devices already signed in. [What a remote session can do](#what-a-remote-session-can-do) lists both levels.
+To change the answer later, press **R** and pick **Signed-in devices** under **Access**. The new answer applies to devices already signed in. [What a remote session can do](#what-a-remote-session-can-do) lists both levels.
 
 ```
   Serving https://mk7w2qp9x4n3f6tbz5vh.frizz.sh (frizz.sh).

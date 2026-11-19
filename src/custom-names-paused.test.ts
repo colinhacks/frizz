@@ -207,7 +207,7 @@ test("while custom names are paused, a board already on a custom name shows it, 
   pane.open();
   const rows = menuRows(out.text());
   assert.equal(rows.length, 7, "the custom row stays while it is the current setup, and what a device may do is the last");
-  assert.match(rows[6]!, /^ {6}What they can do\s+Full control/);
+  assert.match(rows[6]!, /^ {6}Signed-in devices\s+Full control/);
   assert.match(rows[2]!, /^ {2}❯ ✓ Custom subdomain\s+colin\.frizz\.sh — kept and renewed;/);
   // The blurb wraps at 80 columns, its continuation hanging under the blurb column.
   const screen = out.text().split("\x1b[2J\x1b[H").pop()!.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");

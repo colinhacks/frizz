@@ -102,8 +102,14 @@ const CHOICES: Choice[] = [
   { kind: "other", title: "Something else", blurb: "any proxy or tunnel you run — tell Frizz its address" },
 ];
 
-/** Rows about the devices already signed in, drawn under their own heading below the setups. */
-const isDeviceRow = (choice: Choice) => choice.kind === "access" || choice.kind === "device" || choice.kind === "sign-out-all";
+/**
+ * The heading a row is drawn under. The setups have none; the rows below them do, since none of them is a
+ * way to reach the board: Access holds what a device signed in through the relay may do, and Devices lists
+ * the devices signed in. The setting is a section of its own and not the first row of the device list,
+ * where it read as one more device (maintainer, 2026-11-19).
+ */
+const sectionOf = (choice: Choice): string | null =>
+  choice.kind === "access" ? "Access" : choice.kind === "device" || choice.kind === "sign-out-all" ? "Devices" : null;
 
 /**
  * The rows the menu lists for a board whose setup is `current`.
@@ -114,16 +120,16 @@ const isDeviceRow = (choice: Choice) => choice.kind === "access" || choice.kind 
  * opens the claim form, because a new custom claim is exactly what is paused.
  */
 function choicesFor(current: CloudConfig | null, devices: Array<Pick<SessionRecord, "id" | "label" | "createdAt">>, githubLogin?: string | null): Choice[] {
-  // The Devices section, after the setups and drawn apart from them: these rows change who is signed in
-  // and what they may do, not how the board is reached. What they can do appears only where there is a
-  // relay to ask about. Each signed-in device is a row of its own, named by the browser and system it
-  // signed in from, on every board: sessions outlive a setup, so a board turned Off still holds them for
-  // the next time it is reachable. "Sign out all" appears beside two or more, and with nobody signed in
-  // there is nothing to list and no row saying so (maintainer, 2026-11-10: a sign-out row that cannot
-  // say which devices it means "doesn't make human sense").
+  // The Access and Devices sections, after the setups and drawn apart from them (sectionOf): these rows
+  // change what signed-in devices may do and who is signed in, not how the board is reached. Access appears
+  // only where there is a relay to ask about. Each signed-in device is a row of its own, named by the
+  // browser and system it signed in from, on every board: sessions outlive a setup, so a board turned Off
+  // still holds them for the next time it is reachable. "Sign out all" appears beside two or more, and with
+  // nobody signed in there is nothing to list and no row saying so (maintainer, 2026-11-10: a sign-out row
+  // that cannot say which devices it means "doesn't make human sense").
   const access: Choice[] = [
     ...(current && isRelayConfig(current)
-      ? [{ kind: "access" as const, title: "What they can do", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
+      ? [{ kind: "access" as const, title: "Signed-in devices", blurb: `${accessChoice(current.relayAccess).title}: ${accessChoice(current.relayAccess).blurb}` }]
       : []),
     ...devices.map((device) => ({ kind: "device" as const, title: device.label, blurb: `signed in ${signedInAgo(device.createdAt)}`, id: device.id })),
     ...(devices.length > 1 ? [{ kind: "sign-out-all" as const, title: "Sign out all", blurb: "" }] : []),
@@ -257,7 +263,6 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
           // "Sign out all" has no blurb: the title says what it does.
           return line ? `${lead}${DIM}${line}${RESET}` : lead.trimEnd();
         });
-      const devices = rows.findIndex(isDeviceRow);
       write([
         "Reach this board from other devices",
         "",
@@ -265,7 +270,12 @@ export function createRemotePane(options: RemotePaneOptions): Pane {
           "Frizz runs on localhost, so only this computer can open the board. To open it from a phone or another computer, pick a way in below. Frizz remembers your choice and uses it every time it starts.",
         ),
         "",
-        ...rows.flatMap((choice, index) => [...(index === devices ? ["", "Devices"] : []), ...row(choice, index)]),
+        ...rows.flatMap((choice, index) => {
+          // A blank line and the heading open each section, at its first row.
+          const heading = sectionOf(choice);
+          const opens = heading !== null && heading !== (index > 0 ? sectionOf(rows[index - 1]!) : null);
+          return [...(opens ? ["", heading] : []), ...row(choice, index)];
+        }),
         "",
         `${DIM}↑↓ move · enter choose · esc back${RESET}`,
       ]);
