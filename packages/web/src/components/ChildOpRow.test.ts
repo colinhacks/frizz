@@ -3,7 +3,7 @@ import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { ChildOpRow, type ChildOpDensity, type ChildOpKind } from "./ChildOpRow.tsx"
-import { CHILD_ARROW, CHILD_ARROW_CLASS, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE } from "../lib/childOps.ts"
+import { CHILD_ARROW, CHILD_ARROW_CLASS, CHILD_STALE_DOT_CLASS, CHILD_STALE_SHELL_TITLE, CHILD_STALE_TITLE, PANEL_ROW_BOX_CLASS } from "../lib/childOps.ts"
 
 // The whole point of this component is that four surfaces stopped drawing their own version of one row.
 // So the tests that matter are the CROSS-DENSITY ones: the arrow markup, the stale dot and the id-less
@@ -33,6 +33,7 @@ function render(props: {
   onOpen?: () => void
   onDismiss?: () => void
   title?: string
+  ghRef?: string
 }): string {
   return renderToStaticMarkup(createElement(ChildOpRow, {
     kind: props.kind ?? "AGENT",
@@ -103,18 +104,35 @@ test("the card keeps the pulsing queue indicator and carries the kind tag the sh
 })
 
 // A panel holds one kind of row and its triangle points at the count naming that kind, so a row spends
-// nothing on saying what it is (maintainer 2026-11-06). It is a menu's row, and the whole of it is the target.
-test("the panel row is a menu's: no arrow, no tag, one line, and the whole row opens", () => {
+// nothing on saying what it is (maintainer 2026-11-06). Its box is the panels' one (lib/childOps), and the
+// whole of it is the target.
+test("the panel row: no arrow, no tag, one line, and the whole row opens", () => {
   const html = render({ density: "panel", onOpen: () => {}, onDismiss: () => {}, startedAt: TWELVE_MIN_AGO })
   assert.ok(!html.includes(CHILD_ARROW), "no arrow: it hangs off nothing")
   assert.doesNotMatch(html, /petite-caps/, "no kind tag: the count named the kind")
   const wrapper = html.match(/^<div class="([^"]*)"/)![1]!
-  for (const token of ["px-2.5", "py-1.5", "text-[12px]", "cursor-pointer", "hover:bg-hover-strong"]) {
-    assert.ok(wrapper.split(" ").includes(token), `the wrapper carries ${token}, as ui/Menu.tsx's item does: ${wrapper}`)
+  for (const token of [...PANEL_ROW_BOX_CLASS.split(" "), "cursor-pointer", "hover:bg-hover-strong"]) {
+    assert.ok(wrapper.split(" ").includes(token), `the wrapper carries ${token}: ${wrapper}`)
   }
   assert.ok(html.indexOf("lucide-x") < html.indexOf("12m"), "the × stays directly after the label, ahead of the reading")
   const plain = render({ density: "panel" }).match(/^<div class="([^"]*)"/)![1]!
   assert.doesNotMatch(plain, /cursor-pointer|hover:/, "a row with nothing to open takes no hover")
+})
+
+// A GitHub row's whole row is the hovercard's reference, and the card is its tooltip (2026-11-19). In a panel
+// the card asks to stand beside it, where it covers no other row.
+test("a GitHub row carries its ref for the hovercard, and no native tooltip beside it", () => {
+  const panel = render({ kind: "GITHUB", label: "colinhacks/frizz#61", density: "panel", onOpen: () => {}, ghRef: "colinhacks/frizz#61" })
+  const wrapper = panel.match(/^<div ([^>]*)>/)![1]!
+  assert.match(wrapper, /data-gh-ref="colinhacks\/frizz#61"/)
+  assert.match(wrapper, /data-gh-card-side="left"/)
+  assert.doesNotMatch(panel, / title="Open this pull request on GitHub"/, "the card replaces the row's tooltip")
+  const sheet = render({ kind: "GITHUB", label: "colinhacks/frizz#61", density: "sheet", onOpen: () => {}, ghRef: "colinhacks/frizz#61" })
+  assert.match(sheet, /data-gh-ref="colinhacks\/frizz#61"/)
+  assert.doesNotMatch(sheet, /data-gh-card-side/, "outside a panel the card opens above, as it does in prose")
+  const bare = render({ kind: "GITHUB", label: "not a ref", density: "panel", onOpen: () => {} })
+  assert.doesNotMatch(bare, /data-gh-ref/)
+  assert.match(bare, / title="Open this pull request on GitHub"/, "a row with no card keeps its tooltip")
 })
 
 test("the sheet is the operations row: kind tag, and NO second drill-in glyph beside the title", () => {

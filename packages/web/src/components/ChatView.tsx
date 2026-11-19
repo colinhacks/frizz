@@ -4988,6 +4988,10 @@ export function BackgroundOpsStrip({
             ? (w.issue ? `${w.target} — ${issueStatusLine(w.issue)}` : undefined)
             : (w.github ? `${w.target} — ${watchStatusLine(w.github)}` : undefined)}
           onOpen={() => window.open(githubRefUrl(w.target, w.subject === "issue" ? "issue" : "pull") ?? `https://github.com/${w.target.replace("#", w.subject === "issue" ? "/issues/" : "/pull/")}`, "_blank", "noreferrer,noopener")}
+          // The issue's or PR's own card on hover, as a `#123` in the transcript opens it. Only for a ref
+          // that IS `owner/repo#N`: a worker writes the target by hand, and the card has nothing to show
+          // for anything else. QueueOpsSummary asks for the cards before a panel opens.
+          ghRef={githubRefUrl(w.target, "issue") ? w.target : undefined}
         />
       ))}
       <ThreadLinks links={links} panel={density === "panel"} />

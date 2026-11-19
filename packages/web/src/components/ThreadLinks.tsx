@@ -1,6 +1,6 @@
 import { ExternalLink, FileText } from "lucide-react"
 import type { ThreadLinkView } from "@frizz/shared"
-import { CHILD_ARROW, CHILD_ARROW_CLASS, CHILD_KIND_TAG_CLASS, CHILD_MARK_SLOT_CLASS, PANEL_ROW_MARK_SLOT_CLASS } from "../lib/childOps.ts"
+import { CHILD_ARROW, CHILD_ARROW_CLASS, CHILD_KIND_TAG_CLASS, CHILD_MARK_SLOT_CLASS, PANEL_ROW_BOX_CLASS, PANEL_ROW_MARK_SLOT_CLASS } from "../lib/childOps.ts"
 import { openLocalPath } from "../lib/local-file-links.ts"
 import { localFileDragProps } from "../lib/localFileDrag.ts"
 
@@ -34,10 +34,10 @@ const ICON_SLOT = `${CHILD_MARK_SLOT_CLASS} -mt-[1em] self-baseline`
 // whichever font is resolved. Measured ink-to-cap residual: 0px in sans and mono, desktop and 390px.
 const ICON = "h-[1em] w-[1em] shrink-0 translate-y-[calc(0.5em_-_0.5cap)] text-muted-45"
 
-// In a panel over the prompt box: the same row ChildOpRow's panel density draws, a menu's, with the
+// In a panel over the prompt box: the same row ChildOpRow's panel density draws (PANEL_ROW_BOX_CLASS), with the
 // destination on the right. A file names its file rather than its folder, since a path cut off at the
 // right would show only the part every path here shares; the row's tooltip has the whole of it.
-const PANEL_ROW = "group flex min-w-0 items-baseline gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] outline-none transition-colors hover:bg-hover-strong focus-visible:bg-hover-strong"
+const PANEL_ROW = `group flex min-w-0 items-baseline gap-2 ${PANEL_ROW_BOX_CLASS} text-left outline-none transition-colors hover:bg-hover-strong focus-visible:bg-hover-strong`
 
 function PanelLinks({ links }: { links: readonly ThreadLinkView[] }) {
   return (

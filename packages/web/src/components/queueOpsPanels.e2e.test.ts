@@ -58,8 +58,8 @@ test("each op count opens a panel of its own rows, one panel at a time", { skip:
     // 1. Hover: every count, left to right. Going straight from one to the next swaps the panel — and
     // every panel opens in the same place, flush with the prompt box's right edge and sitting on the rule
     // over the line (maintainer 2026-10-17: "those popovers should always show up in the same place").
-    // Its triangle stands over the middle of the count that opened it, its rows are a menu's, 30px and on
-    // one line, and a panel of one row is that row and the panel's own 4px and border.
+    // Its triangle stands over the middle of the count that opened it, its rows are 26px and on one line
+    // (lib/childOps PANEL_ROW_BOX_CLASS), and a panel of one row is that row and the panel's own 4px and border.
     const boxRight = await page.$eval("[data-queue-ops-summary] + [data-composer-box]", (el) => el.getBoundingClientRect().right)
     const placed: { kind: Kind; left: number; right: number; overLine: number; caretOff: number; caretTip: number; rows: number[]; height: number }[] = []
     for (const kind of KINDS) {
@@ -98,7 +98,7 @@ test("each op count opens a panel of its own rows, one panel at a time", { skip:
       assert.ok(Math.abs(at.caretOff) < 0.5, `the ${at.kind} panel's triangle stands over its count, off by ${at.caretOff}`)
       assert.ok(at.caretTip >= 0, `the ${at.kind} panel's triangle stops short of its count, by ${at.caretTip}`)
       assert.ok(at.rows.length > 0, `the ${at.kind} panel's rows were found`)
-      for (const row of at.rows) assert.equal(row, 30, `a ${at.kind} row is 30px, on one line`)
+      for (const row of at.rows) assert.equal(row, 26, `a ${at.kind} row is 26px, on one line`)
       assert.equal(at.height, at.rows.reduce((sum, row) => sum + row, 0) + 10, `the ${at.kind} panel is its rows, 4px either side, and its border`)
     }
 
@@ -155,6 +155,81 @@ test("each op count opens a panel of its own rows, one panel at a time", { skip:
     await page.keyboard.press("Escape")
     await page.waitForFunction(() => !document.querySelector("[data-queue-ops-panel]"))
     assert.equal(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.opsCount), "link", "Escape returns focus to the count")
+
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
+
+// A WATCHED ISSUE'S OR PR'S ROW OPENS ITS GITHUB CARD, as a `#123` in the transcript does (maintainer
+// 2026-11-19: "when I hover over this, I don't see any information about the issue. It's almost worse than
+// just seeing a list of issues in the chat because in the chat, I actually get the GitHub popovers"). The
+// card stands beside the panel, on its left, its bottom on the row's, so it covers neither the row above
+// nor the prompt box. The pointer can go into the card to follow its title, and the panel waits for it.
+test("a watched issue's row opens its GitHub card beside the panel", { skip: !baseUrl, timeout: 120_000 }, async () => {
+  const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
+  const browser = await launchHeadless({ protocolTimeout: 30_000 })
+  try {
+    const page = await browser.newPage()
+    const errors: string[] = []
+    page.on("console", (message) => { if (message.type() === "error" && !message.text().includes("404")) errors.push(message.text()) })
+    page.on("pageerror", (error) => errors.push(String(error)))
+    // 1400: room on the left of a 480px panel for the 360px card.
+    await page.setViewport({ width: 1400, height: 800, deviceScaleFactor: 1 })
+    await page.goto(`${baseUrl}/queue-ops-spacing-fixture.html?agents=1&links=1&watches=1`, { waitUntil: "networkidle0" })
+    await page.evaluate(() => { document.documentElement.dataset.font = "sans" })
+    await page.waitForSelector("[data-queue-ops-summary] [data-ops-count]")
+    const card = "[data-gh-hovercard]"
+    const centre = async (selector: string) => {
+      const box = (await (await page.$(selector))!.boundingBox())!
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }
+
+    for (const [kind, ref, title] of [["issue", "colinhacks/frizz#61", "Ops panel lists every row"], ["pr", "nubjs/nub#874", "Run a package script from a nested workspace"]] as const) {
+      const at = await centre(`[data-queue-ops-summary] [data-ops-count="${kind}"]`)
+      await page.mouse.move(at.x, at.y)
+      const row = `[data-queue-ops-panel="${kind}"] [data-gh-ref="${ref}"]`
+      await page.waitForSelector(row)
+      // Straight up into the row's reading, at the far right, as a pointer coming off the count goes.
+      const rowBox = (await (await page.$(row))!.boundingBox())!
+      await page.mouse.move(rowBox.x + rowBox.width - 24, rowBox.y + rowBox.height / 2, { steps: 8 })
+      await page.waitForFunction((sel, want) => (document.querySelector(sel) as HTMLElement | null)?.innerText.includes(want), { timeout: 5000 }, card, title)
+      // Radix places the card on the frame after it mounts.
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const placed = await page.evaluate((cardSel, rowSel, panelSel) => {
+        const c = document.querySelector(cardSel)!.getBoundingClientRect()
+        const r = document.querySelector(rowSel)!.getBoundingClientRect()
+        const p = document.querySelector(panelSel)!.getBoundingClientRect()
+        return { cardRight: c.right, cardBottom: c.bottom, rowBottom: r.bottom, panelLeft: p.left, title: document.querySelector(rowSel)!.getAttribute("title") }
+      }, card, row, `[data-queue-ops-panel="${kind}"]`)
+      assert.ok(Math.abs(placed.panelLeft - placed.cardRight - 5) < 0.5, `the ${kind} card stands 5px left of the panel (${placed.panelLeft - placed.cardRight}px)`)
+      assert.ok(Math.abs(placed.cardBottom - placed.rowBottom) < 0.5, `the ${kind} card's bottom meets its row's (${placed.cardBottom} vs ${placed.rowBottom})`)
+      assert.equal(placed.title, null, "the card is the row's tooltip, so the row carries no native one")
+
+      // Into the card: the panel stays, and so does the card.
+      const into = await centre(card)
+      await page.mouse.move(into.x, rowBox.y + rowBox.height / 2 - 4, { steps: 16 })
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      assert.ok(await page.$(`[data-queue-ops-panel="${kind}"]`), `the ${kind} panel stays open while the pointer is on its row's card`)
+      assert.ok(await page.$(card), "and the card stays")
+
+      // Leaving both closes both.
+      await page.mouse.move(4, 4, { steps: 4 })
+      await page.waitForFunction((sel) => !document.querySelector(sel) && !document.querySelector("[data-queue-ops-panel]"), { timeout: 5000 }, card)
+    }
+
+    // A narrow window has no room beside the panel, and the card opens above the row instead.
+    await page.setViewport({ width: 900, height: 800, deviceScaleFactor: 1 })
+    const at = await centre('[data-queue-ops-summary] [data-ops-count="issue"]')
+    await page.mouse.move(at.x, at.y)
+    const row = '[data-queue-ops-panel="issue"] [data-gh-ref="colinhacks/frizz#61"]'
+    await page.waitForSelector(row)
+    const rowBox = (await (await page.$(row))!.boundingBox())!
+    await page.mouse.move(rowBox.x + rowBox.width - 24, rowBox.y + rowBox.height / 2, { steps: 8 })
+    await page.waitForSelector(card)
+    const above = await page.evaluate((cardSel, rowSel) => document.querySelector(cardSel)!.getBoundingClientRect().bottom <= document.querySelector(rowSel)!.getBoundingClientRect().top, card, row)
+    assert.ok(above, "with no room on the left, the card opens above its row")
 
     assert.deepEqual(errors, [])
   } finally {

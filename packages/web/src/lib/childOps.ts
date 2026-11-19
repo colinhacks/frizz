@@ -45,6 +45,12 @@ export const CHILD_MARK_SLOT_CLASS = "flex w-[9px] shrink-0 justify-center"
 // baseline is its own bottom edge, because it is an empty block with the mark absolutely centred inside.
 export const PANEL_ROW_MARK_SLOT_CLASS = "relative block h-[1em] w-[1em] shrink-0 self-baseline translate-y-[calc(0.5em_-_0.5cap)]"
 
+// THE BOX OF A ROW IN THOSE PANELS, on every kind: 12px text in `py-1 px-2.5`, 26px tall. It was the
+// menu's own 30px row (ui/Menu.tsx) from 2026-11-06 until 2026-11-19, when a panel of seven watched issues
+// read as "a little bit too spread out" (maintainer). 36px had read as "weirdly spacious" and 17px gave the
+// pointer nothing to hit, so this is the tighter end of what still takes a press.
+export const PANEL_ROW_BOX_CLASS = "rounded-md px-2.5 py-1 text-[12px]"
+
 // The flat dot for a child with no recent output. /30 (the rail's value); the ops strip's /25 was the
 // outlier and read as a smudge next to the same dot one surface over.
 export const CHILD_STALE_DOT_CLASS = "block h-1.5 w-1.5 rounded-full bg-muted/30"

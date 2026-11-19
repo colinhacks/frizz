@@ -259,7 +259,9 @@ function Byline({ card, nowMs }: { card: GithubRefCard; nowMs: number }) {
 }
 
 // One fixed width for every card, so a column of them (and a hover that flips between two) never
-// jumps. It yields on a narrow viewport rather than overflowing it.
+// jumps. It yields on a narrow viewport rather than overflowing it. The number is what GithubHovercards
+// measures the room beside a reference against; the class spells it out for Tailwind to find.
+export const GITHUB_CARD_WIDTH_PX = 360
 const CARD_WIDTH = "w-[360px] max-w-[min(360px,calc(100vw-24px))] leading-normal"
 
 export function GithubRefCardBody({ card, nowMs = Date.now() }: { card: GithubRefCard; nowMs?: number }) {

@@ -5,6 +5,8 @@ import { CHILD_RESTED_DOT_CLASS, CHILD_STALE_DOT_CLASS, type TranscriptShellReco
 import { useNowMs } from "../lib/liveClock.ts"
 import { isRunningOperation } from "../lib/operationIndicators.ts"
 import { panelWidthOn } from "../lib/overlaySurface.ts"
+import { githubRefUrl } from "../lib/githubRef.ts"
+import { noteGithubRefs } from "../lib/githubHovercards.ts"
 import { extendTrail, trailHeadingInto, type PointerSample } from "../lib/pointerAim.ts"
 import { queueOpsCounts, type QueueOpsCount, type QueueOpsKind } from "../lib/queueOpsCounts.ts"
 import { threadOps } from "../lib/threadOps.ts"
@@ -20,6 +22,7 @@ import { useSurfaceOpsThread } from "./ThreadSurface.tsx"
 import { PendingCommentsCount, useTranscriptComments } from "./TranscriptComments.tsx"
 import { pushMonitorDrawer, pushTimerDrawer } from "../store.ts"
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
+import { GITHUB_HOVERCARD_ATTR } from "./GithubHovercards.tsx"
 
 // THE QUEUE CARD'S LIVE OPS, CONDENSED: one line of counts at the right, just above the docked prompt
 // box — "● 2 agents  ● 1 shell  ● 1 PR  ▤ 2 files" — with the ⤷ rows themselves one hover away.
@@ -78,8 +81,12 @@ import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 // away, whichever count it is on takes over. Sliding along the line of counts never rises toward the
 // panel, so it still swaps at once, the way a menu bar does.
 //
+// A GITHUB ROW'S CARD STANDS BESIDE THE PANEL (ChildOpRow `ghRef`), so the pointer can leave the panel for
+// it, to read the card or follow its title to GitHub. The panel stays open while the pointer is on the card,
+// as it does while the pointer heads back: the row the card belongs to is still under it.
+//
 // How long a panel survives the pointer leaving both it and its count, once the pointer is not heading
-// back to it.
+// back to it or resting on a row's card.
 const HOVER_CLOSE_DELAY_MS = 300
 // How often a held swap or close looks at the pointer again. A pointer that stopped reads as stopped
 // within REST_MS, so a deliberate hover on a neighbouring count wins in about that long.
@@ -125,6 +132,14 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [], only }: 
     clearTimeout(swapTimer.current)
   }, [])
   const groups = queueOpsCounts(thread, transcriptShells, childThreads).filter((group) => !only || only.includes(group.key))
+  // The watched PRs' and issues' cards, asked for while the line is on screen, so the first hover on a row
+  // opens a card rather than a "Loading…" box. One batch per change in the set; the store drops a ref it
+  // already holds.
+  const { prs, issues } = threadOps(thread)
+  const watchedKey = [...prs, ...issues].flatMap((w) => (githubRefUrl(w.target) ? [w.target] : [])).join(" ")
+  useEffect(() => {
+    if (watchedKey) noteGithubRefs(watchedKey.split(" "))
+  }, [watchedKey])
   const line = useRef<HTMLDivElement>(null)
   // Where the pointer has just been, for as long as a panel is open. On the document, because the panel
   // is portaled and the pointer's whole path runs between the two.
@@ -154,6 +169,12 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [], only }: 
   const headingIntoPanel = () => {
     const rect = openPanel.current?.isConnected ? openPanel.current.getBoundingClientRect() : undefined
     return !!rect && trailHeadingInto(trail.current, performance.now(), rect)
+  }
+  // The pointer is on a GitHub card that a row of the open panel opened (see HOVER_CLOSE_DELAY_MS).
+  const onRowCard = () => {
+    const card = document.querySelector(`[${GITHUB_HOVERCARD_ATTR}]`)
+    const ref = card?.getAttribute(GITHUB_HOVERCARD_ATTR)
+    return !!ref && card!.matches(":hover") && !!openPanel.current?.querySelector(`[data-gh-ref="${CSS.escape(ref)}"]`)
   }
   // The last row of a kind can end, or be stopped from its × in the panel, while its panel is open —
   // and nothing then says close: the count unmounts and its panel with it, so no pointer leaves either
@@ -196,7 +217,7 @@ export function QueueOpsSummary({ thread: given, transcriptShells = [], only }: 
     clearTimeout(closeTimer.current)
     clearTimeout(swapTimer.current)
     const closeUnlessHeadingBack = () => {
-      if (headingIntoPanel()) closeTimer.current = setTimeout(closeUnlessHeadingBack, AIM_RECHECK_MS)
+      if (headingIntoPanel() || onRowCard()) closeTimer.current = setTimeout(closeUnlessHeadingBack, AIM_RECHECK_MS)
       else setOpenKind(null)
     }
     closeTimer.current = setTimeout(closeUnlessHeadingBack, HOVER_CLOSE_DELAY_MS)

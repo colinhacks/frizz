@@ -22,6 +22,7 @@ import {
   CHILD_STALE_TITLE,
   CHILD_THREAD_RESTED_TITLE,
   CHILD_THREAD_STALE_TITLE,
+  PANEL_ROW_BOX_CLASS,
   PANEL_ROW_MARK_SLOT_CLASS,
 } from "../lib/childOps.ts"
 
@@ -57,10 +58,8 @@ export type ChildOpKind = "AGENT" | "SHELL" | "GITHUB" | "COMMAND" | "TIMER" | "
 // The dismiss × is NOT one of those differences any more — see `onDismiss`.
 //   panel — a panel over the prompt box (QueueOpsSummary), which holds one kind of row, and the triangle
 //           on it points at the count naming that kind. So no ⤷ and no kind tag: a mark, the label, the ×
-//           and the readings, on one line. It is THE MENU'S ROW (ui/Menu.tsx): 12px text in `py-1.5 px-2.5`,
-//           30px tall, and the whole row takes the fill and the press, so going straight up from a count
-//           lands on it. 36px rows read as "weirdly spacious. Nothing else in Frizz is that spacious"
-//           (maintainer 2026-11-06), and 17px ones gave the pointer nothing to hit.
+//           and the readings, on one line. 12px text, 26px tall (PANEL_ROW_BOX_CLASS has the history), and
+//           the whole row takes the fill and the press, so going straight up from a count lands on it.
 // All of them carry the light-gray DURATION the child has been working — right-justified at the end of the
 // row (maintainer 2026-07-27), so a column of rows reads its numbers down one edge instead of at
 // whatever ragged offset each label happens to end. It reads at the SAME size as the title and every
@@ -96,6 +95,7 @@ export function ChildOpRow({
   onOpen,
   onDismiss,
   title,
+  ghRef,
 }: {
   kind: ChildOpKind
   label: string
@@ -144,6 +144,14 @@ export function ChildOpRow({
   onDismiss?: () => void
   // Tooltip override. The rail passes "[subagent-type] label" — the type reading it has no room to render.
   title?: string
+  // THE `owner/repo#N` OF A GITHUB ROW, stamped as `data-gh-ref` on the whole row so the app-wide hovercard
+  // layer (GithubHovercards) opens the issue's or PR's card on it, as it does on a `#123` in prose
+  // (maintainer 2026-11-19, of a panel of watched issues: "when I hover over this, I don't see any
+  // information about the issue. It's almost worse than just seeing a list of issues in the chat because
+  // in the chat, I actually get the GitHub popovers"). The card IS the row's tooltip, so the row carries
+  // no native `title` beside it. In a panel the card opens BESIDE the panel rather than over it: above
+  // the row it would cover the row above, and the pointer going up to that row would land in the card.
+  ghRef?: string
 }): ReactElement {
   const running = isRunningOperation(state)
   // ONE HUE PER RUNTIME CONCERN, and the row is the only place they are named. A sub-agent pulses the
@@ -180,7 +188,7 @@ export function ChildOpRow({
   // always a real kill; everything else is retiring a finished op.
   const dismissTone = running ? "running" : "settled"
   const openTitle = CHILD_OPEN_TITLE[kind]
-  const rowTitle = title ?? (clickable ? openTitle : undefined)
+  const rowTitle = ghRef ? undefined : title ?? (clickable ? openTitle : undefined)
 
   // The liveness mark. The rail speaks the rail's checkbox language; the card and the drawer share the
   // pulsing-dot language, in a fixed-width column so their labels line up across both surfaces. A row
@@ -310,7 +318,7 @@ export function ChildOpRow({
   // the × arrived, because the button no longer spans the row and a highlight on the button would stop
   // short of the × and the duration. The indent stayed on the button (see rowClass).
   const wrapperClass = panel
-    ? `flex min-w-0 items-baseline gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${clickable ? "group cursor-pointer hover:bg-hover-strong has-[:focus-visible]:bg-hover-strong" : ""}`
+    ? `flex min-w-0 items-baseline gap-2 ${PANEL_ROW_BOX_CLASS} transition-colors ${clickable ? "group cursor-pointer hover:bg-hover-strong has-[:focus-visible]:bg-hover-strong" : ""}`
     : rail
     ? "flex w-full min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-[11.5px] transition-colors hover:bg-hover"
     : "flex min-w-0 items-center gap-1.5 text-[11.5px]"
@@ -335,6 +343,8 @@ export function ChildOpRow({
       data-op-row={onDismiss ? "" : undefined}
       data-subagent-depth={depth && depth > 1 ? depth : undefined}
       data-subagent-parent={parentSlug}
+      data-gh-ref={ghRef}
+      data-gh-card-side={ghRef && panel ? "left" : undefined}
       // THE WHOLE PANEL ROW IS THE TARGET, its readings included, so the press lands here rather than on
       // the button. A keyboard's Enter on the button arrives here too, as a click that bubbles.
       onClick={panel && clickable ? onOpen : undefined}
