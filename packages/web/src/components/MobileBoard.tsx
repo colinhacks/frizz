@@ -73,8 +73,15 @@ import { useShownTitle } from "../lib/pendingRename.ts"
 // had merged them into one Queue ("Something is active until it's marked done"), from before the desktop
 // named the lower band Running and folded it shut by default; the merge left spinning threads interleaved
 // with the handoffs waiting to be read. The tabs run in the rail's top-to-bottom order.
+//
+// CHANGED 2026-11-19 (maintainer: "pinned threads show up in the queue tab, which I hate. It should be
+// its own thing for pinned. … Why … would there be two different numbers for queue?"): PINNED IS A TAB,
+// the rail's Pinned shelf, first in the strip as the shelf is first down the rail, and drawn only while
+// something is pinned, as the rail draws its section. And the Queue tab carries ONE number, the rows it
+// lists, as the rail's Queue header does: it read "2 · 4", asks (lit) then rows, and the asks are
+// already the header's "N need you".
 
-type Tab = "queue" | "running" | "snoozed" | "done"
+type Tab = "pinned" | "queue" | "running" | "snoozed" | "done"
 
 /** Desktop's exact mark, with a spoken state instead of a hover-only tooltip on touch screens. */
 export function MobileThreadMark({ t }: { t: ThreadView }) {
@@ -259,7 +266,7 @@ function useLongPress(onLongPress: () => void) {
  * 64pt of a 358pt measure. The hairline is INSET to the text column (16 + 18 + 12 = 46) so the glyph
  * column reads as a gutter rather than as the first cell of a table.
  *
- * THE RIGHT-HAND READING depends on the tab. In Queue, Running and Done it is the rest age, and nothing
+ * THE RIGHT-HAND READING depends on the tab. In Pinned, Queue, Running and Done it is the rest age, and nothing
  * on a row still going (most of Running); in Snoozed it is when the thread wakes (`wakes 3h`), because
  * for a parked thread that is the fact that matters — and a park with no clock behind it (a PR watch,
  * the resting card's event-snooze) shows nothing rather than a time nobody promised.
@@ -442,19 +449,6 @@ const GEAR_DOT = "pointer-events-none absolute right-[9.5px] top-[10.5px] size-[
 
 const TAB_COUNT = "text-[12.5px] font-medium tabular-nums text-muted"
 
-/**
- * The Queue tab's numbers: how many threads are asking (lit), then how many the tab lists (muted),
- * as "2 · 5". When every listed thread is asking, the second number repeats the first, and "1 · 1"
- * read as a glitch with nothing to say what either was: one number is shown. Each is named for a
- * screen reader, which was read "Queue 1 · 1".
- */
-export function queueTabCounts(asks: number, listed: number): { asks?: number; listed?: number } {
-  return {
-    ...(asks > 0 ? { asks } : {}),
-    ...(listed > 0 && listed !== asks ? { listed } : {}),
-  }
-}
-
 // The drawer stack and the modals stay the App's, and the restart overlay the PageFrame's that App
 // stands in: they are identical on both shells and mounting them twice would stack two of everything.
 export function MobileBoard() {
@@ -464,7 +458,7 @@ export function MobileBoard() {
   // does not — frizz-server ships those most days, and a dot that is always on says nothing. A frizz-dev
   // build names no version and never lights it. The update itself, patch or not, is in Settings.
   const updateBadge = showsUpdateBadge(useSupervisorStatus().data ?? null)
-  const [tab, setTab] = useState<Tab>("queue")
+  const [pickedTab, setTab] = useState<Tab>("queue")
   // ONE row open at a time — two half-open rows read as a rendering fault.
   const [openSwipe, setOpenSwipe] = useState<string | null>(null)
   // The thread whose actions sheet a long-press opened, if any.
@@ -481,18 +475,20 @@ export function MobileBoard() {
   const queueOrder = useSnapshot(prefs).queueOrder
   const sections = useMemo(() => sectionThreads(all, queueOrder), [all, queueOrder])
 
-  // QUEUE AND RUNNING are the rail's two bands, split the rail's way and ordered by time alone, as the
-  // desktop cue is (lib/mobileTriage phoneBands, which the Done button's triage loop walks too).
-  const { queue, running } = useMemo(() => phoneBands(sections, queueOrder), [sections, queueOrder])
+  // PINNED, QUEUE AND RUNNING are the rail's three bands, split the rail's way, the Queue ordered by time
+  // alone as the desktop cue is (lib/mobileTriage phoneBands, which the Done button's triage loop walks
+  // too). The Pinned tab is drawn only while something is pinned, so when the last pin goes the open tab
+  // falls back to the Queue rather than to a tab that is no longer there.
+  const { pinned, queue, running } = useMemo(() => phoneBands(sections, queueOrder), [sections, queueOrder])
+  const tab: Tab = pickedTab === "pinned" && pinned.length === 0 ? "queue" : pickedTab
   // Counted with `boardAskThread` — the queue rows `needsAction` calls asks — which is also what the server
   // counts for the projects list's accent number, so the list and this header cannot disagree.
   const askCount = useMemo(() => all.filter(boardAskThread).length, [all])
   // "Working" is the maintainer's ACTIVE band — the rows that are spinning — counted with the predicate
   // the desktop rail's tooltip uses (activeBandThread), so the phone and the rail cannot disagree.
   const working = useMemo(() => all.filter(activeBandThread).length, [all])
-  const tabCounts = queueTabCounts(askCount, queue.length)
 
-  const rows = tab === "queue" ? queue : tab === "running" ? running : tab === "snoozed" ? sections.snoozed : sections.inactive
+  const rows = tab === "pinned" ? pinned : tab === "queue" ? queue : tab === "running" ? running : tab === "snoozed" ? sections.snoozed : sections.inactive
   const statusView = snap.view.startsWith("status:") ? snap.view.slice(7) : null
 
   // A ROW ARRIVING, MOVING OR CHANGING HEIGHT ABOVE THE READER NEVER MOVES THEM (lib/readerPin). A thread
@@ -557,7 +553,7 @@ export function MobileBoard() {
             ) : null}
           </button>
         </div>
-        {/* Four tabs with two-digit counts outrun a 375pt strip, so the strip SCROLLS SIDEWAYS rather than
+        {/* Four or five tabs with two-digit counts outrun a 375pt strip, so the strip SCROLLS SIDEWAYS rather than
             squeezing a label onto two lines (measured 2026-11-11: Done ended 3px from a 375 screen's edge
             on "Queue 12 · 33", and at 320 the Queue count wrapped under its label). The hairline is the
             wrapper's border, and the strip hangs 1px over it so the open tab's bar covers the hairline as
@@ -571,15 +567,13 @@ export function MobileBoard() {
             aria-label="Bands"
             className="scrollbar-none -mb-px flex scroll-px-[18px] gap-[22px] overflow-x-auto pl-[18px] after:-ml-[5px] after:w-px after:shrink-0 after:content-['']"
           >
+            {pinned.length > 0 ? (
+              <BandTab band="pinned" label="Pinned" active={tab === "pinned"} onClick={() => setTab("pinned")}>
+                <span className={TAB_COUNT}>{pinned.length}</span>
+              </BandTab>
+            ) : null}
             <BandTab band="queue" label="Queue" active={tab === "queue"} onClick={() => setTab("queue")}>
-              {tabCounts.asks !== undefined ? (
-                <span aria-label={`${tabCounts.asks} need you`} className="text-[12.5px] font-bold tabular-nums text-accent">{tabCounts.asks}</span>
-              ) : null}
-              {tabCounts.listed !== undefined ? (
-                <span aria-label={tabCounts.asks !== undefined ? `of ${tabCounts.listed}` : `${tabCounts.listed} threads`} className={TAB_COUNT}>
-                  {tabCounts.asks !== undefined ? `· ${tabCounts.listed}` : tabCounts.listed}
-                </span>
-              ) : null}
+              {queue.length > 0 ? <span className={TAB_COUNT}>{queue.length}</span> : null}
             </BandTab>
             <BandTab band="running" label="Running" active={tab === "running"} onClick={() => setTab("running")}>
               {running.length > 0 ? <span className={TAB_COUNT}>{running.length}</span> : null}

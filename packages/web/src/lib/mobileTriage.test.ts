@@ -22,19 +22,33 @@ const ask = (id: string, at: string) => row(id, { pendingAsk, lastAssistantAt: a
 const rested = (id: string, at: string) => row(id, { lastAssistantAt: at })
 const running = (id: string) => row(id, { runtime: "running", needsYou: false })
 
-test("the phone Queue is one time-ordered list below the pins, asks and handoffs together, in either direction", () => {
+test("the phone Queue is one time-ordered list, asks and handoffs together, in either direction", () => {
   const oldAsk = ask("project-a~question", "2026-10-18T09:00:00Z")
   const older = rested("project-a~older-handoff", "2026-09-18T09:00:00Z")
   const newer = rested("project-b~recent-handoff", "2026-11-18T09:00:00Z")
-  const pin = row("project-b~pin", { pinnedAt: "2026-10-15T09:00:00Z" })
   const worker = running("project-a~running")
-  const threads = [older, oldAsk, worker, pin, newer]
+  const threads = [older, oldAsk, worker, newer]
   const fifo = phoneBands(sectionThreads(threads, "fifo"), "fifo")
   const lifo = phoneBands(sectionThreads(threads, "lifo"), "lifo")
-  assert.deepEqual(fifo.queue, [pin, older, oldAsk, newer], "Oldest first: an older handoff stays above the ask")
-  assert.deepEqual(lifo.queue, [pin, newer, oldAsk, older])
+  assert.deepEqual(fifo.queue, [older, oldAsk, newer], "Oldest first: an older handoff stays above the ask")
+  assert.deepEqual(lifo.queue, [newer, oldAsk, older])
   assert.deepEqual(lifo.running, [worker])
   assert.deepEqual(phoneQueue(threads, "lifo"), lifo.queue, "the triage loop walks the tab the board shows")
+})
+
+test("a pinned thread is on the Pinned tab alone, and the triage loop reaches its ask before the Queue", () => {
+  const pinnedAsk = row("project-b~pinned-ask", { pendingAsk, lastAssistantAt: "2026-11-18T10:00:00Z", pinnedAt: "2026-10-15T09:00:00Z" })
+  const pinnedWorker = row("project-a~pinned-running", { runtime: "running", needsYou: false, pinnedAt: "2026-10-16T09:00:00Z" })
+  const handoff = rested("project-a~handoff", "2026-11-18T09:00:00Z")
+  const worker = running("project-a~running")
+  const threads = [handoff, pinnedWorker, worker, pinnedAsk]
+  const bands = phoneBands(sectionThreads(threads, "lifo"), "lifo")
+  assert.deepEqual(bands.pinned, [pinnedAsk, pinnedWorker], "the shelf's own order, oldest pin first")
+  assert.deepEqual(bands.queue, [handoff], "no pin in the Queue, not even one that is asking")
+  assert.deepEqual(bands.running, [worker], "nor in Running")
+  assert.deepEqual(phoneQueue(threads, "lifo"), [pinnedAsk, pinnedWorker, handoff], "the tabs' order")
+  assert.equal(nextThreadNeedingYou(threads, "elsewhere", "lifo", {})?.id, "project-b~pinned-ask", "as the desktop pane steps the pinned band first")
+  assert.equal(nextThreadNeedingYou(threads, "project-b~pinned-ask", "lifo", {})?.id, "project-a~handoff", "then the Queue, past the running pin")
 })
 
 test("a native ask from Running appears in the Queue at its time, in either direction", () => {
