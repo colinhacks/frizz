@@ -69,7 +69,9 @@ export function WakeDivider({ icon, children, sourceId, ariaLabel, marker, at, t
         aria-label={ariaLabel}
         aria-expanded={ariaExpanded}
         aria-controls={ariaControls}
-        className="group/wake @container/wake my-1 flex w-full items-center gap-3 rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60"
+        // A finger's row where it is a button: 32px tall, in the same place (the margin gives up what the
+        // padding takes), where its one line of 12px type made an 18px target.
+        className="group/wake @container/wake my-1 flex w-full items-center gap-3 rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60 pointer-coarse:-my-0.5 pointer-coarse:py-1.5"
       >
         {chrome}
       </button>

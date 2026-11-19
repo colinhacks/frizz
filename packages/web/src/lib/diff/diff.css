@@ -92,6 +92,21 @@
 }
 .frizz-bash-label { color: var(--color-muted); }
 
+/* A FINGER'S ROW. On a touch screen the whole row is what opens it, and a sub-agent's title what opens its
+   transcript. At the pointer's 26px pitch, five agents in a column were five targets and a thumb covers two
+   (2026-11-19). 32px here, with the node moved down by the 3px the padding adds above it. */
+@media (pointer: coarse) {
+  .frizz-bash,
+  .frizz-diff {
+    --rail-node-top: 12.5px;
+    --rail-node-bottom: 20.5px;
+  }
+  .frizz-bash-header,
+  .frizz-diff-header {
+    padding: 5px 0;
+  }
+}
+
 /* What the call was about: prose in sans (a Bash description, a sub-agent's title), anything literal in
    mono. A smaller font on the row's own 22px line box lands its baseline lower than the label's and grows
    the row by a fraction of a pixel, so the mono takes a line box that stays inside it. */

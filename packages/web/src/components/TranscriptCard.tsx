@@ -464,4 +464,7 @@ export const CARD_PRIMARY_BUTTON = "bg-fg px-2.5 py-1 text-bg hover:opacity-90"
 export const CARD_ACTION_RADIUS = "rounded-md"
 // The same verb with the icon+label layout every card action uses. Cards differ only in what they pass
 // beyond this (shrink-0, a disabled treatment), never in the fill.
-export const CARD_PRIMARY_ACTION = `flex shrink-0 items-center gap-1 ${CARD_ACTION_RADIUS} text-[11px] font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${CARD_PRIMARY_BUTTON}`
+//
+// UNDER A FINGER it is a 36px control. At the pointer's size a card's one verb (Send under a to-do list,
+// Snooze on a wait) measured 47x25 and 75x25 on a phone, half a thumb (2026-11-19).
+export const CARD_PRIMARY_ACTION = `flex shrink-0 items-center gap-1 ${CARD_ACTION_RADIUS} text-[11px] font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-focus-ink-60 pointer-coarse:min-h-9 pointer-coarse:rounded-lg pointer-coarse:px-3.5 pointer-coarse:text-[13px] ${CARD_PRIMARY_BUTTON}`

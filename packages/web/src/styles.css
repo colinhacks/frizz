@@ -1147,6 +1147,15 @@ a[href] {
   text-decoration: line-through;
   text-decoration-thickness: from-font;
 }
+/* A WATCHED PR, SHELL OR SUB-AGENT ON A RESTING CARD, UNDER A FINGER (ChildOpRow's `data-wait-row`). Each
+   row is a link over its whole width, and at the pointer's 20px pitch five pull requests were five targets
+   in 104px (2026-11-19). 32px each on a touch screen. */
+@media (pointer: coarse) {
+  [data-wait-row] {
+    padding-block: 6px;
+  }
+}
+
 /* ── The human's to-do list (AwaitingSteps.tsx, 2026-11-09) ───────────────────────────────────────
    THE BOX SITS ON THE FIRST LINE'S CAP BAND, computed by the browser rather than fitted. An empty block's
    baseline is its bottom edge, so `align-self: baseline` stands the box on the text's baseline, and
@@ -1607,6 +1616,14 @@ html[data-code-wrap="off"] {
 .md-body details > summary::-webkit-details-marker {
   display: none;
 }
+/* A finger's row: 36px, where the line alone is 24. Margins give back what the padding takes, so a
+   closed disclosure sits where it sat. */
+@media (pointer: coarse) {
+  .md-body details > summary {
+    margin-block: -6px;
+    padding-block: 6px;
+  }
+}
 /* The folded bytes of a question fence that did not read and had no question to draw
    (RegisteredQuestionCards InvalidQuestionFence): a footnote to the "Question not asked" line above it,
    so its label wears that line's 13px and muted tone rather than the prose's 14px foreground, which read
@@ -1911,6 +1928,15 @@ html[data-code-wrap="off"] {
 @media (hover: none) {
   .md-body :is(.md-code-copy, .md-quote-copy) {
     opacity: 1;
+  }
+}
+/* UNDER A FINGER the 24px box answers from 40px around its centre. A pseudo-element, so the box the eye
+   sees (and the corner it is concentric with) does not change. */
+@media (pointer: coarse) {
+  .md-body :is(.md-code-copy, .md-quote-copy)::after {
+    content: "";
+    position: absolute;
+    inset: -8px;
   }
 }
 .md-body :is(.md-code-copy, .md-quote-copy):hover,

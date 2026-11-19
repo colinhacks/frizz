@@ -135,7 +135,8 @@ function TodoRow({ slug, todo, onTicked }: { slug: string; todo: HumanTodo; onTi
       <span className={boxClass(todo.done, todo.staged)}>
         {todo.done && <BoxCheck />}
         {/* Only the box is the control: the text holds links to follow and commands to select. The
-            button hangs past the box so a 16px square is not a 16px target. */}
+            button hangs past the box so a 16px square is not a 16px target: 26px under a pointer, 36px
+            under a finger. */}
         <button
           type="button"
           role="checkbox"
@@ -146,7 +147,7 @@ function TodoRow({ slug, todo, onTicked }: { slug: string; todo: HumanTodo; onTi
             onTicked?.(event)
           }}
           onMouseDown={(event) => event.preventDefault()}
-          className="absolute -inset-[5px] rounded-md outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60"
+          className="absolute -inset-[5px] rounded-md outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60 pointer-coarse:-inset-[10px]"
         />
       </span>
       <div className="min-w-0">

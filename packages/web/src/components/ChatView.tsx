@@ -2501,7 +2501,7 @@ function MinimalToolActivity({ tools, at }: { tools: CollapsedTool[]; at?: strin
         // `-my-0.5`, so the row is the same 20px line as the reasoning label and as the live Working row
         // it replaces when a run settles — with the padding counted, the settle grew the tail 3px and
         // moved this label 2px below where the shimmer had it (measured on real workers, 2026-10-13).
-        className={`group flex w-full min-w-0 items-baseline gap-1.5 rounded -my-0.5 py-0.5 text-left outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${TRANSCRIPT_META_LABEL_CLASS}`}
+        className={`group flex w-full min-w-0 items-baseline gap-1.5 rounded -my-0.5 py-0.5 text-left outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60 pointer-coarse:-my-1.5 pointer-coarse:py-1.5 ${TRANSCRIPT_META_LABEL_CLASS}`}
       >
         <span
           data-tool-activity-label
@@ -3288,7 +3288,9 @@ export function AgentBlock({
               {profile && (
                 <span
                   data-subagent-profile
-                  className="shrink-0 whitespace-nowrap text-[11.5px] leading-none text-faint"
+                  // Not on a phone: there "opus 5.5 › high" took the width of the title beside it, which
+                  // read "Audit every retry pa…" five rows running. The child's sheet says its profile.
+                  className="shrink-0 whitespace-nowrap text-[11.5px] leading-none text-faint max-[700px]:hidden"
                   title={`Sub-agent profile: ${profile}`}
                 >
                   {profile}
@@ -5413,7 +5415,8 @@ export function WorkingIndicator({ since, startedAt, activityLabel, run }: { sin
   // line height the 12px clock's baseline hung 1px below the label's line box, so this row was 21px,
   // and every settle shifted the tail — and everything above a reader pinned to the bottom — by the
   // difference (measured on real workers, 2026-10-13).
-  const rowClass = `group flex min-w-0 items-baseline justify-between gap-3 rounded text-left outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60 ${TRANSCRIPT_META_LABEL_CLASS}`
+  // Under a finger the row answers from 32px, in the same place: the margin gives back what the padding takes.
+  const rowClass = `group flex min-w-0 items-baseline justify-between gap-3 rounded text-left outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60 pointer-coarse:-my-1.5 pointer-coarse:py-1.5 ${TRANSCRIPT_META_LABEL_CLASS}`
   // ONE LINE, always — the row is a live status reading, and a status reading that changes height
   // as a path gets longer makes the whole tail jump. The label TRUNCATES (maintainer 2026-07-31:
   // "prevent the actual gerund from ever breaking onto two lines. It should get truncated
