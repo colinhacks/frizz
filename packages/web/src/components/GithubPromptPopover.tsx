@@ -35,9 +35,9 @@ export function GithubPromptPopover({ anchor, children }: { anchor: RefObject<HT
           onMouseDown={(e) => e.preventDefault()}
           // A 15px glyph in a 30px hover square — the Start button's own height, so the two stand on
           // one line as a pair on the footer's `items-center` row.
-          className="github-prompt-trigger icon-focus-outline inline-flex size-[30px] shrink-0 items-center justify-center rounded-md text-muted outline-none transition-[color,background-color] hover:bg-hover-strong hover:text-fg aria-expanded:bg-hover-strong aria-expanded:text-fg"
+          className="github-prompt-trigger icon-focus-outline inline-flex size-[30px] shrink-0 items-center justify-center rounded-md text-muted outline-none pointer-coarse:size-10 transition-[color,background-color] hover:bg-hover-strong hover:text-fg aria-expanded:bg-hover-strong aria-expanded:text-fg"
         >
-          <SettingsIcon aria-hidden="true" size={15} />
+          <SettingsIcon aria-hidden="true" size={15} className="pointer-coarse:size-[18px]" />
         </button>
       </PopoverTrigger>
       {/* Opens UPWARD over the list. The footer row spans the modal, padding included: the 20px align

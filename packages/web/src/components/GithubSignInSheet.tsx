@@ -1,6 +1,6 @@
 import { ArrowUpRight, Check, Copy, Github, Loader2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { Overlay } from "./NewThreadModal.tsx"
+import { Overlay, OverlayTitle } from "./ui/Overlay.tsx"
 import { useCopyCode, useGithubSignIn } from "./GithubAccountField.tsx"
 
 // THE SHEET the GitHub button opens while Frizz is signed out: one short job, so one column. Read the
@@ -13,8 +13,12 @@ import { useCopyCode, useGithubSignIn } from "./GithubAccountField.tsx"
 // keeps working and reopening shows the same one.
 
 const FRIZZ_APP_INSTALL_URL = "https://github.com/apps/frizz-agent-console/installations/new"
-const PRIMARY = "button-outline flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-fg text-[13px] font-medium text-bg no-underline outline-none transition-opacity hover:opacity-90 disabled:opacity-45"
-const QUIET = "whitespace-nowrap rounded text-[12.5px] text-muted outline-none hover:text-fg focus-visible:text-fg"
+// ON A TOUCH SCREEN each control is a finger's target. A phone reaches this sheet from the sign-in hint's
+// own button and from the new-thread "Issue or PR" chip, and until 2026-11-19 it drew the desktop's sizes
+// there: Cancel a 40x18 word, the copy button 28px (measured at 393px wide). The quiet verbs grow their
+// HIT, not their ink, so the sheet's one column keeps its weight.
+const PRIMARY = "button-outline flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-fg text-[13px] font-medium text-bg no-underline outline-none transition-opacity hover:opacity-90 disabled:opacity-45 pointer-coarse:h-11 pointer-coarse:rounded-lg pointer-coarse:text-[14.5px]"
+const QUIET = "relative whitespace-nowrap rounded text-[12.5px] text-muted outline-none hover:text-fg focus-visible:text-fg pointer-coarse:text-[14px] pointer-coarse:after:absolute pointer-coarse:after:-inset-x-3 pointer-coarse:after:-inset-y-3.5 pointer-coarse:after:content-['']"
 const NOTE = "m-0 mt-1 text-[13px] text-muted"
 // Holds the sheet's height from "Getting a code…" through the code to a failure, so nothing below jumps.
 const CODE_SLOT = "my-[18px] flex min-h-[32px] w-full items-center justify-center"
@@ -28,6 +32,7 @@ export function GithubSignInSheet({ onClose }: { onClose: () => void }) {
       <div
         ref={panel}
         tabIndex={-1}
+        data-autofocus
         data-github-sign-in
         className="flex w-[420px] max-w-[90vw] flex-col items-center rounded-xl border border-border bg-panel p-[22px] text-center shadow-2xl shadow-shadow-ink/50 outline-none"
         onKeyDownCapture={(e) => {
@@ -38,7 +43,7 @@ export function GithubSignInSheet({ onClose }: { onClose: () => void }) {
         }}
       >
         <Github size={20} aria-hidden="true" className="text-muted" />
-        <h2 className="m-0 mt-2.5 text-[15px] font-medium">Sign in to GitHub</h2>
+        <OverlayTitle asChild><h2 className="m-0 mt-2.5 text-[15px] font-medium">Sign in to GitHub</h2></OverlayTitle>
         <SignInBody onClose={onClose} />
         <p className="m-0 mt-3 w-full border-t border-border pt-3 text-[12px] leading-normal text-balance text-muted">
           Read-only access to code, issues, PRs and checks. Private repos also need{" "}
@@ -103,7 +108,7 @@ function DeviceCode({ code, url, onCancel }: { code: string; url: string; onCanc
       {/* Three columns, so the CODE is what is centred and the copy button hangs off its right. */}
       <div data-github-device-code className="my-[18px] grid min-h-[32px] w-full grid-cols-[1fr_auto_1fr] items-center gap-2">
         <span className="col-start-2 font-mono text-[30px] font-semibold leading-none tracking-[0.06em] text-fg">{code}</span>
-        <button type="button" aria-label="Copy the code" onClick={() => void copy()} className="inline-flex size-7 items-center justify-center justify-self-start rounded-md text-muted outline-none hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong">
+        <button type="button" aria-label="Copy the code" onClick={() => void copy()} className="inline-flex size-7 items-center justify-center justify-self-start rounded-md text-muted outline-none pointer-coarse:size-10 pointer-coarse:active:bg-hover-strong hover:bg-hover-strong hover:text-fg focus-visible:ring-1 focus-visible:ring-border-strong">
           {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
         </button>
       </div>
@@ -121,8 +126,10 @@ function DeviceCode({ code, url, onCancel }: { code: string; url: string; onCanc
 
 function Waiting({ label }: { label: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[12.5px] text-muted">
-      <Loader2 size={13} aria-hidden="true" className="animate-spin" />
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[12.5px] text-muted pointer-coarse:text-[14px]">
+      {/* The span lifts, not the icon, whose transform is the spin. At the touch size the 13px ring's ink
+          read 0.44px below the 14px label's cap band (ink-align, 2026-11-19). */}
+      <span className="inline-flex pointer-coarse:-translate-y-[0.5px]"><Loader2 size={13} aria-hidden="true" className="animate-spin" /></span>
       {label}
     </span>
   )

@@ -32,15 +32,16 @@ import { focusToRestore, openerChain, rememberChain } from "../../lib/restoreFoc
 // stood down.
 //
 // The props are the surface's root element's: its class (it is `fixed`, with a layer from lib/layers.ts),
-// its data attributes, its handlers. `label` names it for assistive tech, as a hidden title.
+// its data attributes, its handlers. `label` names it for assistive tech, as a hidden title. A surface
+// that draws its own heading passes `ownTitle` instead and wraps that heading in `ModalSurfaceTitle`: it
+// is then named by the heading on screen, and the page does not gain a second, hidden one.
 export const ModalSurface = forwardRef<
   HTMLDivElement,
-  {
-    label: string
+  ({ label: string; ownTitle?: false } | { ownTitle: true; label?: undefined }) & {
     /** Asked as the surface closes. False leaves the focus alone; absent, it goes back to the opener. */
     returnsFocus?: () => boolean
   } & Omit<ComponentPropsWithoutRef<typeof RadixDialog.Content>, "asChild" | "forceMount">
->(function ModalSurface({ label, returnsFocus, children, className = "", ...props }, ref) {
+>(function ModalSurface({ label, ownTitle, returnsFocus, children, className = "", ...props }, ref) {
   // Read on the FIRST render, which is the surface opening: by its first effect Radix has already
   // moved the focus inside.
   const [openers] = useState(openerChain)
@@ -78,10 +79,13 @@ export const ModalSurface = forwardRef<
           className={`outline-none ${className}`}
           {...props}
         >
-          <RadixDialog.Title className="sr-only">{label}</RadixDialog.Title>
+          {ownTitle ? null : <RadixDialog.Title className="sr-only">{label}</RadixDialog.Title>}
           {children}
         </RadixDialog.Content>
       </RadixDialog.Portal>
     </RadixDialog.Root>
   )
 })
+
+/** The heading of a surface opened with `ownTitle`: `<ModalSurfaceTitle asChild><h2>…</h2></ModalSurfaceTitle>`. */
+export const ModalSurfaceTitle = RadixDialog.Title

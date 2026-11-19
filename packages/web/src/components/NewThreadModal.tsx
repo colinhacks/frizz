@@ -32,7 +32,7 @@ import { beginDispatch, dispatchAnswered, dispatchedThreadId, dispatchFailed } f
 import { openStartedThread, screenNow } from "../lib/openStartedThread.ts"
 import { rememberDispatchedPrompt } from "../lib/dispatchedPrompt.ts"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
-import { Z_DIALOG, Z_MODAL } from "../lib/layers.ts"
+import { Z_MODAL } from "../lib/layers.ts"
 
 // One element for every desktop form, so it never invalidates the footer's memo below.
 const NEW_THREAD_MARKS = <NewThreadAgentMarks />
@@ -560,22 +560,6 @@ export function NewThreadDialog({ onClose }: { onClose: () => void }) {
         </RadixDialog.Content>
       </RadixDialog.Portal>
     </RadixDialog.Root>
-  )
-}
-
-export function Overlay({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  return (
-    // Frosted glass: heavy blur + saturation over a light black wash, so the board reads as a
-    // texture behind the dialog rather than going fully dark. The dialog layer (lib/layers.ts), the
-    // shared Radix Dialog's, so the centered picker sits above every drawer and modal it can open from.
-    <div
-      className={`fixed inset-0 ${Z_DIALOG} flex items-center justify-center bg-scrim-30 backdrop-blur-md backdrop-saturate-150`}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      {children}
-    </div>
   )
 }
 

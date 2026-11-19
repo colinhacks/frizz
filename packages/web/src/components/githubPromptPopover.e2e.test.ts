@@ -320,7 +320,8 @@ test("on a phone the header and the controls stay inside the picker's content ed
     await page.waitForSelector(`${PANEL} [aria-label="Model and effort"]`)
     await page.click(`${PANEL} [aria-label="Model and effort"]`)
     await page.waitForFunction((panel) => {
-      const sheet = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((el) => !el.matches(panel))
+      // Neither the settings panel nor the picker itself, which is a dialog too (ui/Overlay).
+      const sheet = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((el) => !el.matches(panel) && !el.querySelector("[data-row-number]"))
       if (!sheet) return false
       const box = sheet.getBoundingClientRect()
       return box.height > 0 && sheet.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2))

@@ -118,8 +118,10 @@ export function GithubPromptField({
           baseline, so centred boxes set the word visibly lower than the tokens. Reset shares the row,
           at its far end, now that the box has no label row above it. */}
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-        <div className="flex flex-wrap items-baseline gap-1" data-github-prompt-tokens="">
-          <span className="mr-1 text-[11.5px] text-muted-70">Insert</span>
+        {/* On a touch screen the chips are 30px tall with 8px between them: at 20px and 4px a thumb
+            covered two (measured 2026-11-19 at 393px wide). */}
+        <div className="flex flex-wrap items-baseline gap-1 pointer-coarse:gap-2" data-github-prompt-tokens="">
+          <span className="mr-1 text-[11.5px] text-muted-70 pointer-coarse:text-[13px]">Insert</span>
           {GH_PROMPT_TOKENS.map(({ token, gloss }) => (
             <Tooltip key={token} label={gloss}>
               <button
@@ -128,7 +130,7 @@ export function GithubPromptField({
                 // The box keeps its focus and its caret, so the token lands where the caret was.
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => insertToken(token)}
-                className="font-mono-keep rounded-[5px] bg-fg/7 px-1.5 text-[11px] leading-[20px] text-fg/75 outline-none transition-colors hover:bg-fg/12 hover:text-fg focus-visible:bg-fg/12 focus-visible:text-fg"
+                className="font-mono-keep rounded-[5px] bg-fg/7 px-1.5 text-[11px] leading-[20px] text-fg/75 outline-none transition-colors hover:bg-fg/12 hover:text-fg focus-visible:bg-fg/12 focus-visible:text-fg pointer-coarse:rounded-md pointer-coarse:px-2.5 pointer-coarse:text-[13px] pointer-coarse:leading-[30px] pointer-coarse:active:bg-fg/12"
               >
                 {`{${token}}`}
               </button>
@@ -138,7 +140,7 @@ export function GithubPromptField({
         {customized && (
           <button
             type="button"
-            className="shrink-0 rounded text-[11.5px] text-muted-70 outline-none transition-colors hover:text-fg focus-visible:text-fg"
+            className="relative shrink-0 rounded text-[11.5px] text-muted-70 outline-none transition-colors hover:text-fg focus-visible:text-fg pointer-coarse:text-[13px] pointer-coarse:after:absolute pointer-coarse:after:-inset-x-2 pointer-coarse:after:-inset-y-3 pointer-coarse:after:content-['']"
             onClick={() => onChange(undefined)}
           >
             Reset to default

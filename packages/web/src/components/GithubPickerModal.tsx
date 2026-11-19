@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react"
 import { keepPreviousData, useInfiniteQuery, useIsMutating, useMutation } from "@tanstack/react-query"
-import { ArrowUpRight, Check, CircleCheck, CircleDot, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Github, Inbox, Loader2, MessageSquare } from "lucide-react"
+import { ArrowLeft, ArrowUpRight, Check, CircleCheck, CircleDot, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Github, Inbox, Loader2, MessageSquare } from "lucide-react"
 import { type DispatchInput, type DispatchProfileSnapshot, type GithubBatchInput, type GithubItem } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { showToast } from "../store.ts"
-import { Overlay } from "./NewThreadModal.tsx"
+import { Overlay, OverlayTitle } from "./ui/Overlay.tsx"
 import { ProfileGridSelector } from "./ProfileGridSelector.tsx"
 import { ExperimentalChip } from "./ui/ExperimentalChip.tsx"
 import { GithubPromptPopover } from "./GithubPromptPopover.tsx"
@@ -19,6 +19,7 @@ import { applyRowSelection } from "../lib/rowRangeSelection.ts"
 import { githubLabelColors } from "../lib/githubLabelColors.ts"
 import { PRIMER } from "../lib/primer.ts"
 import { compactAge } from "../lib/activityTime.ts"
+import { useIsMobile } from "../lib/mobile.ts"
 
 type Kind = "issues" | "prs"
 type Sort = "recent" | "reactions"
@@ -53,6 +54,7 @@ export function GithubPickerModal({ onClose }: { onClose: () => void }) {
 
 function GithubPicker({ onClose }: { onClose: () => void }) {
   const status = useGithubStatus()
+  const phone = useIsMobile()
   // The footer row, which the settings panel hangs off (GithubPromptPopover says why).
   const footerRef = useRef<HTMLDivElement>(null)
   // The batch dispatches with the SAME durable new-thread profile the prompt box uses — the selector
@@ -214,7 +216,14 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   return (
     <Overlay onClose={onClose}>
       <div
-        className="flex max-h-[85vh] w-[720px] max-w-[90vw] flex-col rounded-xl border border-border bg-panel px-5 pb-3 pt-5 shadow-2xl shadow-shadow-ink/50"
+        // Focus lands on the panel (ui/ModalSurface's `data-autofocus`), so Escape reaches the handler
+        // below whatever the picker was opened from.
+        tabIndex={-1}
+        data-autofocus
+        // A PAGE ON A PHONE, as New thread is, which is what it opens from there: full screen under the
+        // device's top inset, with a back arrow (the phone header below). As a card it kept 20px of scrim
+        // a side to close it by and nothing else, on a device with no Escape.
+        className="flex max-h-[85vh] w-[720px] max-w-[90vw] flex-col rounded-xl border border-border bg-panel px-5 pb-3 pt-5 shadow-2xl shadow-shadow-ink/50 outline-none max-[700px]:h-full max-[700px]:max-h-none max-[700px]:w-full max-[700px]:max-w-none max-[700px]:rounded-none max-[700px]:border-0 max-[700px]:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-[700px]:pt-[env(safe-area-inset-top)] max-[700px]:shadow-none"
         onKeyDownCapture={(e) => {
           if (e.key === "Escape") {
             e.stopPropagation()
@@ -237,6 +246,26 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             families). `-mt-1.5` centres the title's INK between the modal's top edge and the rule, 21.1px
             above its capitals and 21.8px below its baseline: the line box's own leading stood it 27.1px
             down on the modal's `p-5` alone. */}
+        {phone ? (
+          // THE PHONE'S HEADER, the one its other pages have (Settings, New thread): a 56px bar, the back
+          // arrow in a 44px circle, the title at 16.5px. The repo is its mark and arrow alone here, since
+          // the slug beside a title this long left room for neither; the link ends on the list's edge.
+          <div className="-mx-5 mb-3 flex h-14 shrink-0 items-center gap-0.5 border-b border-border/60 pl-1 pr-5">
+            <button
+              type="button"
+              aria-label="Back"
+              onClick={onClose}
+              className="flex size-[44px] shrink-0 items-center justify-center rounded-full text-fg/85 outline-none active:bg-hover-strong"
+            >
+              <ArrowLeft size={21} strokeWidth={2.1} />
+            </button>
+            <OverlayTitle asChild>
+              <h2 className="m-0 min-w-0 flex-1 truncate pl-0.5 text-[16.5px] font-semibold tracking-[-0.01em] text-fg">{GITHUB_PICKER_TITLE}</h2>
+            </OverlayTitle>
+            {status.data?.nameWithOwner && <RepoLink nameWithOwner={status.data.nameWithOwner} compact />}
+          </div>
+        ) : (
+        <OverlayTitle asChild>
         <h2 className="-mx-5 -mt-1.5 mb-4 flex items-baseline gap-2 border-b border-border/60 px-5 pb-4 text-[14px] font-medium">
           <span className="min-w-0 truncate">{GITHUB_PICKER_TITLE}</span>
           {status.data?.nameWithOwner && (
@@ -245,6 +274,8 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             </span>
           )}
         </h2>
+        </OverlayTitle>
+        )}
 
         {/* Controls: tabs (Issues | PRs) left, sort (Recent | Reactions) right */}
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -340,7 +371,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
             count is always visible. */}
         <div ref={footerRef} className="-mx-5 mt-3 flex items-center gap-3 border-t border-border/60 px-5 pt-3">
           {pages && (
-            <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[11.5px] text-muted-60">
+            <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[11.5px] text-muted-60 pointer-coarse:text-[13px]">
               <span className={`truncate tabular-nums ${n > 0 ? "max-sm:hidden" : ""}`}>
                 {total.toLocaleString()} open {kind === "issues" ? (total === 1 ? "issue" : "issues") : total === 1 ? "pull request" : "pull requests"}
               </span>
@@ -351,7 +382,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                   <button
                     onClick={clearSelection}
                     onMouseDown={(e) => e.preventDefault()}
-                    className="rounded py-0.5 text-muted-60 underline-offset-2 outline-none transition-colors hover:text-fg hover:underline"
+                    className="relative rounded py-0.5 text-muted-60 underline-offset-2 outline-none transition-colors hover:text-fg hover:underline pointer-coarse:after:absolute pointer-coarse:after:-inset-x-2 pointer-coarse:after:-inset-y-3 pointer-coarse:after:content-['']"
                   >
                     Clear
                   </button>
@@ -387,7 +418,9 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
               disabled={n === 0 || dispatch.isPending || !!dispatchBlocked}
               onClick={startDispatch}
               onMouseDown={(e) => e.preventDefault()}
-              className="button-outline flex shrink-0 items-center gap-2 rounded-md bg-fg px-3.5 py-1.5 text-[12.5px] font-medium text-bg outline-none transition-all hover:opacity-90 active:scale-95 disabled:opacity-30 disabled:hover:opacity-30"
+              // `leading-[18px]`: the button is 30px, the gear's own height, whatever leading it inherits.
+              // On the app frame's `text-sm` it was 29.86px and stood 0.08px off the footer's 12px.
+              className="button-outline flex shrink-0 items-center gap-2 rounded-md bg-fg px-3.5 py-1.5 text-[12.5px] font-medium leading-[18px] text-bg outline-none transition-all hover:opacity-90 active:scale-95 disabled:opacity-30 disabled:hover:opacity-30 pointer-coarse:h-10 pointer-coarse:rounded-lg pointer-coarse:px-4 pointer-coarse:text-[14px]"
             >
               {dispatch.isPending && <Loader2 size={13} className="animate-spin" />}
               {/* The count is on the button because the batch is unbounded and can run far past the rows
@@ -416,7 +449,22 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
 // height. The arrow's ink is centred in its box (7..17 of 24) and paints 10 of 24 units, 0.29em of dead
 // space a side, so `-mx-[0.29em]` collapses the box onto its ink: the `gap-1` is 4px of INK from the slug
 // to the arrow, and the arrow's tip stands on the right edge the sort control and the list end on.
-function RepoLink({ nameWithOwner }: { nameWithOwner: string }) {
+function RepoLink({ nameWithOwner, compact }: { nameWithOwner: string; compact?: boolean }) {
+  // The phone header's: the mark and the arrow, centred on the bar, named by its label, with a 44px press.
+  if (compact) {
+    return (
+      <a
+        href={`https://github.com/${nameWithOwner}`}
+        target="_blank"
+        rel="noreferrer noopener"
+        aria-label={`Open ${nameWithOwner} on GitHub`}
+        className="github-repo-link relative ml-2 inline-flex shrink-0 items-center gap-1 text-fg/85 outline-none after:absolute after:-inset-x-3 after:-inset-y-3.5 after:content-[''] active:text-fg"
+      >
+        <Github aria-hidden="true" className="size-[17px] shrink-0" />
+        <ArrowUpRight aria-hidden="true" className="-mx-[4px] size-[14px] shrink-0" />
+      </a>
+    )
+  }
   return (
     <a
       href={`https://github.com/${nameWithOwner}`}
@@ -451,7 +499,7 @@ function Segmented<T extends string>({
           onClick={() => onChange(o.value)}
           aria-pressed={value === o.value}
           onMouseDown={(e) => e.preventDefault()}
-          className={`rounded-md px-3 py-1 text-[12px] font-medium outline-none transition-colors ${
+          className={`rounded-md px-3 py-1 text-[12px] font-medium outline-none transition-colors pointer-coarse:h-[34px] ${
             value === o.value ? "bg-elevated text-fg shadow-sm shadow-shadow-ink/20" : "text-muted hover:text-fg"
           }`}
         >
@@ -520,7 +568,9 @@ function Row({ item, checked, onActivate }: { item: GithubItem; checked: boolean
           onActivate(e.shiftKey)
         }
       }}
-      className="group flex w-full cursor-pointer items-start gap-2.5 border-b border-border/40 px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-hover"
+      // `select-none` on a touch screen: the row is a button there, and a press on its text should check
+      // it, not start a selection.
+      className="group flex w-full cursor-pointer items-start gap-2.5 border-b border-border/40 px-3 py-2.5 text-left outline-none transition-colors last:border-b-0 hover:bg-hover pointer-coarse:select-none"
     >
       <span className="mt-px shrink-0">
         <Checkbox checked={checked} />
@@ -536,7 +586,10 @@ function Row({ item, checked, onActivate }: { item: GithubItem; checked: boolean
             rel="noreferrer noopener"
             onClick={(e) => e.stopPropagation()}
             title={item.title}
-            className="min-w-0 truncate text-[13px] font-medium text-fg/90 hover:underline"
+            // Not a link on a touch screen, where it fills the middle of the row: a tap there is a tap on
+            // the row, which checks it. It opened GitHub in a new tab instead (measured 2026-11-19: a tap
+            // on a row's centre selected nothing). The number below is the way out there.
+            className="min-w-0 truncate text-[13px] font-medium text-fg/90 hover:underline pointer-coarse:pointer-events-none"
           >
             {item.title}
           </a>
@@ -550,7 +603,7 @@ function Row({ item, checked, onActivate }: { item: GithubItem; checked: boolean
             target="_blank"
             rel="noreferrer noopener"
             onClick={(e) => e.stopPropagation()}
-            className="shrink-0 tabular-nums hover:text-muted hover:underline"
+            className="relative shrink-0 tabular-nums hover:text-muted hover:underline pointer-coarse:after:absolute pointer-coarse:after:-inset-x-2.5 pointer-coarse:after:-bottom-3 pointer-coarse:after:-top-1 pointer-coarse:after:content-['']"
           >
             #{item.number}
           </a>

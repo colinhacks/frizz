@@ -54,9 +54,11 @@ export function DrawerStack({ onEscapeAtRest }: { onEscapeAtRest?: () => void } 
       // reaching here otherwise means the page is at rest. Settings + the
       // open-thread sheet route through their OWN animated close (fall back to the store write if
       // nothing registered) so Esc slides them out instead of unmounting instantly.
+      // The picker before New thread: it opens from New thread's GitHub mark (the phone's "Issue or PR"
+      // chip) and is then the layer on top of it.
       if (store.showPalette) store.showPalette = false
-      else if (store.showNewThread) store.showNewThread = false
       else if (store.showGithubPicker) closeGithubPicker()
+      else if (store.showNewThread) store.showNewThread = false
       else if (store.showSettings) { if (!closeSettingsAnimated()) store.showSettings = false }
       // The drawer STACK unwinds topmost-first, one layer per Esc.
       else if (store.drawers.length > 0) {
