@@ -25,7 +25,7 @@
 //
 // The fix for the 2026-08-31 report now lives in the CONTRACT, not here: a question is a sign-off only at
 // the rest that asked it, and at every later rest the worker names each one it still needs under
-// `questions:` or withdraws it (server scheduler.evalSignoffNudges / evalParkIntegrity). So the newest
+// `questions:` or withdraws it (server scheduler evalSignOffCompleteness / evalParkIntegrity). So the newest
 // rest never reads as a bare stop with an ask hidden above it, and this file only has to honour what the
 // worker said: a card stays where it was asked until a later rest claims it, and a claim moves it to the
 // end of that rest — under the fence that named it. A rest claims it only past a turn the human put in

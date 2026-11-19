@@ -27,8 +27,8 @@
 //   C. A question stands across a Frizz wake and fades when the human types. The worker asks and arms a
 //      timer; the timer's wake and a reply that says nothing of the question leave it `standing`. The
 //      human types (`followUp`, the prompt box's call) and the worker replies past it: `standing: false`,
-//      still open. The sign-off reminder that bare rest earns is answered with a reference fence (`id:`
-//      alone): standing again. Then the faded-and-restored question is answered like any other.
+//      still open, and nothing from Frizz follows that bare rest. The human types again and the worker
+//      replies with a reference fence (`id:` alone): standing again. Then the faded-and-restored question is answered like any other.
 //   D. An autonomous thread. A Goal armed through the Goal panel's RPC; the worker writes a question fence:
 //      one row, dismissed; one cancellation wake naming the id; no correction; `closedQuestions` on the
 //      board. A `kind: secret` question written in the reply to that wake still asks.
@@ -431,6 +431,7 @@ const CASES = [
     async run(t) {
       const question = "Should a failed upload retry with exponential backoff or at a fixed interval?"
       const typed = "Any progress on the flaky upload test?"
+      const typedAgain = "And the retry policy?"
       const w = await t.worker("stands", [
         {
           name: "arms a timer and asks", on: FIRST,
@@ -439,7 +440,7 @@ const CASES = [
         },
         { name: "woken by its timer, says nothing of the question", on: TIMER_TRAILER, text: "The nightly build finished green; nothing changes for the retry work." },
         { name: "answers the human without the question", on: typed, text: "Not yet: the upload test still fails one run in five." },
-        { name: "answers the reminder with a reference", on: SIGNOFF_NUDGE_MARKER, tools: [t.hold("reference")], text: `Still waiting on the retry policy.\n\n${fence("id: retry-policy")}` },
+        { name: "answers the human again, with a reference", on: typedAgain, text: `Still waiting on the retry policy.\n\n${fence("id: retry-policy")}` },
         { name: "hears the answer and signs off", on: BURIED_ANSWERS_HEADER, text: "Exponential backoff it is.\n\n```done\n- **Upload retries use exponential backoff.**\n```" },
       ])
       const rest1 = await w.restAfter(await w.start(FIRST))
@@ -470,9 +471,6 @@ const CASES = [
       const human = await w.start(typed, { after: rest2.index })
       t.check("the human's message reaches the worker as a typed message, not a wake", !human.wake)
       const rest3 = await w.restAfter(human)
-      // The reminder that bare rest earns is held open, so the faded state can be read.
-      const reminder = await w.start(SIGNOFF_NUDGE_MARKER, { after: rest3.index, timeoutMs: WAKE_MS, what: "the sign-off reminder" })
-      t.note(`sign-off reminder reached the worker ${secs(Date.parse(reminder.at) - Date.parse(rest3.at))} after the bare rest`)
       const faded = await until("the faded question on the board", async () => {
         const thread = await w.board()
         return thread?.questions?.find((q) => q.id === id)?.standing === false ? thread : undefined
@@ -480,11 +478,14 @@ const CASES = [
       const q3 = faded.questions.find((q) => q.id === id)
       t.check("once the human has typed past it the question no longer stands", q3?.standing === false, `standing ${q3?.standing}`)
       t.check("…and is still open, on the board, with its row unchanged", q3 !== undefined && w.questions()[0].state === "open" && w.questions()[0].id === id)
-      t.check("the reminder, a Frizz wake, does not restore it", (await w.board()).questions.find((q) => q.id === id)?.standing === false)
+      // A bare rest is the worker's reply (the sign-off reminder is retired, 2026-11-19): nothing follows it.
+      await sleep(TICK_MS + TAILER_MS + WAKE_MS)
+      t.check("the bare rest after the human typed draws nothing from Frizz", w.since(rest3.index).length === 0 && w.count(SIGNOFF_NUDGE_MARKER) === 0, `${w.since(rest3.index).length} message(s) after it`)
 
       // A reference fence in a later reply.
-      w.release("reference")
-      const rest4 = await w.restAfter(reminder)
+      await api.mutate("followUp", { slug: w.slug, sessionId: w.sessionId, message: typedAgain })
+      const again = await w.start(typedAgain, { after: rest3.index })
+      const rest4 = await w.restAfter(again)
       const referenced = await w.settled(rest4)
       const q4 = referenced.questions.find((q) => q.id === id)
       t.check("a reference fence (`id:` alone) in a later reply makes it stand again", q4?.standing === true, `standing ${q4?.standing}`)
@@ -500,7 +501,7 @@ const CASES = [
       const done = await w.settled(rest5)
       t.check("…and the thread signs off with nothing open", done.questions.length === 0 && done.lastFence?.kind === "done")
       await w.quiet()
-      t.check("one reminder in all: the bare rest after the human typed", w.count(SIGNOFF_NUDGE_MARKER) === 1, `${w.count(SIGNOFF_NUDGE_MARKER)} reminders`)
+      t.check("no sign-off reminder in all", w.count(SIGNOFF_NUDGE_MARKER) === 0, `${w.count(SIGNOFF_NUDGE_MARKER)} reminders`)
       t.check("no correction was ever sent", w.count(QUESTION_FENCE_CORRECTION_LEAD) === 0)
     },
   },

@@ -7,11 +7,12 @@
 // handoff"; then "always some kind of handoff card that will show up no matter what").
 //
 // Two shapes reach it. A BARE REST — the worker spoke last, signed nothing off, registered nothing — is
-// the one the sign-off nudge exists for (scheduler.evalSignoffNudges), and the card says so in the
-// worker's absence. A STALL — the process exited mid-turn (`crashed`) — is not a rest at all, and the
+// the worker's reply, waiting on the human's (2026-11-19: the sign-off reminder that used to answer it,
+// scheduler SOURCE 9, is retired), and the card says that and nothing more: the message above it is the
+// handoff. A STALL — the process exited mid-turn (`crashed`) — is not a rest at all, and the
 // card says that instead, beside the header's Retry. Both are last in ChatView's chain: every rung above
 // is a harder reading of the same slot and wins it.
-import { CircleDashed, TriangleAlert } from "lucide-react"
+import { MessageCircle, TriangleAlert } from "lucide-react"
 import { hasStandingQuestion, questionFencesLive, questionHandles, type ThreadView } from "@frizz/shared"
 import { splitFenceBlocks } from "../lib/fenceBlocks.ts"
 import { hasQuestionBlock, splitMessageQuestions } from "../lib/questionBlocks.ts"
@@ -45,7 +46,7 @@ export function showsRestedCard(thread: RestedCardThread | undefined, lastAssist
   // hasStandingQuestion; server standingQuestions): from when it was asked or last referenced until the
   // human next types to the thread. Until 2026-10-13 this was worked out HERE from the transcript — the
   // question had to render at the newest rest — so a worker that asked, was woken by a shell finishing
-  // and rested again drew "Rested without a sign-off" under a question the board still queued it for.
+  // and rested again drew the bare-rest card under a question the board still queued it for.
   // One that no longer stands is not an ending: the human replied past it, and a bare rest after that is
   // a bare rest and says so. Read off the BOARD's rows on purpose: a question the human has just answered
   // stays on them until the board says the worker is running, so the beat between the two never reads as
@@ -68,7 +69,7 @@ export function showsRestedCard(thread: RestedCardThread | undefined, lastAssist
   // A QUESTION FENCE THAT DID NOT READ IS NOT A SIGN-OFF. On a thread that speaks the question fence, a
   // fence that tried the grammar and failed (a missing `kind:`, two recommended options) registers nothing
   // and draws as the code block it is (lib/questionBlocks splitMessageQuestions), so the rest under it IS
-  // a bare one, and this card is what says Frizz is nudging the worker. The legacy reader below still
+  // a bare one, waiting on the human's reply. The legacy reader below still
   // counted it whenever it had three backticks at the margin — the same broken fence showed this card with
   // four backticks and hid it with three. A legacy thread keeps the reader its fences were written for.
   //
@@ -99,9 +100,5 @@ export function RestedCard({ thread }: { thread: Pick<ThreadView, "crashed"> }) 
       </TranscriptCard>
     )
   }
-  return (
-    <TranscriptCard data-rested-card="bare" icon={CircleDashed} label="Rested without a sign-off">
-      <p className={CARD_BODY}>The worker stopped without a done card, a question or a registered wait. Frizz nudges it for one; a reply here also wakes it.</p>
-    </TranscriptCard>
-  )
+  return <TranscriptCard data-rested-card="bare" icon={MessageCircle} label="Waiting on your reply" />
 }

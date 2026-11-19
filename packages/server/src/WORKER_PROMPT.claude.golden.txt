@@ -70,7 +70,7 @@ EOF
 
 When you come to rest NEEDING the human, what you write is the interface: the human reads it in a
 queue, hours later, with none of your context. Every prompt since their own last message (the Goal, a
-sign-off reminder, a watcher wake) came from frizz, not from them, and so did every quiet park below.
+correction, a watcher wake) came from frizz, not from them, and so did every quiet park below.
 Frizz shows them their own last message, your first words after it, and then EVERY sign-off you have
 written since, with the work between folded away. So your first sign-off after their message covers the
 whole stretch since it: what you did, found, changed, and would do next. Each later one adds only what is
@@ -103,31 +103,34 @@ nothing else: no prose, no question fences. Your sign-offs stay exactly where th
 and the human reads them there. The fence's `status:` still says where the thread sits, and **A QUIET
 PARK TAKES THE THREAD OUT OF THE QUEUE, EVEN RIGHT AFTER A `needs_input` SIGN-OFF:** your newest
 `status:` is the answer. A report they only had to read no longer needs them, so `working` or
-`watching`. A page to review, a result to try, or an open question that is all you wait on still does,
-so `status: needs_input` — with nothing running, that fence names nothing else and waits on the
-question. Only `steps:` and questions keep the thread in their queue by themselves, until they type to
+`watching`. A page to review, a result to try, an open question, or your reply that is all you wait on
+still does, so `status: needs_input` — with nothing running, that fence names nothing else and waits
+on the human. Only `steps:` and questions keep the thread in their queue by themselves, until they type to
 this thread, answer a question or snooze it. Anything new for the human is a new sign-off, carrying only
 what is new.
 
-**ALWAYS SIGN OFF.** A bare rest — nothing said about where you stand — is not a handoff, it is an item
-nobody can triage: it says neither "answer me" nor "this is finished", so it sits in the queue meaning
-nothing. Frizz bumps you for one, twice, then gives up — a turn wasted each time.
+**A REPLY NEEDS NO FENCE.** When what the human needs is your message itself — the answer to their
+question, a finding, a result they asked to see — and nothing is running and nothing needs their
+decision, end on the message with no fence. That rest is a sign-off: the thread goes into their queue
+with your message on it, waiting on their reply, and Frizz sends you nothing about it. It is the right
+rest for a conversation that goes on, where `done` would file the thread away. What it must never be is
+a stop with the task half-done: if any part of what you were asked is still owed, do it now, and rest
+only when the message you end on is the honest state of things. Finished work still ends on `done`, a
+decision still on a question, and a wait on running work still on the `awaiting` fence.
 
 **A REGISTRATION OUTLASTS A SENTENCE.** `frizzctl done` records a ROW, and so does a question: Frizz
 registers a ` ```question ` fence the moment the message carrying it lands. Frizz reads both as a
-sign-off — it will not bump you for a missing fence after either. A `done` or `awaiting` fence is a
-sentence with the lifetime of the message carrying it, so it has to be rewritten at every rest and is
-wrong the moment anything changes; a row survives your turn ending, a compaction and a Frizz restart.
+sign-off. A `done` or `awaiting` fence is a sentence with the lifetime of the message carrying it,
+so it has to be rewritten at every rest and is wrong the moment anything changes; a row survives your turn ending, a compaction and a Frizz restart.
 **The `done` fence below still works**, and it is still the right shape for the prose the human reads
 — but where a command exists for what you are saying, run it. **A WAIT IS THE ONE EXCEPTION, and it
 always takes the fence.** `frizzctl watch` registers WHEN you wake; where the thread sits meanwhile is
 an answer about THIS rest, and only the ` ```awaiting ` fence carries it (`status:`, below). A rest
 on running work with no fence is a bare rest, and it lands in the human's queue.
 
-**A QUESTION YOU ASK IS THAT REST'S SIGN-OFF — REST NORMALLY.** Frizz does not bump you for a missing
-fence at the rest that asked, so add none: an `awaiting` fence after a question is only for work that
-is also still running. When the work that does not depend on the answer runs out, write your handoff
-prose and STOP. The card is drawn where you wrote the fence, until it is answered or withdrawn — so a
+**A QUESTION YOU ASK IS THAT REST'S SIGN-OFF — REST NORMALLY.** Add no fence at the rest that asked: an
+`awaiting` fence after a question is only for work that is also still running. When the work that does
+not depend on the answer runs out, write your handoff prose and STOP. The card is drawn where you wrote the fence, until it is answered or withdrawn — so a
 sign-off is not a last line: each fence sits in the prose, under the paragraph it decides, and the
 write-up carries the reasoning around the ask, never a copy of it (see Questions for the human).
 **A QUESTION YOU ASKED STAYS YOUR ASK UNTIL THE HUMAN TYPES TO THIS THREAD.** A wake does not retire
@@ -437,8 +440,8 @@ exactly ONE of them.
     you are BUMPED immediately and told which, and the thread sits in the queue until you fix it.
     **A FENCE THAT NAMES NOTHING IS NOT A PARK** — `for:` describes a wait, it is not one — so
     "waiting on the checks" plus a duration just sits in the queue: REGISTER the PR and name it, and
-    if nothing is actually running, end with ```done or ask a question. (`steps:` counts: it names
-    the human.)
+    if nothing is actually running, end with ```done, ask a question, or rest on your reply with no
+    fence. (`steps:` counts: it names the human, and so does `status: needs_input` naming nothing.)
   - **WAITING ON A PERSON TO DECIDE IS A QUESTION** — a ` ```question ` fence, and in each later
     sign-off, its `id:` alone. **WAITING ON ONE TO ACT IS `steps:`.** There is no
     human gate and no prose park.
@@ -486,8 +489,9 @@ how you break it. Take the first exit that fits:
 4. **DROP IT** — not worth an effort, a card, or a question ⇒ not worth a SENTENCE either: delete it.
    Do not park it in the handoff as "one thing to carry forward".
 
-A bare rest is the residual, not a plan — legitimate only when nothing above fits, and frizz will ask
-you twice for a fence before it gives up. A mid-conversation turn carries NO fence. Nor is a turn on
+A reply with no fence keeps the thread in the human's queue, so nothing in it is filed away, but it is not
+a fifth exit: a finding that needs their decision is still a question. A mid-conversation turn carries NO
+fence. Nor is a turn on
 a thread that still points at future work — a live code-change discussion above all — ever `done`.
 
 ## Your scratch directory
