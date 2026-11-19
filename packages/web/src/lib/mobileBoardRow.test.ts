@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import type { ThreadView } from "@frizz/shared"
-import { agentSuffix, handoffLine, liveAgentCount, rowSecondLine, wakeAt } from "./mobileBoardRow.ts"
+import { agentSuffix, codeLedLine, handoffLine, liveAgentCount, rowSecondLine, wakeAt } from "./mobileBoardRow.ts"
 
 const now = Date.parse("2026-09-30T12:00:00.000Z")
 const ahead = (ms: number) => new Date(now + ms).toISOString()
@@ -27,6 +27,34 @@ test("a handoff's leading bold phrase is its verdict, and markdown reads as pros
   assert.equal(handoffLine(undefined), null)
   // An EXACT line (the server's `lastAssistantLine`) is never cut: a " - " inside it is prose.
   assert.deepEqual(handoffLine("**Fixed** — the rail holds - ws.ts no longer clears it.", true), { lead: "Fixed", text: "— the rail holds - ws.ts no longer clears it." })
+})
+
+test("a callout's marker, a task's box and a table's pipes are markup, never the line", () => {
+  assert.deepEqual(handoffLine("> [!WARNING] Before you merge", true), { text: "Before you merge" })
+  // A callout with no title of its own: the line is its first sentence, from the preview.
+  assert.equal(handoffLine("> [!TIP]", true), null)
+  assert.deepEqual(handoffLine("> [!TIP] > Run it on a copy of production first. > [!NOTE] > More."), { text: "Run it on a copy of production first." })
+  assert.deepEqual(handoffLine("- [x] Move the settings store to SQLite", true), { text: "Move the settings store to SQLite" })
+  assert.deepEqual(handoffLine("- [ ] Add a rollback test - [?] Ask about the window"), { text: "Add a rollback test" })
+  assert.deepEqual(handoffLine("| Attempt | Wait |", true), { text: "Attempt · Wait" })
+  assert.deepEqual(handoffLine("| Attempt | **Wait** | |---|---| | 1 | 100ms |"), { text: "Attempt · Wait" })
+})
+
+test("a message that opens on a code block reads as what follows it, its title, its file or its source", () => {
+  // Prose is not this function's: the caller reads it as before. Nor are Frizz's own fences.
+  assert.equal(codeLedLine("The fix is in.", "The fix is in. ```ts x ```"), undefined)
+  assert.equal(codeLedLine("```done", "```done - Fixed it. ```"), undefined)
+  assert.deepEqual(codeLedLine("```ts", "```ts const a = 1 ``` That is the whole change."), { text: "That is the whole change." })
+  assert.deepEqual(codeLedLine('```ts title="src/upload.ts" {4}', '```ts title="src/upload.ts" {4} export async function upload(file: File) { for (let attempt = 0;…'), { text: "src/upload.ts" })
+  assert.deepEqual(codeLedLine('```ts title="src/upload.ts"', '```ts title="src/upload.ts" export const a = 1 ``` Run…'), { text: "src/upload.ts" })
+  assert.deepEqual(codeLedLine("```ansi", "```ansi \\x1b[42;30m PASS \\x1b[0m src/upload.test.ts \x1b[41;37m FAIL \x1b[0m src/sync.test.ts ```"), { text: "PASS src/upload.test.ts FAIL src/sync.test.ts" })
+  assert.deepEqual(codeLedLine("```ts-diff", "```ts-diff --- a/src/upload.ts +++ b/src/upload.ts @@ -12,6 +12,6 @@ export async function…"), { text: "src/upload.ts" })
+  assert.deepEqual(codeLedLine("```bash npm", "```bash npm npm install left-pad ```"), { text: "npm install left-pad" })
+  // A diagram's source says nothing in a line; what follows it does.
+  assert.equal(codeLedLine("```mermaid", "```mermaid flowchart LR A[Upload] -- ok --> C[Done] ```"), null)
+  assert.deepEqual(codeLedLine("```mermaid", "```mermaid flowchart LR A[Upload] --> C[Done] ``` | Attempt | Wait | |---|---| | 1 | 100ms |"), { text: "Attempt · Wait" })
+  const t = thread({ lastAssistantLine: "```mermaid", lastAssistant: "```mermaid flowchart LR A[Upload] --> C[Done] ```" })
+  assert.equal(rowSecondLine(t, "rest", false), null)
 })
 
 test("a rested row reads the handoff's real first line, and the preview only when there is none", () => {

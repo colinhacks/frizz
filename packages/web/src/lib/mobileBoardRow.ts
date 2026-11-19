@@ -50,6 +50,12 @@ export function handoffLine(text: string | undefined, exact = false): RowLine | 
   const cut = exact ? null : NEXT_BLOCK.exec(s)
   if (cut) s = s.slice(0, cut.index)
   if (!s.trim()) return null
+  // A table's header row reads as its column names. In a preview the next row begins at the first "| |".
+  if (s.startsWith("|")) {
+    const end = exact ? -1 : s.search(/\|\s+\|/)
+    const cells = (end < 0 ? s : s.slice(0, end)).split("|").map(plain).filter(Boolean)
+    return cells.length ? { text: cells.join(" · ") } : null
+  }
   const bold = /^(\*\*|__)(.{1,60}?)\1\s*/.exec(s)
   if (bold) {
     const lead = plain(bold[2]!)
@@ -58,6 +64,42 @@ export function handoffLine(text: string | undefined, exact = false): RowLine | 
   }
   const flat = plain(s)
   return flat ? { text: flat } : null
+}
+
+// A MESSAGE THAT OPENS ON A CODE BLOCK. Its first line is the fence's opener, and stripping the head
+// markers off the preview left the rest of that opener and then the source: a row read `title="src/upload.ts"
+// {4} export async function…`, `\x1b[42;30m PASS \x1b[0m src/upload.test.ts` and `flowchart LR A[Upload]
+// -- ok --> C[Done]` (2026-11-19). The exact first line says where the opener ends, which the preview alone
+// cannot, so the two are read together.
+
+/** The fences that are Frizz's own blocks, never code: each has its own reading (`rowSecondLine`). */
+const OWN_FENCES = new Set(["done", "awaiting", "question", "lightbox"])
+/** A colour escape, as the byte or spelled out the way an ```ansi block may carry it. */
+const ANSI = /(?:\x1b|\\x1b|\\u001b|\\033|\\e)\[[0-9;]*m/g
+
+/**
+ * The line for a message whose first line opens a code block; `undefined` when it does not, so the caller
+ * reads the message as prose. In order: the first prose after the block, when the preview reaches enough of
+ * it; the block's own `title=`; the file a unified diff names; and otherwise the source itself, colour escapes
+ * removed. A diagram's source reads as nothing, so a message that is only a diagram has no line (`null`).
+ */
+export function codeLedLine(line: string | undefined, preview: string | undefined): RowLine | null | undefined {
+  const opener = /^(`{3,})([\w+#.-]*)(.*)$/.exec((line ?? "").trim())
+  if (!opener || OWN_FENCES.has(opener[2]!)) return undefined
+  const text = (preview ?? "").trim()
+  if (!text.startsWith(opener[0])) return undefined
+  const rest = text.slice(opener[0].length)
+  const close = new RegExp(`(?:^|\\s)${opener[1]}(?=\\s|$)`).exec(rest)
+  const after = close ? handoffLine(rest.slice(close.index + close[0].length)) : null
+  // The preview ends ~200 characters in, so the prose may be its first word and an ellipsis: not a line.
+  if (after && !(after.text.endsWith("…") && after.text.length < 30)) return after
+  const title = /\btitle=(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(opener[3]!)
+  if (title) return { text: (title[1] ?? title[2] ?? title[3])! }
+  if (opener[2] === "mermaid") return null
+  const code = (close ? rest.slice(0, close.index) : rest).replace(ANSI, "").replace(/\s+/g, " ").trim()
+  const diff = /^(?:diff --git \S+ \S+ )?(?:index \S+ )?--- \S+ \+\+\+ (?:b\/)?(\S+)/.exec(code)
+  if (diff) return { text: diff[1]! }
+  return code ? { text: code } : null
 }
 
 /** The first non-empty line of a question, as prose. */
@@ -152,6 +194,8 @@ export function rowSecondLine(
       const line = title ? handoffLine(title, true) : handoffLine(signedOff.body)
       if (line) return line
     }
+    const code = codeLedLine(t.lastAssistantLine, t.lastAssistant)
+    if (code !== undefined) return code
     return handoffLine(t.lastAssistantLine, true) ?? handoffLine(t.lastAssistant)
   }
   if (kind === "needs-input") {
