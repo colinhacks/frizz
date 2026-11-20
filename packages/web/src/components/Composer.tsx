@@ -6,7 +6,7 @@ import { showToast } from "../store.ts"
 import { joinComposerValue, splitComposerValue } from "../lib/imagePaths.ts"
 import { splitProseByTokens } from "../lib/composerContext.ts"
 import { isForcedSendChord, shouldInterruptSubmitComposerEnter, shouldRestoreOptionEnterNewline, shouldSubmitComposerEnter } from "../lib/composerKeyboard.ts"
-import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_ROW_INSET, PROMPT_ROW_INSET_SINGLE_LINE, RAIL_MARK_SQUARE, SEND_SOLO_WIDTH, SEND_SPLIT_WIDTH } from "../lib/iconRhythm.ts"
+import { composerRail, MIC_GLYPH, PAPERCLIP_GLYPH, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_ROW_INSET, PROMPT_ROW_INSET_SINGLE_LINE, RAIL_MARK_SQUARE, SEND_SOLO_WIDTH, sendSplitWidth } from "../lib/iconRhythm.ts"
 import type { SendMode } from "../lib/sendMode.ts"
 import { SendSplitButton } from "./SendSplitButton.tsx"
 import { paneEnabled } from "../store.ts"
@@ -579,7 +579,7 @@ export function Composer({
   // Something to send: words in the box, or — on a thread composer — an answer staged on a card.
   const armed = hasContent || (send?.staged ?? 0) > 0
   // Where each rail mark sits, and the padding every text row keeps clear of the absolutely-placed rail.
-  const rail = composerRail({ lead: Boolean(railLead), mic: micShown, sendWidth: send && !phone ? (send.steerable === false ? SEND_SOLO_WIDTH : SEND_SPLIT_WIDTH) : undefined })
+  const rail = composerRail({ lead: Boolean(railLead), mic: micShown, sendWidth: send && !phone ? (send.steerable === false ? SEND_SOLO_WIDTH : sendSplitWidth(send.mode)) : undefined })
   // On the footer row's inset, or centred on the one line of a box with no footer row.
   const railBottom = footer ? PROMPT_ROW_INSET : PROMPT_ROW_INSET_SINGLE_LINE
 

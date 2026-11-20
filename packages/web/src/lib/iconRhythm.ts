@@ -1,3 +1,5 @@
+import type { SendMode } from "./sendMode.ts"
+
 /** HORIZONTAL rhythm for a strip of small marks — the sibling of `iconAlign.ts`, which does the same
  *  job vertically.
  *
@@ -171,16 +173,19 @@ const RAIL_BOX_GAP: Partial<Record<`${RailMark}>${RailMark}`, number>> = {
   "paperclip>mic": 1,
 }
 
-/** THE THREAD COMPOSER'S SEND IS A SPLIT BUTTON, not a 24px square: the word "Send", a hairline, and a
- *  caret that opens the two ways of sending (components/SendSplitButton.tsx, which owns these three
- *  widths and the readings behind them). It is still filled edge to edge, so its ink is its box and
- *  every gap in the table above holds unchanged — only the width the marks to its left clear grows. */
-export const SEND_SPLIT_LABEL_WIDTH = 45.5
+/** THE THREAD COMPOSER'S SEND IS A SPLIT BUTTON, not a 24px square: a word, a hairline, and a caret that
+ *  opens the two ways of sending (components/SendSplitButton.tsx, which owns these widths and the
+ *  readings behind them). The word is the ticked way of sending, "Steer" or "Queue", and each word has
+ *  its own width: one width for both would leave the shorter word with more room to its right than to
+ *  its left. It is still filled edge to edge, so its ink is its box and every gap in the table above
+ *  holds unchanged — only the width the marks to its left clear follows the word. */
+export const SEND_SPLIT_LABEL_WIDTH: Record<SendMode, number> = { steer: 47.5, queue: 53.5 }
 export const SEND_SPLIT_SEAM_WIDTH = 1
 export const SEND_SPLIT_CARET_WIDTH = 23
-export const SEND_SPLIT_WIDTH = SEND_SPLIT_LABEL_WIDTH + SEND_SPLIT_SEAM_WIDTH + SEND_SPLIT_CARET_WIDTH
-/** The button alone, for a thread with only one way to send: no seam and no caret. The word sits 9.6px
- *  from the left edge (SendSplitButton), so this leaves it about the same to the right. */
+export const sendSplitWidth = (mode: SendMode): number => SEND_SPLIT_LABEL_WIDTH[mode] + SEND_SPLIT_SEAM_WIDTH + SEND_SPLIT_CARET_WIDTH
+/** The button alone, for a thread with only one way to send: no seam, no caret, and the word "Send".
+ *  The word sits 9.6px from the left edge (SendSplitButton), so this leaves it about the same to the
+ *  right. */
 export const SEND_SOLO_WIDTH = 47.5
 
 /** Where each present mark sits (its CSS `right`, px) and how much right padding the prose keeps.

@@ -80,7 +80,11 @@ test("messages sent to the queue from the prompt box reach the worker one turn e
     await page.waitForSelector(`${full} [data-composer-box] textarea`)
     const split = `${full} [data-send-split]`
     const modeNow = () => page.$eval(split, (el) => el.getAttribute("data-send-mode"))
+    // The word on the button, which is the ticked row (maintainer 2026-11-20: "It shouldn't just say
+    // 'send' for both").
+    const faceOf = (target: import("puppeteer").Page, sel: string) => target.$eval(`${sel} [data-send-label]`, (el) => el.textContent)
     assert.equal(await modeNow(), "steer", "a thread's prompt box starts on steer")
+    assert.equal(await faceOf(page, split), "Steer", "and its button says so")
 
     // 1. THE MENU's queue row says how the queue goes out, and ticking it is what the button and the
     //    placeholder say.
@@ -95,11 +99,12 @@ test("messages sent to the queue from the prompt box reach the worker one turn e
       // Opened again, to show the tick.
       await page.click(`${full} [data-send-menu]`)
       await page.waitForSelector(`[data-send-modes] [data-send-mode-row="queue"]`)
-      await page.screenshot({ path: join(shots, "1-send-menu.png"), clip: await menuClip(page, full) })
+      await page.screenshot({ path: join(shots, "1-send-menu.png"), clip: await menuClip(page, full), captureBeyondViewport: false })
       await page.keyboard.press("Escape")
       await page.waitForFunction(() => !document.querySelector("[data-send-modes]"), { timeout: 5000 })
     }
     assert.equal(await page.$eval(`${full} [data-composer-box] textarea`, (el) => el.getAttribute("placeholder")), "Queue a message for when the agent rests…")
+    assert.equal(await faceOf(page, split), "Queue", "the button reads the row just ticked")
 
     // 2. THREE MESSAGES from the prompt box, while the first turn runs.
     assert.equal(await runtime(one.slug), "running", "still mid-turn when the messages are sent")
@@ -141,6 +146,7 @@ test("messages sent to the queue from the prompt box reach the worker one turn e
     // Rested with nothing held: the tick stays where the operator put it.
     await new Promise((resolve) => setTimeout(resolve, 1500))
     assert.equal(await modeNow(), "queue", "the Send menu is still on the queue after the agent rests")
+    assert.equal(await faceOf(page, split), "Queue", "and the button still names the tick with the agent at rest")
     if (shots) await page.screenshot({ path: join(shots, "3-drained.png") })
 
     // 4. EVERY TAB. A second tab, on the other thread, opens on the queue; a pick there reaches this tab
@@ -152,14 +158,17 @@ test("messages sent to the queue from the prompt box reach the worker one turn e
     await other.goto(`${baseUrl}/project/${projectSlug}/thread/${control.slug}`, { waitUntil: "networkidle2" })
     await other.waitForSelector(`${otherFull} [data-send-split]`)
     assert.equal(await other.$eval(`${otherFull} [data-send-split]`, (el) => el.getAttribute("data-send-mode")), "queue", "another tab, on another thread, opens on the queue")
+    assert.equal(await faceOf(other, `${otherFull} [data-send-split]`), "Queue", "and its button reads Queue")
     await other.click(`${otherFull} [data-send-menu]`)
     await other.waitForSelector(`[data-send-modes] [data-send-mode-row="steer"]`)
-    if (shots) await other.screenshot({ path: join(shots, "4-other-tab-menu.png"), clip: await menuClip(other, otherFull) })
+    if (shots) await other.screenshot({ path: join(shots, "4-other-tab-menu.png"), clip: await menuClip(other, otherFull), captureBeyondViewport: false })
     await other.click(`[data-send-modes] [data-send-mode-row="steer"]`)
     await page.waitForFunction((sel) => document.querySelector(sel)?.getAttribute("data-send-mode") === "steer", { timeout: 5000 }, split)
+    assert.equal(await faceOf(page, split), "Steer", "the first tab's button follows the other tab's pick")
     await page.reload({ waitUntil: "networkidle2" })
     await page.waitForSelector(split)
     assert.equal(await modeNow(), "steer", "the pick outlives a reload")
+    assert.equal(await faceOf(page, split), "Steer")
     await other.close()
 
     // 5. THE CONTROL: the steers share one turn — which is what makes the check above able to fail.
@@ -179,7 +188,9 @@ test("messages sent to the queue from the prompt box reach the worker one turn e
   }
 })
 
-// The prompt box with its open menu above it, for the screenshot.
+// The prompt box with its open menu above it, for the screenshot. The clip's padding runs a few pixels
+// past the window's bottom edge, so the shot is taken with `captureBeyondViewport: false`: by default
+// Puppeteer resizes the page to reach those pixels, and the resize shuts the menu being photographed.
 async function menuClip(page: import("puppeteer").Page, surface: string) {
   return page.evaluate((sel) => {
     const box = document.querySelector(`${sel} [data-composer-box]`)!.getBoundingClientRect()

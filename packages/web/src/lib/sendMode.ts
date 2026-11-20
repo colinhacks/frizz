@@ -1,7 +1,8 @@
 import { proxy, useSnapshot } from "valtio"
 
-// HOW THE PROMPT BOX'S SEND GOES OUT while the agent is working (maintainer 2026-10-11). The button
-// always reads "Send"; its caret menu ticks one of two rows:
+// HOW THE PROMPT BOX'S SEND GOES OUT while the agent is working (maintainer 2026-10-11). The button's
+// caret menu ticks one of two rows, and the button's face names the ticked one, "Steer" or "Queue"
+// (2026-11-20; it read "Send" for both until then):
 //
 //   steer — the message is handed to the agent now and read at its next step. The default, and what
 //           every send was before the menu existed.

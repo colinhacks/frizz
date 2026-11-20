@@ -35,6 +35,11 @@ import { shellWriteTargets, type EditedFile, type TranscriptMessage } from "@fri
 // worker wrote under `~/.claude` and then deleted stayed on the rail for good, each row opening a file
 // that was not there (maintainer: "These two files keep showing up in the sidebar … despite the fact
 // that they've been deleted"). The rail is a way into the files; one that is gone has no way in.
+//
+// NOR IS A CLAUDE CODE MEMORY FILE, which a worker writes with the same Write and Edit tools as its real
+// work. The memory is Claude Code's bookkeeping about the maintainer and the project, kept across
+// sessions, not something this effort made (maintainer 2026-11-20: "exclude Claude memory directories
+// from the edited files in the artifact sidebar"). See isClaudeMemoryPath.
 
 const FILE_WRITING_TOOL_NAMES = new Set(["edit", "multiedit", "write", "apply patch"])
 
@@ -77,6 +82,34 @@ export function editedFilePath(tool: ToolLike): string | null {
 function expandHome(candidate: string, home: string): string {
   if (candidate === "~") return home
   return candidate.startsWith("~/") ? path.join(home, candidate.slice(2)) : candidate
+}
+
+// Claude Code's memory directories, as Claude Code 2.1.328 lays them out:
+//
+//  - auto memory, `<config>/projects/<project key>/memory/` (MEMORY.md and one file per memory);
+//  - a sub-agent's user-scope memory, `<config>/agent-memory/<agent>/`;
+//  - its project- and local-scope memory, `<cwd>/.claude/agent-memory/<agent>/` and
+//    `<cwd>/.claude/agent-memory-local/<agent>/`.
+//
+// `<config>` is `~/.claude` unless CLAUDE_CONFIG_DIR moves it, and Frizz hands a worker the server's own
+// environment, so the server's reading is the worker's. The shapes are matched under ANY `.claude`
+// directory as well as under that one: a worker's HOME is not always the server's (a sandbox stack), and
+// the `<cwd>` of a project-scope memory is the worker's, which a worktree moves. A memory directory moved
+// by the `autoMemoryDirectory` setting is not followed.
+function underClaudeMemory(segments: readonly string[]): boolean {
+  const [first, second, third] = segments
+  if (first === "agent-memory" || first === "agent-memory-local") return segments.length > 1
+  return first === "projects" && second !== undefined && third === "memory" && segments.length > 3
+}
+
+export function isClaudeMemoryPath(file: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const configDir = env.CLAUDE_CONFIG_DIR?.trim()
+  if (configDir) {
+    const relative = path.relative(path.resolve(expandHome(configDir, os.homedir())), file)
+    if (relative && !relative.startsWith("..") && !path.isAbsolute(relative) && underClaudeMemory(relative.split(path.sep))) return true
+  }
+  const segments = path.resolve(file).split(path.sep)
+  return segments.some((segment, i) => segment === ".claude" && underClaudeMemory(segments.slice(i + 1)))
 }
 
 // The files a shell command wrote, as absolute paths inside the project.
@@ -154,7 +187,7 @@ export function editedFilesOf(
     }
   }
   // A tool-call path is normally absolute; a relative one (a codex patch) is read against the project.
-  const onDiskNow = (file: EditedFile): boolean =>
-    onDisk(projectDir && !path.isAbsolute(file.path) ? path.resolve(projectDir, file.path) : file.path)
-  return [...byPath.values()].filter(onDiskNow).reverse()
+  const located = (file: EditedFile): string =>
+    projectDir && !path.isAbsolute(file.path) ? path.resolve(projectDir, file.path) : file.path
+  return [...byPath.values()].filter((file) => !isClaudeMemoryPath(located(file)) && onDisk(located(file))).reverse()
 }
