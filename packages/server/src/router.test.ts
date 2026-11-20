@@ -2299,6 +2299,7 @@ function antigravityHarness(turn: "idle" | "in-flight" = "idle") {
     interruptTurn: async (...args: unknown[]) => { calls.push(["interruptTurn", args]); return { interrupted: true } },
     commands: () => [{ name: "compact", description: "Compact the conversation" }],
     models: async (_cwd: string, opts: unknown) => { calls.push(["models", opts]); return { available: true, models: [{ id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", efforts: ["low"] }] } },
+    quota: async (_cwd: string, opts: unknown) => { calls.push(["quota", opts]); return { status: "ok" as const, windows: [{ key: "gemini-weekly", label: "Gemini", usedPercent: 21, models: ["gemini-3.8-flash", ""] }] } },
     bin: () => "/usr/local/bin/agy" as string | undefined,
     isEnding: () => false,
     isAgentAlive: () => true,
@@ -2377,6 +2378,13 @@ test("an Antigravity thread's turn can be stopped, its slash commands are its ag
     const listed = await h.router.antigravityModels.handler({ input: { refresh: true } })
     assert.deepEqual(calls.at(-1), ["models", { refresh: true }])
     assert.equal(listed.models[0]!.id, "gemini-3.8-flash")
+    // The quota is the bridge's held reading; only the gauge's click asks past it.
+    assert.deepEqual((await h.router.antigravityQuota.handler({ input: undefined })).windows.map((w: { key: string }) => w.key), ["gemini-weekly"])
+    assert.deepEqual(calls.at(-1), ["quota", { force: false }])
+    await h.router.antigravityQuota.handler({ input: { force: true } })
+    assert.deepEqual(calls.at(-1), ["quota", { force: true }])
+    ;(h.ctx as { antigravityBridge?: unknown }).antigravityBridge = undefined
+    assert.deepEqual(await h.router.antigravityQuota.handler({ input: undefined }), { status: "unavailable", windows: [], detail: "The Antigravity bridge is unavailable" })
   } finally { h.storage.close() }
 })
 

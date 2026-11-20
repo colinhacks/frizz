@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { QuotaWindow } from "@frizz/shared"
-import { GAUGE, HEALTHY_MIN, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, modelFamily, remainingPercent } from "./quotaGauge.ts"
+import { GAUGE, HEALTHY_MIN, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, modelFamily, remainingPercent, windowsMetering } from "./quotaGauge.ts"
 
 const w = (key: string, usedPercent: number): QuotaWindow => ({ key, label: key, usedPercent })
 
@@ -87,4 +87,22 @@ test("the lit arc grows with the reading and is empty at zero", () => {
   // Under 180° of sweep is the short way round; a full tank's 270° needs the large-arc flag.
   assert.match(gaugeArc(GAUGE.start, gaugeAngle(50)), /A10 10 0 0 1 /)
   assert.match(gaugeArc(GAUGE.start, gaugeAngle(100)), /A10 10 0 1 1 /)
+})
+
+test("a window that lists its models meters those alone, and the gauge reads the selected model's", () => {
+  // Antigravity: one weekly limit shared by its Gemini models, another by the Claude and GPT ones. ""
+  // is the configured model, which the server lists beside the group it belongs to.
+  const gemini: QuotaWindow = { key: "gemini-weekly", label: "Gemini", usedPercent: 90, models: ["gemini-3.8-flash", ""] }
+  const others: QuotaWindow = { key: "3p-weekly", label: "Claude and GPT", usedPercent: 10, models: ["claude-sonnet-4-6"] }
+  assert.deepEqual(windowsMetering([gemini, others], "gemini-3.8-flash"), [gemini])
+  assert.deepEqual(windowsMetering([gemini, others], ""), [gemini])
+  assert.deepEqual(windowsMetering([gemini, others], "claude-sonnet-4-6"), [others])
+  // The nearly spent Gemini limit is not the Claude model's reading.
+  assert.equal(gaugeWindow(windowsMetering([gemini, others], "claude-sonnet-4-6"), undefined), others)
+  assert.equal(gaugeWindow(windowsMetering([gemini, others], ""), undefined), gemini)
+  // A window with no list meters every model, and a model no list names is read against them all.
+  const account = w("account", 50)
+  assert.deepEqual(windowsMetering([gemini, others, account], "claude-sonnet-4-6"), [others, account])
+  assert.deepEqual(windowsMetering([gemini, others], "gemini-4-neon"), [gemini, others])
+  assert.equal(gaugeWindow(windowsMetering([gemini, others], "gemini-4-neon"), undefined), gemini)
 })

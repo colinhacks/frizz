@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
-import type { AccountBackend, AuthSnapshot, ProviderAuth, ProviderQuota, QuotaWindow } from "@frizz/shared"
+import { antigravityModelId, type AccountBackend, type AuthSnapshot, type ProviderAuth, type ProviderQuota, type QuotaWindow } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { ProviderMark } from "./ProviderMark.tsx"
 import type { MarkPanel } from "./AgentMarks.tsx"
@@ -9,7 +9,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "./ui/Popover.tsx"
 import { PROVIDER_LABEL } from "../lib/signIn.ts"
 import { CLAUDE_MODELS } from "../lib/options.ts"
 import { GAUGE_GLYPH, GAUGE_MARK } from "../lib/iconRhythm.ts"
-import { GAUGE, HEALTHY_MIN, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, modelFamily, remainingPercent } from "../lib/quotaGauge.ts"
+import { GAUGE, HEALTHY_MIN, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, modelFamily, remainingPercent, windowsMetering } from "../lib/quotaGauge.ts"
 
 // THE FUEL GAUGE — the quota readout beside the prompt box's model chip (AgentMarks.tsx): ONE gauge for the
 // model that box has selected, its needle and lit arc standing at the quota that model has left. Pointing
@@ -23,6 +23,11 @@ import { GAUGE, HEALTHY_MIN, gaugeAngle, gaugeArc, gaugeNeedle, gaugeWindow, mod
 //
 // The gauge renders ONLY when it has a reading to show (see hasReading): the first fetch, a signed-out
 // account, an unreachable usage endpoint and an ACP agent — which reports no quota at all — draw nothing.
+//
+// ANTIGRAVITY's reading is its own query (rpc.antigravityQuota), made only by a gauge standing on an
+// Antigravity model: answering it runs `agy`, which a box on Claude or Codex has no reason to start. It
+// has no account entry (Frizz reads no Antigravity credential), and its windows say which models each
+// meters by list rather than by key (lib/quotaGauge.ts windowsMetering).
 // The sign-in door is the composer's dispatch gate (submitting a thread on a signed-out backend opens the
 // sign-in modal) and the `/login` alias.
 //
@@ -83,23 +88,28 @@ function hasReading(quota: ProviderQuota | undefined, auth: ProviderAuth | undef
  * Opus (lib/dispatchPreferences.ts); an unset Codex model needs no answer, since no Codex window is
  * scoped to a model.
  */
-export type GaugeModel = { backend: AccountBackend; model: string | undefined }
+export type GaugeBackend = AccountBackend | "antigravity"
+export type GaugeModel = { backend: GaugeBackend; model: string | undefined }
+
+const GAUGE_PROVIDER_LABEL: Record<GaugeBackend, string> = { ...PROVIDER_LABEL, antigravity: "Antigravity" }
 
 export function useSelectedModel(): GaugeModel | undefined {
   const preferences = useQuery({ queryKey: ["dispatchPreferencesGet"], queryFn: () => rpc.dispatchPreferencesGet() })
   const data = preferences.data
-  if (!data || data.backend === "acp" || data.backend === "opencode" || data.backend === "antigravity") return undefined
+  if (!data || data.backend === "acp" || data.backend === "opencode") return undefined
   return { backend: data.backend, model: data[data.backend]?.model ?? (data.backend === "claude" ? "opus" : undefined) }
 }
 
 /** The selected model in words for the tooltip: "Opus" for a Claude alias, the slug for a Codex model. */
-function modelWords(backend: AccountBackend, model: string | undefined): string {
-  if (!model) return PROVIDER_LABEL[backend]
+function modelWords(backend: GaugeBackend, model: string | undefined): string {
+  if (!model || backend === "antigravity") return GAUGE_PROVIDER_LABEL[backend]
   if (backend === "claude") return CLAUDE_MODELS.find((option) => option.value === model)?.label ?? model
   return model
 }
 
 export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; side: "top" | "bottom"; panel: MarkPanel }) {
+  const { backend, model } = selected
+  const antigravity = backend === "antigravity"
   const queryClient = useQueryClient()
   const recheckInFlight = useRef<Promise<void> | null>(null)
   const [rechecking, setRechecking] = useState(false)
@@ -119,6 +129,16 @@ export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; si
     },
     staleTime: 10_000,
     refetchOnWindowFocus: true,
+    enabled: !antigravity,
+  })
+  // Antigravity's own reading. The server holds one for five minutes (its limits are weekly), so this
+  // poll is a cache read on all but one call in five.
+  const antigravityQuota = useQuery({
+    queryKey: ["antigravityQuota"],
+    queryFn: ({ signal }) => rpc.antigravityQuota(undefined, { signal: deadline(POLL_TIMEOUT_MS, signal) }),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    enabled: antigravity,
   })
   // The credential surface. Same cache key as the dispatch gate, so a sign-in from either place
   // updates both. Polled slowly; the popover-open refetch is the responsive path.
@@ -128,6 +148,7 @@ export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; si
     refetchInterval: 120_000,
     staleTime: 30_000,
     refetchOnWindowFocus: true,
+    enabled: !antigravity,
   })
   // The breakdown is a HOVER PANEL (maintainer 2026-10-26: "we need an immediate popover to show on the
   // usage gauge when hovered"). Until then it opened on a click alone, and the hover had only a native
@@ -137,14 +158,18 @@ export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; si
   const button = useRef<HTMLButtonElement>(null)
   useEffect(() => () => clearTimeout(closeTimer.current), [])
 
-  const recheck = (backend: AccountBackend) => {
+  const recheck = () => {
     if (recheckInFlight.current) return
     setRechecking(true)
-    const request = Promise.all([
-      rpc.quota({ force: backend }, { signal: deadline(RECHECK_TIMEOUT_MS) })
-        .then((snapshot) => queryClient.setQueryData(["quota"], snapshot)),
-      queryClient.refetchQueries({ queryKey: ["authStatus"] }),
-    ]).then(() => {}).catch(() => {})
+    const fresh = backend === "antigravity"
+      ? rpc.antigravityQuota({ force: true }, { signal: deadline(RECHECK_TIMEOUT_MS) })
+        .then((reading) => { queryClient.setQueryData(["antigravityQuota"], reading) })
+      : Promise.all([
+        rpc.quota({ force: backend }, { signal: deadline(RECHECK_TIMEOUT_MS) })
+          .then((snapshot) => queryClient.setQueryData(["quota"], snapshot)),
+        queryClient.refetchQueries({ queryKey: ["authStatus"] }),
+      ])
+    const request = fresh.then(() => {}).catch(() => {})
       .finally(() => {
         recheckInFlight.current = null
         setRechecking(false)
@@ -152,13 +177,15 @@ export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; si
     recheckInFlight.current = request
   }
 
-  const { backend, model } = selected
-  const reading = quota.data?.[backend]
-  if (!hasReading(reading, auth.data?.[backend], quota.isLoading)) return null
-  const window = gaugeWindow(reading!.windows, modelFamily(backend, model))!
+  const reading = backend === "antigravity" ? antigravityQuota.data : quota.data?.[backend]
+  const signedIn = backend === "antigravity" ? undefined : auth.data?.[backend]
+  if (!hasReading(reading, signedIn, antigravity ? antigravityQuota.isLoading : quota.isLoading)) return null
+  const window = backend === "antigravity"
+    ? gaugeWindow(windowsMetering(reading!.windows, antigravityModelId(model) ?? ""), undefined)!
+    : gaugeWindow(reading!.windows, modelFamily(backend, model))!
   const remaining = remainingPercent(window)
   const words = modelWords(backend, model)
-  const providerLabel = PROVIDER_LABEL[backend]
+  const providerLabel = GAUGE_PROVIDER_LABEL[backend]
 
   // A pointer or focus passing by leaves the plug's open menu alone (AgentMarks.tsx); only a click takes over.
   const openNow = () => {
@@ -190,7 +217,9 @@ export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; si
           data-quota-gauge={backend}
           data-quota-window={window.key}
           data-remaining={remaining}
-          aria-label={`${providerLabel} quota for ${words}: ${remaining}% remaining in the ${window.label} window`}
+          aria-label={antigravity
+            ? `${providerLabel} quota, ${window.label}: ${remaining}% remaining`
+            : `${providerLabel} quota for ${words}: ${remaining}% remaining in the ${window.label} window`}
           aria-haspopup="dialog"
           aria-expanded={open}
           data-quiet={neighbourOpen || undefined}
@@ -209,7 +238,7 @@ export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; si
             // (about one request in five minutes, shared with every Claude Code session on the machine)
             // and a forced Codex read starts a `codex app-server`. Passing the pointer over the gauge
             // must not cost either.
-            recheck(backend)
+            recheck()
           }}
           className={GAUGE_MARK}
         >
@@ -231,7 +260,13 @@ export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; si
         onOpenAutoFocus={(event) => event.preventDefault()}
         className="w-[min(15rem,calc(100vw-1.5rem))] p-3 text-[11px] leading-relaxed text-fg"
       >
-        <QuotaBreakdown backend={backend} quota={reading!} email={auth.data?.emails?.[backend]} reading={window} fetching={quota.isFetching || rechecking} />
+        <QuotaBreakdown
+          backend={backend}
+          quota={reading!}
+          email={backend === "antigravity" ? undefined : auth.data?.emails?.[backend]}
+          reading={window}
+          fetching={(antigravity ? antigravityQuota.isFetching : quota.isFetching) || rechecking}
+        />
       </PopoverContent>
     </Popover>
   )
@@ -278,7 +313,7 @@ function QuotaBreakdown({
   reading,
   fetching,
 }: {
-  backend: AccountBackend
+  backend: GaugeBackend
   quota: ProviderQuota
   email: string | undefined
   reading: QuotaWindow
@@ -293,7 +328,7 @@ function QuotaBreakdown({
       <div className="mb-2">
         <div className="flex items-center gap-1.5 font-medium">
           <ProviderMark backend={backend} />
-          <span>{PROVIDER_LABEL[backend]}</span>
+          <span>{GAUGE_PROVIDER_LABEL[backend]}</span>
           {quota.planType && <span className="text-muted-70">· {cap(quota.planType)} plan</span>}
           {fetching && <Loader2 size={11} className="animate-spin text-muted-60" aria-label="Rechecking" />}
         </div>
@@ -339,6 +374,10 @@ function QuotaBreakdown({
  * The tone spends colour only where the gauge does, minus the amber: on a phone screen the accent is the
  * ask colour and nothing else, so a low window reads in the foreground and only a nearly empty one in
  * the danger colour.
+ *
+ * ANTIGRAVITY HAS NO ROW HERE. Its windows are named by the group of models each meters ("Claude and
+ * GPT"), which the 108px label column cannot hold beside the provider's name, and reading them starts
+ * `agy`, which opening Settings should not do on a machine that merely has it installed.
  */
 export function QuotaMeters() {
   const quota = useQuery({

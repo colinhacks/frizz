@@ -109,8 +109,10 @@ import type {
   OpencodeModels,
   AntigravityModels,
   AntigravityModelsInput,
+  AntigravityQuotaInput,
   AcpAgentModels,
   AcpAgentModelsInput,
+  ProviderQuota,
   QuotaSnapshot,
   AuthSnapshot,
   AccountLogoutInput,
@@ -422,6 +424,7 @@ export interface Api {
   // Antigravity's models and each one's thinking levels. Answering it starts `agy`, so only a picker
   // showing Antigravity asks; `installedOnly` asks just whether `agy` is on the server's PATH.
   antigravityModels(input?: AntigravityModelsInput): Promise<AntigravityModels>
+  antigravityQuota(input?: AntigravityQuotaInput, opts?: RpcCallOpts): Promise<ProviderQuota>
   // Provider subscription quota (5h + weekly windows) for the sidebar status bar. `force` names the
   // provider whose freshness window an explicit user recheck bypasses (a bare `true` is Claude's).
   quota(input?: { force?: boolean | "claude" | "codex" }, opts?: RpcCallOpts): Promise<QuotaSnapshot>
@@ -612,6 +615,7 @@ export const PROCEDURES = {
   acpAgentModels: "query",
   opencodeModels: "query",
   antigravityModels: "query",
+  antigravityQuota: "query",
   quota: "query",
   authStatus: "query",
   accountLogout: "mutation",

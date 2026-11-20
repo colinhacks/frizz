@@ -1,4 +1,5 @@
-import type { AntigravityModel, AntigravityModels, PermissionMode } from "@frizz/shared"
+import { spawn as spawnProcess } from "node:child_process"
+import type { AntigravityModel, AntigravityModels, PermissionMode, ProviderQuota } from "@frizz/shared"
 import type { InteractionSessionScope, InteractionStore } from "../interaction-store.ts"
 import { log } from "../logging.ts"
 import { frizzGithubWorkerEnv } from "../github-credential.ts"
@@ -15,9 +16,9 @@ import {
 } from "./acp-types.ts"
 import { antigravityTranscriptPath, antigravityTurnOpen } from "./antigravity-transcript.ts"
 import {
-  ANTIGRAVITY_COMMAND, ANTIGRAVITY_LABEL, AntigravityElicitationParams,
+  ANTIGRAVITY_COMMAND, ANTIGRAVITY_LABEL, AntigravityElicitationParams, AntigravityUsage,
   antigravityAnswerLabels, antigravityCommandLine, antigravityLaunchArgs, antigravityOption, antigravityPermissionParams, antigravityQuestionAnswer,
-  antigravitySessionMode, antigravityTier, antigravityToolShape, buildAntigravityQuestionInteraction, isPlainFrizzctlCommand,
+  antigravityQuotaFromUsage, antigravitySessionMode, antigravityTier, antigravityToolShape, buildAntigravityQuestionInteraction, isPlainFrizzctlCommand,
   type AntigravityElicitationResult, type AntigravityQuestionField,
 } from "./antigravity-types.ts"
 import { frizzCliEnv, withFrizzCliOnPath, type FrizzCli } from "./types.ts"
@@ -73,6 +74,23 @@ export interface AntigravityBridgeOptions {
   quietMs?: number
   /** The same turn's last resort: silent this long with no card open, it is over whatever came last. */
   idleMs?: number
+  /** Test seam: runs `agy -p "/usage" --output-format json` and resolves with what it printed. */
+  runUsage?: (input: AntigravityUsageRun) => Promise<string>
+}
+
+export interface AntigravityUsageRun { command: string; args: readonly string[]; cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }
+
+/** One `agy -p "/usage"` run: no session, no tokens, about three seconds. Its stdin is closed, so a CLI
+ *  that asks for anything gets no answer and is stopped at the timeout. */
+export function runAntigravityUsage({ command, args, cwd, env, timeoutMs }: AntigravityUsageRun): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawnProcess(command, [...args], { cwd, env, stdio: ["ignore", "pipe", "ignore"] })
+    let out = ""
+    const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error(`no answer in ${Math.round(timeoutMs / 1000)}s`)) }, timeoutMs)
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { if (out.length < 1_000_000) out += chunk })
+    child.on("error", (err) => { clearTimeout(timer); reject(err) })
+    child.on("close", (code) => { clearTimeout(timer); code === 0 ? resolve(out) : reject(new Error(`it exited with code ${code}`)) })
+  })
 }
 
 /** What a thread runs on. Each is applied at every open, and may be changed on a live session. */
@@ -190,6 +208,11 @@ interface Live {
 
 const AUTH_HINT = `${ANTIGRAVITY_LABEL} needs a sign-in first: run \`agy\` in a terminal and sign in, then send this again. `
 const MODEL_CACHE_MS = 10 * 60_000
+// Every limit `agy` reports is a weekly one, so a reading is held five minutes; the gauge's click skips
+// the hold. A refresh that fails keeps the last reading for half an hour before it says so.
+const QUOTA_CACHE_MS = 5 * 60_000
+const QUOTA_KEPT_MS = 30 * 60_000
+const USAGE_TIMEOUT_MS = 20_000
 const DEFAULT_QUIET_MS = 2_000
 const DEFAULT_IDLE_MS = 5 * 60_000
 const SETTLED_KEPT = 400
@@ -738,6 +761,52 @@ export class AntigravityBridge {
       return empty(message, version)
     } finally {
       await conn.close(500)
+    }
+  }
+
+  // ---- quota ----------------------------------------------------------------------------------------
+
+  private quotaRead: Promise<ProviderQuota> | undefined
+  private quotaCache: { at: number; value: ProviderQuota } | undefined
+
+  /** What the signed-in account has left of each limit, from `agy`'s own `/usage` report. Never a throw:
+   *  a reading that cannot be had is "unavailable" with the reason, and the gauge draws nothing. */
+  quota(cwd: string, opts: { force?: boolean } = {}): Promise<ProviderQuota> {
+    if (this.quotaCache && !opts.force && Date.now() - this.quotaCache.at < QUOTA_CACHE_MS) return Promise.resolve(this.quotaCache.value)
+    if (this.quotaRead) return this.quotaRead
+    const read = this.readQuota(cwd).then((value) => {
+      if (value.status === "ok") this.quotaCache = { at: Date.now(), value }
+      else if (this.quotaCache && Date.now() - this.quotaCache.at < QUOTA_KEPT_MS) return this.quotaCache.value
+      return value
+    }).finally(() => { this.quotaRead = undefined })
+    this.quotaRead = read
+    return read
+  }
+
+  private async readQuota(cwd: string): Promise<ProviderQuota> {
+    const unavailable = (detail: string): ProviderQuota => ({ status: "unavailable", windows: [], detail: clip(detail, 200) })
+    const bin = this.bin()
+    if (!bin) return unavailable(`${ANTIGRAVITY_LABEL} is not installed`)
+    // The model list comes first, and not only for its names: it is read over ACP, which answers a
+    // signed-out account with an error. `agy -p` has never been seen signed out, so it runs only for an
+    // account ACP has just vouched for, and is never the command that finds out.
+    const account = await this.models(cwd)
+    if (account.error) return unavailable(account.error)
+    let printed: string
+    try {
+      printed = await (this.options.runUsage ?? runAntigravityUsage)({
+        command: bin, args: ["-p", "/usage", "--output-format", "json"], cwd,
+        env: inheritWorkerEnvironment(this.options.env ?? process.env), timeoutMs: USAGE_TIMEOUT_MS,
+      })
+    } catch (err) {
+      this.diagnostic("quota", "process", (err as Error).message)
+      return unavailable(`${ANTIGRAVITY_LABEL} did not report its usage: ${(err as Error).message}`)
+    }
+    try {
+      return antigravityQuotaFromUsage(AntigravityUsage.parse(JSON.parse(printed)), account)
+    } catch {
+      this.diagnostic("quota", "protocol", `unreadable /usage report: ${clip(printed, 200)}`)
+      return unavailable(`${ANTIGRAVITY_LABEL} reported its usage in a shape Frizz does not read`)
     }
   }
 

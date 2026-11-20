@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
-  antigravityCommandLine, antigravityLaunchArgs, antigravityOption, antigravityPermissionParams, antigravityProfileOf, antigravitySessionMode,
+  antigravityCommandLine, antigravityLaunchArgs, antigravityOption, antigravityPermissionParams, antigravityProfileOf, antigravityQuotaFromUsage, antigravitySessionMode,
   antigravityTier, antigravityToolShape, AntigravityUsage, isPlainFrizzctlCommand,
 } from "./antigravity-types.ts"
 
@@ -106,4 +106,48 @@ test("antigravity: the plan and the quota report are read where agy puts them", 
     command: { name: "usage", data: { groups: [{ name: "Gemini", buckets: [{ id: "g-5h", name: "5 hour", window: "5h", remaining_fraction: 0.42, reset_time: "2026-11-20T15:00:00Z", extra: 1 }] }] } },
   })
   assert.equal(usage.command.data.groups[0]!.buckets[0]!.remaining_fraction, 0.42)
+})
+
+test("antigravity: a usage report becomes one quota window per limit, scoped to the models its group names", () => {
+  // agy 1.5.13 on the free plan, 2026-11-20.
+  const usage = AntigravityUsage.parse({
+    command: { name: "usage", data: { groups: [
+      { name: "Gemini Models", description: "Models within this group: Gemini 3.8 Flash", buckets: [{ id: "gemini-weekly", name: "Weekly Limit Remaining", window: "weekly", remaining_fraction: 0.75, reset_time: "2026-11-27T18:21:42Z" }] },
+      { name: "Claude and GPT models", description: "Models within this group: Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS 120B", buckets: [{ id: "3p-weekly", window: "weekly", remaining_fraction: 1, reset_time: "2026-11-27T19:44:49Z" }] },
+    ] } },
+  })
+  const account = {
+    defaultModel: "gemini-3.8-flash",
+    tier: "Antigravity Starter Quota",
+    models: [
+      { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+      // The menu's names carry a suffix the report's do not.
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)" },
+      { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
+      { id: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
+    ],
+  }
+  assert.deepEqual(antigravityQuotaFromUsage(usage, account), {
+    status: "ok",
+    // Printed as "Antigravity · Starter plan".
+    planType: "Starter",
+    windows: [
+      { key: "gemini-weekly", label: "Gemini", usedPercent: 25, resetsAt: 1795803702, models: ["gemini-3.8-flash", ""] },
+      { key: "3p-weekly", label: "Claude and GPT", usedPercent: 0, resetsAt: 1795808689, models: ["claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"] },
+    ],
+  })
+  // A group that does not say which models it holds meters all of them; several limits in one group
+  // are told apart by their window; a fraction outside 0..1 and an unreadable date are not passed on.
+  const loose = AntigravityUsage.parse({
+    command: { data: { groups: [{ name: "All models", buckets: [
+      { window: "5h", remaining_fraction: 1.4, reset_time: "soon" },
+      { window: "weekly", remaining_fraction: -0.2 },
+    ] }] } },
+  })
+  assert.deepEqual(antigravityQuotaFromUsage(loose, { models: [] }).windows, [
+    { key: "all-models-5h", label: "All, 5h", usedPercent: 0 },
+    { key: "all-models-weekly", label: "All, weekly", usedPercent: 100 },
+  ])
+  assert.equal(antigravityQuotaFromUsage(usage, { ...account, tier: "Google AI Pro" }).planType, "Google AI Pro")
+  assert.deepEqual(antigravityQuotaFromUsage(AntigravityUsage.parse({ command: { data: { groups: [] } } }), { models: [] }), { status: "unavailable", windows: [], detail: "Antigravity reported no limits" })
 })

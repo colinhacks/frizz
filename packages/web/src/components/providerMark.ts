@@ -34,7 +34,10 @@ export const PROVIDER_MARK_GEOMETRY: Record<ProviderMarkKey, string> = {
   // height, riding 0.92px HIGH of the cap band before `translate-y-px` — the same 1px drop the Claude
   // asterisk needs.
   acp: "h-[11px] w-[6.65px] translate-y-px",
-  // The Gemini spark, with the geometry measured for it below.
+  // The Gemini spark, with the geometry measured for it below. Read again where Antigravity draws it
+  // (the global `optical-spacing` skill's ink-align.mjs, dsf 8, sans, dark and light, 2026-11-20): 0.31 to
+  // 0.38px HIGH of the cap band beside a 13px sidebar title, 0.25 to 0.31px LOW beside the quota panel's
+  // 11px name. Sub-pixel both ways and opposite in sign, so the one box serves both.
   antigravity: "size-[10px]",
   // The brand marks take the Codex knot's treatment (a 10px box, no baseline nudge) and read the SAME
   // residual as it on the rail's font: ink centre 0.42px above the cap band's in 13px system-ui, 0.85px

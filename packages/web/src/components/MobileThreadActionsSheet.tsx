@@ -28,6 +28,9 @@ import { restartWorker } from "../lib/restartWorker.ts"
 import { useDevFrizzBuild } from "../lib/devBuild.ts"
 import { offersRestartWorker } from "../lib/threadMaintenance.ts"
 import { profileGridDisplayParts } from "../lib/profileGrid.ts"
+import { antigravityProfileGroup, antigravitySelection } from "../lib/antigravityProfile.ts"
+import { keyProject } from "../lib/threadKey.ts"
+import { useAntigravityModels } from "../hooks/useAntigravityModels.ts"
 import { contextLine, displayUrl, effortWord, isLoopbackUrl } from "../lib/mobileThread.ts"
 import { useBackDismiss } from "../lib/backDismiss.ts"
 import { MobileBottomSheet } from "./MobileBottomSheet.tsx"
@@ -494,12 +497,19 @@ export function useModelEffortLabel(thread: ThreadView | undefined): string | nu
     enabled: owned && !readAndAnswerHost,
     staleTime: 5_000,
   })
+  // An Antigravity thread's row holds a slug (`antigravity:gemini-3.8-flash`), and its names are the
+  // account's own list: the one the composer's chip already reads, so this is one observer more on that
+  // query. Until it arrives the line names the model by its id.
+  const antigravity = thread?.backend === "antigravity"
+  const antigravityModels = useAntigravityModels(thread ? keyProject(thread.id) : undefined, owned && antigravity && !readAndAnswerHost)
   if (!thread) return null
   const model = thread.model?.trim()
   const effort = thread.effort?.trim()
   if (!model && !effort && !thread.runningModelLabel) return null
-  const groups = [{ id: thread.backend ?? "claude", label: "", options: profiles.data?.options ?? [] }]
-  const parts = profileGridDisplayParts(groups, { model, effort }, "", thread.runningModelLabel)
+  const groups = antigravity
+    ? [antigravityProfileGroup({ models: antigravityModels.models, loading: antigravityModels.loading, saved: { model, effort } })]
+    : [{ id: thread.backend ?? "claude", label: "", options: profiles.data?.options ?? [] }]
+  const parts = profileGridDisplayParts(groups, antigravity ? antigravitySelection(model, effort) : { model, effort }, "", thread.runningModelLabel)
   const name = [parts.name, parts.edition].filter(Boolean).join(" ")
   return [name || null, effortWord(parts.effort)].filter(Boolean).join(" · ") || null
 }

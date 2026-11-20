@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // A fake `agy acp` for the antigravity-bridge tests: newline-delimited JSON-RPC on stdio in the dialect
 // agy 1.5.12 was measured to speak (plans/antigravity-backend.md), frame for frame where the bridge
-// reads one. It is run as `node fake-agy.mjs acp [--dangerously-skip-permissions]`.
+// reads one. It is run as `node fake-agy.mjs acp [--dangerously-skip-permissions]`, or, for the quota
+// reading, as `node fake-agy.mjs -p /usage --output-format json`, which prints one report and exits
+// (with code 1 and nothing printed while the file FAKE_AGY_USAGE_FAIL names exists).
 //
 // FAKE_AGY_MODE picks one misbehaviour:
 //   (unset)     well-behaved
@@ -22,7 +24,7 @@
 // FAKE_AGY_LOG, when set, receives one JSON line per inbound frame (and one for the launch arguments), so
 // a test can assert what the bridge actually sent.
 
-import { appendFileSync } from "node:fs"
+import { appendFileSync, existsSync } from "node:fs"
 
 const mode = process.env.FAKE_AGY_MODE ?? ""
 const logPath = process.env.FAKE_AGY_LOG
@@ -33,6 +35,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const text = (value) => ({ type: "text", text: value })
 
 record({ argv: process.argv.slice(2) })
+
+if (process.argv[2] === "-p") {
+  if (process.env.FAKE_AGY_USAGE_FAIL && existsSync(process.env.FAKE_AGY_USAGE_FAIL)) process.exit(1)
+  // agy 1.5.13's `/usage` report: one group per family of models sharing a limit, named in a sentence.
+  process.stdout.write(JSON.stringify({
+    status: "SUCCESS",
+    command: { name: "usage", data: { groups: [
+      { name: "Gem Models", description: "Models within this group: Gem Flash", buckets: [{ id: "gem-weekly", name: "Weekly Limit Remaining", window: "weekly", remaining_fraction: 0.75, reset_time: "2026-11-27T18:21:42Z" }] },
+      { name: "Third party models", description: "Models within this group: Third Party", buckets: [{ id: "3p-weekly", name: "Weekly Limit Remaining", window: "weekly", remaining_fraction: 1, reset_time: "2026-11-27T19:44:49Z" }] },
+    ] } },
+  }) + "\n")
+  process.exit(0)
+}
 
 let nextOutId = 1
 const pendingOut = new Map()

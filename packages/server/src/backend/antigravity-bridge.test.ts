@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -10,7 +10,7 @@ import { newTailState } from "../tailer.ts"
 import { daemonAcpHost, liveAcpDaemonSessionIds, stopAcpDaemon } from "./acp-host.ts"
 import { spawnAcpChild } from "./acp-rpc.ts"
 import { parseAcpRecord, type AcpRecord } from "./acp-transcript.ts"
-import { createAntigravityBridge, type AntigravityBridge } from "./antigravity-bridge.ts"
+import { createAntigravityBridge, runAntigravityUsage, type AntigravityBridge } from "./antigravity-bridge.ts"
 import { antigravityTranscriptPath, createAntigravityBackend, projectAntigravityTranscript } from "./antigravity-transcript.ts"
 import { opencodeToolCards } from "../transcript.ts"
 
@@ -34,9 +34,10 @@ function rig(opts: { mode?: string; daemon?: boolean; stateDir?: string; install
     projectId: "proj-1",
     stateDir,
     interactions: store,
-    env: { ...process.env, FAKE_AGY_MODE: opts.mode ?? "", FAKE_AGY_LOG: log },
+    env: { ...process.env, FAKE_AGY_MODE: opts.mode ?? "", FAKE_AGY_LOG: log, FAKE_AGY_USAGE_FAIL: join(stateDir, "usage-fails") },
     bin: () => (opts.installed === false ? undefined : "/fake/bin/agy"),
     spawn: (o) => spawnAcpChild(asNode(o)),
+    runUsage: (o) => runAntigravityUsage(asNode(o)),
     // The production transport: a REAL detached daemon per session. Without it, a plain child.
     ...(opts.daemon ? { host: (o) => daemonAcpHost(asNode(o)) } : {}),
     contractFor: () => opts.contract ?? "THE CONTRACT",
@@ -397,4 +398,54 @@ test("antigravity-bridge: a turn survives a Frizz restart in its daemon, and the
     assert.match((recs.find((x) => x.kind === "acp-note") as { text: string }).text, /Reattached to the running Antigravity session/)
     assert.equal(sent(b, "session/new").length, 1, "the same agent, the same session")
   } finally { await teardown(b ?? a) }
+})
+
+test("antigravity-bridge: quota is agy's own usage report, each limit naming the models it meters", async () => {
+  const r = rig()
+  try {
+    const usageRuns = () => frames(r).filter((f) => f.argv?.[0] === "-p").length
+    const quota = await r.bridge.quota(r.stateDir)
+    assert.deepEqual(quota, {
+      status: "ok",
+      // The plan is the one the model list's session reported.
+      planType: "Free",
+      windows: [
+        // The configured model is Gem Flash, so the bare slug ("") is metered with it.
+        { key: "gem-weekly", label: "Gem", usedPercent: 25, resetsAt: Date.parse("2026-11-27T18:21:42Z") / 1000, models: ["gem-flash", ""] },
+        { key: "3p-weekly", label: "Third party", usedPercent: 0, resetsAt: Date.parse("2026-11-27T19:44:49Z") / 1000, models: ["third-party"] },
+      ],
+    })
+    assert.deepEqual(frames(r).find((f) => f.argv?.[0] === "-p")!.argv, ["-p", "/usage", "--output-format", "json"])
+    // A reading is held: the gauge's poll starts nothing, and its click does.
+    await r.bridge.quota(r.stateDir)
+    assert.equal(usageRuns(), 1)
+    await r.bridge.quota(r.stateDir, { force: true })
+    assert.equal(usageRuns(), 2)
+    // A refresh that fails keeps the reading it had.
+    writeFileSync(join(r.stateDir, "usage-fails"), "")
+    assert.deepEqual(await r.bridge.quota(r.stateDir, { force: true }), quota)
+    assert.equal(usageRuns(), 3)
+    rmSync(join(r.stateDir, "usage-fails"))
+  } finally { await teardown(r) }
+})
+
+test("antigravity-bridge: quota never runs the CLI's own prompt mode for an account ACP has not vouched for", async () => {
+  // Signed out: the model list says so over ACP, and `agy -p` is not started to find out for itself.
+  const signedOut = rig({ mode: "no-auth" })
+  try {
+    assert.deepEqual(await signedOut.bridge.quota(signedOut.stateDir), { status: "unavailable", windows: [], detail: "Antigravity is not signed in. Run `agy` in a terminal and sign in." })
+    assert.equal(frames(signedOut).some((f) => f.argv?.[0] === "-p"), false)
+  } finally { await teardown(signedOut) }
+  const missing = rig({ installed: false })
+  try {
+    assert.deepEqual(await missing.bridge.quota(missing.stateDir), { status: "unavailable", windows: [], detail: "Antigravity is not installed" })
+  } finally { await teardown(missing) }
+  // With no reading to keep, a report that cannot be had says so.
+  const failing = rig()
+  try {
+    writeFileSync(join(failing.stateDir, "usage-fails"), "")
+    const quota = await failing.bridge.quota(failing.stateDir)
+    assert.deepEqual({ status: quota.status, windows: quota.windows }, { status: "unavailable", windows: [] })
+    assert.match(quota.detail ?? "", /^Antigravity did not report its usage: it exited with code 1$/)
+  } finally { await teardown(failing) }
 })

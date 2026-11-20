@@ -56,6 +56,18 @@ export function gaugeWindow(windows: readonly QuotaWindow[], family: string | un
   return session && remainingPercent(tightest) > HEALTHY_MIN ? session : tightest
 }
 
+/**
+ * The windows that meter one model, for a provider that says so by LIST (QuotaWindow.models): Antigravity
+ * shares one weekly limit among its Gemini models and another among the Claude and GPT ones, and names
+ * the models in each. `modelId` is the id inside the thread's slug, "" for the configured model. A window
+ * with no list meters every model, and a model no list names is read against all of them, since a model
+ * newer than the list is more likely metered than free.
+ */
+export function windowsMetering(windows: readonly QuotaWindow[], modelId: string): QuotaWindow[] {
+  const mine = windows.filter((w) => !w.models || w.models.includes(modelId))
+  return mine.length > 0 ? mine : [...windows]
+}
+
 /** Percent REMAINING in a window, clamped to a whole 0–100. */
 export function remainingPercent(window: QuotaWindow): number {
   return Math.max(0, Math.min(100, Math.round(100 - window.usedPercent)))

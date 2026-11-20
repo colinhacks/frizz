@@ -89,6 +89,7 @@ import {
   TranscriptEarlierInput,
   ClaudeModel,
   CodexModel,
+  ProviderQuota,
   QuotaSnapshot,
   AuthSnapshot,
   AccountLogoutInput,
@@ -199,6 +200,7 @@ import {
   backendUsesAcpTransport,
   AntigravityModels,
   AntigravityModelsInput,
+  AntigravityQuotaInput,
   antigravityModelId,
   isAntigravityModel,
   backendFollowUps,
@@ -5526,6 +5528,16 @@ export function createRouter(ctx: AppContext) {
         if (input?.installedOnly) return { available: ctx.antigravityBridge.bin() !== undefined, models: [] }
         return ctx.antigravityBridge.models(ctx.project.dir, { refresh: input?.refresh === true })
       },
+    }),
+    // What the Antigravity account has left, from `agy`'s own `/usage` report (held in the bridge). Not in
+    // `quota`, which every gauge polls: reading this starts the CLI, so only a gauge standing on an
+    // Antigravity model asks.
+    antigravityQuota: query({
+      input: AntigravityQuotaInput.optional(),
+      output: ProviderQuota,
+      handler: async ({ input }) => ctx.antigravityBridge
+        ? ctx.antigravityBridge.quota(ctx.project.dir, { force: input?.force === true })
+        : { status: "unavailable" as const, windows: [], detail: "The Antigravity bridge is unavailable" },
     }),
     // The models one ACP agent advertises — read by opening a throwaway session in the project dir
     // (cached in the bridge), so it is a separate query the composer asks only once a model picker

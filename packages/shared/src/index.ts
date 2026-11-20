@@ -323,6 +323,9 @@ export type AntigravityModels = z.infer<typeof AntigravityModels>
  *  and lists no models, so a model menu may ask it on every open. */
 export const AntigravityModelsInput = z.object({ refresh: z.boolean().optional(), installedOnly: z.boolean().optional() }).strict()
 export type AntigravityModelsInput = z.infer<typeof AntigravityModelsInput>
+/** `force` skips the server's held reading: the gauge's click, never its poll. */
+export const AntigravityQuotaInput = z.object({ force: z.boolean().optional() }).strict()
+export type AntigravityQuotaInput = z.infer<typeof AntigravityQuotaInput>
 
 /** One model OpenCode offers (`GET /api/model`), as the composer's picker reads it. `variants` is the
  *  effort axis, empty for a model with only its default. */
@@ -5208,6 +5211,10 @@ export const QuotaWindow = z.object({
   label: z.string(), // short human label for the chip ("5h", "Weekly") — house duration grammar
   usedPercent: z.number(), // 0..100
   resetsAt: z.number().optional(), // unix seconds; absent when the source doesn't report it
+  // The models this window meters, when the provider says so by LIST rather than by key: Antigravity's
+  // model ids as a thread's slug carries them, with "" for its configured model (the bare slug). Absent
+  // means the window meters every model, or says which in its key (Claude's `weekly-opus`).
+  models: z.array(z.string()).optional(),
 })
 export type QuotaWindow = z.infer<typeof QuotaWindow>
 

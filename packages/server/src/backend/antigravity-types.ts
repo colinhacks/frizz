@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { INTERACTION_PROTOCOL_VERSION, InteractionRequest, NOTES_FIELD_SUFFIX, PermissionMode, antigravityModelId, type InteractionField, type InteractionRequest as InteractionRequestType } from "@frizz/shared"
+import { INTERACTION_PROTOCOL_VERSION, InteractionRequest, NOTES_FIELD_SUFFIX, PermissionMode, antigravityModelId, type InteractionField, type InteractionRequest as InteractionRequestType, type ProviderQuota, type QuotaWindow } from "@frizz/shared"
 import type { AcpConfigOption, AcpRequestPermissionParams } from "./acp-types.ts"
 
 // What `agy acp` (Google Antigravity's CLI) says beyond the Agent Client Protocol, and how each piece
@@ -258,6 +258,43 @@ export const AntigravityUsage = z.object({
   }).passthrough(),
 }).passthrough()
 export type AntigravityUsage = z.infer<typeof AntigravityUsage>
+
+// A group names its models in a sentence ("Models within this group: Gemini 3.8 Flash, …"), by the
+// names the model menu lists them under, less a suffix such as "(Thinking)".
+const GROUP_MODELS = /^Models within this group:\s*(.+)$/i
+
+/** The usage report as the quota Frizz's gauge reads: one window per limit, each naming the models it
+ *  meters by the ids a thread's slug carries ("" is the configured model, the bare slug). A group that
+ *  does not say which models it holds meters all of them. */
+export function antigravityQuotaFromUsage(
+  usage: AntigravityUsage,
+  account: { models: ReadonlyArray<{ id: string; name: string }>; defaultModel?: string; tier?: string },
+): ProviderQuota {
+  const windows: QuotaWindow[] = []
+  for (const group of usage.command.data.groups) {
+    const names = GROUP_MODELS.exec(group.description?.trim() ?? "")?.[1]?.split(",").map((name) => name.trim()).filter(Boolean) ?? []
+    const ids = account.models.filter((model) => names.some((name) => model.name === name || model.name.startsWith(`${name} `))).map((model) => model.id)
+    const metered = names.length === 0 ? undefined : [...ids, ...(account.defaultModel !== undefined && ids.includes(account.defaultModel) ? [""] : [])]
+    // "Gemini Models" is the group's title. The row it labels sits under Antigravity's own name, beside
+    // "79% left" and a reset day in a 15rem panel, so it keeps the part that tells the groups apart.
+    const label = group.name.replace(/\s+models$/i, "")
+    for (const bucket of group.buckets) {
+      const resetsAt = bucket.reset_time ? Math.floor(Date.parse(bucket.reset_time) / 1000) : Number.NaN
+      windows.push({
+        key: bucket.id ?? `${group.name}-${bucket.window ?? windows.length}`.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        label: group.buckets.length > 1 && bucket.window ? `${label}, ${bucket.window}` : label,
+        usedPercent: (1 - Math.max(0, Math.min(1, bucket.remaining_fraction))) * 100,
+        ...(Number.isFinite(resetsAt) ? { resetsAt } : {}),
+        ...(metered ? { models: metered } : {}),
+      })
+    }
+  }
+  if (windows.length === 0) return { status: "unavailable", windows: [], detail: `${ANTIGRAVITY_LABEL} reported no limits` }
+  // The gauge's panel prints "Antigravity · <plan> plan", so the tier's name ("Antigravity Starter Quota",
+  // "Google AI Pro") gives up the words that line already says.
+  const plan = account.tier?.replace(/^Antigravity\s+/i, "").replace(/\s+(quota|plan)$/i, "").trim()
+  return { status: "ok", ...(plan ? { planType: plan } : {}), windows }
+}
 
 /** `_meta.antigravity.tier` on a session result: the plan the signed-in account is on. */
 export function antigravityTier(result: unknown): { id?: string; name?: string } | undefined {

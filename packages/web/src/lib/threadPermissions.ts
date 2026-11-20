@@ -90,12 +90,12 @@ export function threadPermissionEffectMessage(
   const noun = backend === "codex" ? "Sandbox" : "Permissions"
   if (effect === "applied") return `${noun} applied to the live session`
   if (effect === "next-turn") {
-    // Antigravity's bypass is a launch flag, as Claude's is: its agent restarts once the turn in flight
-    // ends, and the session resumes on the new one.
+    // Antigravity's bypass is a launch flag, as Claude's is: its agent restarts at once when it is idle,
+    // and once the turn in flight ends otherwise, and the session resumes on the new one.
     return backend === "codex"
       ? `${noun} applied — takes effect on the next turn`
       : backend === "antigravity"
-        ? `${noun} saved — Antigravity restarts when this turn ends`
+        ? `${noun} saved — Antigravity restarts to apply them`
         : `${noun} saved — the worker restarts on the next turn`
   }
   return `${noun} saved for the next resume`

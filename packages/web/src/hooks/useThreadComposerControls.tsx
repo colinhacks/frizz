@@ -345,7 +345,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
                 }}
                 options={ANTIGRAVITY_PERMISSION_OPTIONS}
                 ariaLabel="Thread permission mode"
-                title="Ask, Accept edits, Auto and Plan apply to the session at once. A move to or from Bypass restarts Antigravity when the turn ends."
+                title="Ask, Accept edits, Auto and Plan apply to the session at once. A move to or from Bypass restarts Antigravity, after any turn that is running."
                 disabled={busy}
                 className="shrink-0"
               />
@@ -373,12 +373,14 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
           )}
           {/* Up: this box sits at the bottom of its surface. An ACP agent reports no quota, so no gauge. */}
           <AgentMarks
-            gauge={backend === "acp" || backend === "opencode" || backend === "antigravity" ? undefined : { backend, model }}
+            gauge={backend === "acp" || backend === "opencode" ? undefined : { backend, model }}
             mcp={{ slug }}
             side="top"
           />
         </div>
-        {pendingModel && pendingEffort && (
+        {/* Not for Antigravity: its change lands on the live session at once, and its model is a slug no
+            one should read (`antigravity:gemini-3.8-flash`). The selector shows the pending pick itself. */}
+        {pendingModel && pendingEffort && backend !== "antigravity" && (
           <span className="min-w-0 truncate text-[9px] text-muted-50">
             → {pendingModel} · {pendingEffort} pending
           </span>
