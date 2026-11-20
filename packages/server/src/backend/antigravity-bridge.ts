@@ -1066,8 +1066,8 @@ export class AntigravityBridge {
    * A frame of a turn the agent started. Each one pushes the last resort back, and they decide between
    * them whether silence now means the turn is over: a usage reading closes a model step, a tool call
    * (or a foreground call's result, which the model goes on to read) opens the next, and text leaves
-   * that as it was. The order within a step is not relied on: `agy` sends a step's reading before its
-   * message in a turn a prompt started, and after it in one it started itself.
+   * that as it was. The order within a step is not relied on: `agy` has sent a step's reading on
+   * either side of its message.
    */
   private touchAutonomous(live: Live, turn: Turn, frame: "usage" | "tool" | "other"): void {
     if (!turn.autonomous) return
