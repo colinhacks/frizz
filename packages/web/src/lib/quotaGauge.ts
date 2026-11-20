@@ -52,7 +52,8 @@ export function gaugeWindow(windows: readonly QuotaWindow[], family: string | un
   const pool = binding.length > 0 ? binding : windows
   if (pool.length === 0) return undefined
   const tightest = pool.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a))
-  const session = pool.find((w) => w.key === "5h")
+  // Claude and Codex key their 5h window "5h"; a provider with one per family of models says so in `span`.
+  const session = pool.find((w) => (w.span ?? w.key) === "5h")
   return session && remainingPercent(tightest) > HEALTHY_MIN ? session : tightest
 }
 

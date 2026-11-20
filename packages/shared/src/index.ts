@@ -5215,6 +5215,13 @@ export const QuotaWindow = z.object({
   // model ids as a thread's slug carries them, with "" for its configured model (the bare slug). Absent
   // means the window meters every model, or says which in its key (Claude's `weekly-opus`).
   models: z.array(z.string()).optional(),
+  // The family of models the window belongs to, when a provider reports several windows per family:
+  // Antigravity on a paid plan has a 5h and a weekly limit for its Gemini models and again for the Claude
+  // and GPT ones. The breakdown heads the family's rows with it, and `label` is then the span alone.
+  group: z.string().optional(),
+  // The window's span ("5h", "weekly"), when `key` is not that span itself. The gauge finds a
+  // provider's 5h window by it.
+  span: z.string().optional(),
 })
 export type QuotaWindow = z.infer<typeof QuotaWindow>
 

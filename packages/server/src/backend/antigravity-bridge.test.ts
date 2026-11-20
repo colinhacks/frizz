@@ -424,8 +424,8 @@ test("antigravity-bridge: quota is agy's own usage report, each limit naming the
       planType: "Free",
       windows: [
         // The configured model is Gem Flash, so the bare slug ("") is metered with it.
-        { key: "gem-weekly", label: "Gem", usedPercent: 25, resetsAt: Date.parse("2026-11-27T18:21:42Z") / 1000, models: ["gem-flash", ""] },
-        { key: "3p-weekly", label: "Third party", usedPercent: 0, resetsAt: Date.parse("2026-11-27T19:44:49Z") / 1000, models: ["third-party"] },
+        { key: "gem-weekly", label: "Gem", usedPercent: 25, resetsAt: Date.parse("2026-11-27T18:21:42Z") / 1000, models: ["gem-flash", ""], span: "weekly" },
+        { key: "3p-weekly", label: "Third party", usedPercent: 0, resetsAt: Date.parse("2026-11-27T19:44:49Z") / 1000, models: ["third-party"], span: "weekly" },
       ],
     })
     assert.deepEqual(frames(r).find((f) => f.argv?.[0] === "-p")!.argv, ["-p", "/usage", "--output-format", "json"])

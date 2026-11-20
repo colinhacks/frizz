@@ -190,22 +190,74 @@ test("antigravity: a usage report becomes one quota window per limit, scoped to 
     // Printed as "Antigravity · Starter plan".
     planType: "Starter",
     windows: [
-      { key: "gemini-weekly", label: "Gemini", usedPercent: 25, resetsAt: 1795803702, models: ["gemini-3.8-flash", ""] },
-      { key: "3p-weekly", label: "Claude and GPT", usedPercent: 0, resetsAt: 1795808689, models: ["claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"] },
+      { key: "gemini-weekly", label: "Gemini", usedPercent: 25, resetsAt: 1795803702, models: ["gemini-3.8-flash", ""], span: "weekly" },
+      { key: "3p-weekly", label: "Claude and GPT", usedPercent: 0, resetsAt: 1795808689, models: ["claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"], span: "weekly" },
     ],
   })
   // A group that does not say which models it holds meters all of them; several limits in one group
-  // are told apart by their window; a fraction outside 0..1 and an unreadable date are not passed on.
+  // are rows under its name, shorter span first; a fraction outside 0..1 and an unreadable date are not
+  // passed on.
   const loose = AntigravityUsage.parse({
     command: { data: { groups: [{ name: "All models", buckets: [
-      { window: "5h", remaining_fraction: 1.4, reset_time: "soon" },
       { window: "weekly", remaining_fraction: -0.2 },
+      { window: "5h", remaining_fraction: 1.4, reset_time: "soon" },
     ] }] } },
   })
   assert.deepEqual(antigravityQuotaFromUsage(loose, { models: [] }).windows, [
-    { key: "all-models-5h", label: "All, 5h", usedPercent: 0 },
-    { key: "all-models-weekly", label: "All, weekly", usedPercent: 100 },
+    { key: "all-models-5h", label: "5h", usedPercent: 0, group: "All", span: "5h" },
+    { key: "all-models-weekly", label: "Weekly", usedPercent: 100, group: "All", span: "weekly" },
   ])
   assert.equal(antigravityQuotaFromUsage(usage, { ...account, tier: "Google AI Pro" }).planType, "Google AI Pro")
   assert.deepEqual(antigravityQuotaFromUsage(AntigravityUsage.parse({ command: { data: { groups: [] } } }), { models: [] }), { status: "unavailable", windows: [], detail: "Antigravity reported no limits" })
+})
+
+test("antigravity-types: a paid plan's report is a 5h and a weekly limit per family, and Argon's own", () => {
+  // `agy -p "/usage" --output-format json` on Google AI Pro, agy 1.5.13, 2026-11-20, fractions changed.
+  const usage = AntigravityUsage.parse({
+    status: "SUCCESS",
+    command: { name: "usage", data: { groups: [
+      { name: "Gemini Models", description: "Models within this group: Gemini 4 Neon, Gemini 4 Hydrogen, Orchestrator (Neon), Gemini 3.8 Flash", buckets: [
+        { id: "gemini-weekly", name: "Weekly Limit Remaining", window: "weekly", remaining_fraction: 0.6, reset_time: "2026-11-27T22:34:04Z" },
+        { id: "gemini-5h", name: "5 Hour Limit Remaining", window: "5h", remaining_fraction: 0.9, reset_time: "2026-11-21T03:34:04Z" },
+      ] },
+      { name: "Claude and GPT models", description: "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B", buckets: [
+        { id: "3p-weekly", name: "Weekly Limit Remaining", window: "weekly", remaining_fraction: 1, reset_time: "2026-11-27T22:34:04Z" },
+        { id: "3p-5h", name: "5 Hour Limit Remaining", window: "5h", remaining_fraction: 1, reset_time: "2026-11-21T03:34:04Z" },
+      ] },
+      { name: "Gemini 4 Argon", description: "For paid Pro plans, Argon quota is separate. Higher Argon quota (included as part of the larger Gemini quota bucket) is available on Ultra plans.", buckets: [
+        { id: "gemini-argon-wtu-weekly", name: "Weekly Limit Remaining", window: "weekly", remaining_fraction: 0.25, reset_time: "2026-11-27T22:34:04Z" },
+      ] },
+    ] } },
+  })
+  const account = {
+    defaultModel: "gemini-4-neon",
+    tier: "Google AI Pro",
+    models: [
+      { id: "gemini-4-neon", name: "Gemini 4 Neon" },
+      { id: "gemini-4-argon", name: "Gemini 4 Argon" },
+      { id: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen" },
+      { id: "gemini-pro-orchestrator-neon", name: "Orchestrator (Neon)" },
+      { id: "gemini-pro-orchestrator-g1-pro", name: "Orchestrator (Argon)" },
+      { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+      { id: "claude-opus-5-5", name: "Claude Opus 5.5" },
+      { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
+      { id: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
+    ],
+  }
+  const gemini = ["gemini-4-neon", "gemini-4-hydrogen", "gemini-pro-orchestrator-neon", "gemini-3.8-flash", ""]
+  const others = ["claude-opus-5-5", "claude-sonnet-5-5", "gpt-oss-120b-medium"]
+  // Argon's group lists no models: it is named for the one it meters, and Argon's orchestrator goes
+  // with it, as Neon's is listed beside Neon. No other model reads Argon's allowance.
+  const argon = ["gemini-4-argon", "gemini-pro-orchestrator-g1-pro"]
+  assert.deepEqual(antigravityQuotaFromUsage(usage, account), {
+    status: "ok",
+    planType: "Google AI Pro",
+    windows: [
+      { key: "gemini-5h", label: "5h", usedPercent: 9.999999999999998, resetsAt: 1795232044, models: gemini, group: "Gemini", span: "5h" },
+      { key: "gemini-weekly", label: "Weekly", usedPercent: 40, resetsAt: 1795818844, models: gemini, group: "Gemini", span: "weekly" },
+      { key: "3p-5h", label: "5h", usedPercent: 0, resetsAt: 1795232044, models: others, group: "Claude and GPT", span: "5h" },
+      { key: "3p-weekly", label: "Weekly", usedPercent: 0, resetsAt: 1795818844, models: others, group: "Claude and GPT", span: "weekly" },
+      { key: "gemini-argon-wtu-weekly", label: "Weekly", usedPercent: 75, resetsAt: 1795818844, models: argon, group: "Gemini 4 Argon", span: "weekly" },
+    ],
+  })
 })

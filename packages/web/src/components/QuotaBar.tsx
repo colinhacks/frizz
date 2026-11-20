@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { Fragment, useEffect, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 import { antigravityModelId, type AccountBackend, type AuthSnapshot, type ProviderAuth, type ProviderQuota, type QuotaWindow } from "@frizz/shared"
@@ -218,7 +218,7 @@ export function QuotaGauge({ selected, side, panel }: { selected: GaugeModel; si
           data-quota-window={window.key}
           data-remaining={remaining}
           aria-label={antigravity
-            ? `${providerLabel} quota, ${window.label}: ${remaining}% remaining`
+            ? `${providerLabel} quota, ${window.group ? `${window.group}, ${window.label}` : window.label}: ${remaining}% remaining`
             : `${providerLabel} quota for ${words}: ${remaining}% remaining in the ${window.label} window`}
           aria-haspopup="dialog"
           aria-expanded={open}
@@ -342,17 +342,26 @@ function QuotaBreakdown({
         )}
       </div>
       <ul className="flex flex-col gap-1">
-        {quota.windows.map((w) => {
+        {quota.windows.map((w, i) => {
           const left = clampPct(100 - w.usedPercent)
           const reset = resetText(w)
+          // A provider with several windows per family of models (Antigravity on a paid plan) names the
+          // family once, above its rows, and each row is then its span: "Claude and GPT, weekly" beside
+          // a percentage and a reset time does not fit the panel's 15rem.
+          const heads = w.group !== undefined && w.group !== quota.windows[i - 1]?.group
           return (
-            <li key={w.key} data-quota-window-row={w.key} className="flex items-center justify-between gap-3">
-              <span className={w.key === reading.key ? "text-fg" : "text-muted-80"}>{w.label}</span>
-              <span className="flex items-center gap-2 tabular-nums">
-                <span className={toneText(left)}>{left}% left</span>
-                {reset && <span className="text-muted-55">resets {reset}</span>}
-              </span>
-            </li>
+            <Fragment key={w.key}>
+              {/* The model menu's group heading: small capitals in the label tone, so a family's name
+                  cannot be read as one more row. It sits closer to its own rows than to the family above. */}
+              {heads && <li data-quota-group={w.group} className={`petite-caps -mb-0.5 font-medium text-muted-55${i > 0 ? " pt-1.5" : ""}`}>{w.group}</li>}
+              <li data-quota-window-row={w.key} className="flex items-center justify-between gap-3">
+                <span className={w.key === reading.key ? "text-fg" : "text-muted-80"}>{w.label}</span>
+                <span className="flex items-center gap-2 tabular-nums">
+                  <span className={toneText(left)}>{left}% left</span>
+                  {reset && <span className="text-muted-55">resets {reset}</span>}
+                </span>
+              </li>
+            </Fragment>
           )
         })}
         {quota.detail && <li className="pt-1 text-muted-55">{quota.detail}</li>}
