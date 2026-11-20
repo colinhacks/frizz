@@ -21,8 +21,9 @@ const MAX_FILES = 500
 /** Entries looked at in all, so a folder someone ran `npm install` in costs a bounded walk. */
 const MAX_ENTRIES = 5000
 const MAX_DEPTH = 8
-/** Finder's per-folder state, which appears the moment a human opens the folder and is nobody's work. */
-const SKIPPED = new Set([".DS_Store"])
+/** Finder's per-folder state, which appears the moment a human opens the folder, and the scratch hook's own
+ *  bookkeeping (cc-worker/hooks/scratchpad.mjs), which it hides from the worker too: nobody's work. */
+const SKIPPED = new Set([".DS_Store", ".scratchpad-state.json"])
 
 /** The same shape dispatch.ts accepts for the folder's name. Anything else names no scratch directory. */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/

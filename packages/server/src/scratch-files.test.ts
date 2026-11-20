@@ -21,8 +21,9 @@ test("the listing is every file in the folder, at any depth, and nothing that is
     mkdirSync(join(scratch, "shots", "narrow"), { recursive: true })
     writeFileSync(join(scratch, "notes.md"), "n")
     writeFileSync(join(scratch, "shots", "narrow", "a.png"), "p")
-    // Finder's state, and a link to a file that is not the thread's.
+    // Finder's state, the scratch hook's bookkeeping, and a link to a file that is not the thread's.
     writeFileSync(join(scratch, ".DS_Store"), "")
+    writeFileSync(join(scratch, ".scratchpad-state.json"), "{}\n")
     writeFileSync(join(dir, "outside.txt"), "o")
     symlinkSync(join(dir, "outside.txt"), join(scratch, "link.txt"))
     symlinkSync(dir, join(scratch, "project"))
