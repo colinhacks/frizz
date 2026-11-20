@@ -282,6 +282,9 @@ function main(): void {
       daemonPid: process.pid,
       ...(processStart ? { processStart } : {}),
       childPid: child.pid,
+      // How the agent was launched. A setting that is a launch flag (Antigravity's bypass) is read from
+      // here by a runtime that reattaches, since the thread's own setting may have moved on since.
+      args: config.args,
       socketPath: config.socketPath,
       createdAt: new Date().toISOString(),
     }))

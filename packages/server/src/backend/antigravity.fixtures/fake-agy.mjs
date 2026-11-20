@@ -16,6 +16,12 @@
 //   RUN: <cmd>    asks permission for `run_command <cmd>` and runs nothing; the reply says what was decided
 //   ASK           asks a two-question form through `elicitation/create`
 //   /compact      returns `end_turn` with no frames, as agy's own does
+//   ECHO <word>   a usage reading, then the answer "ECHO <word>": no tool, and a final text per turn
+//   WAIT <ms>     one `run_command` that takes <ms>, then a usage reading, THEN the answer "WAITED"
+//   WAKE_TOOL <ms> ends the turn, then by itself runs a FOREGROUND command for <ms> in silence
+//   DEAF <ms>     ignores `session/cancel` and finishes <ms> later with `end_turn`
+//   CRASH         says something and exits with code 1 mid-turn
+//   GARBAGE       junk lines, unknown updates, wrong types, a 3MB message, unknown ids and methods
 //   anything else a thought, one `run_command`, the answer "PONG", a usage reading
 //
 // A prompt that arrives while another is in flight STEERS it: the earlier prompt's response returns at
@@ -89,6 +95,69 @@ function endTurn(sessionId, s, result) {
 
 async function runPrompt(sessionId, s, prompt) {
   if (prompt.trim() === "/compact") return endTurn(sessionId, s, { stopReason: "end_turn" })
+  const echo = /^ECHO (\S+)$/m.exec(prompt)?.[1]
+  if (echo) {
+    notify(sessionId, { sessionUpdate: "usage_update", used: 1000, size: 1000000 })
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text(`ECHO ${echo}`) })
+    return endTurn(sessionId, s, { stopReason: "end_turn" })
+  }
+  const wait = /^WAIT (\d+)$/m.exec(prompt)?.[1]
+  if (wait) {
+    // A prompt's own frames in the order agy sends them: the reading, THEN the message, then the response.
+    const callId = `call_wait_${++callSeq}`
+    notify(sessionId, { sessionUpdate: "tool_call", toolCallId: callId, name: "run_command", title: "sleep", kind: "execute", status: "in_progress", rawInput: { CommandLine: "sleep", WaitMsBeforeAsync: 60000 } })
+    await sleep(Number(wait))
+    notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: callId, name: "run_command", status: "completed", rawOutput: commandOutput("") })
+    notify(sessionId, { sessionUpdate: "usage_update", used: 1100, size: 1000000 })
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text("WAITED") })
+    return endTurn(sessionId, s, { stopReason: "end_turn" })
+  }
+  if (prompt.includes("CRASH")) {
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text("about to die") })
+    await sleep(30)
+    process.exit(1)
+  }
+  if (prompt.includes("GARBAGE")) {
+    process.stdout.write("this is not json\n")
+    process.stdout.write("{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":42,\"update\":\"nope\"}}\n")
+    notify(sessionId, { sessionUpdate: "a_kind_from_the_future", payload: { deep: [1, 2, 3] } })
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "image", data: "AAAA", mimeType: "image/png" } })
+    notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "call_never_announced", status: "completed", rawOutput: 12345 })
+    notify(sessionId, { sessionUpdate: "usage_update", used: "many", size: null })
+    out({ jsonrpc: "2.0", id: 987654, result: { stopReason: "end_turn" } })
+    out({ jsonrpc: "2.0", id: "agy-unknown-method", method: "fs/read_text_file", params: { path: "/etc/passwd" } })
+    out({ jsonrpc: "2.0", method: "some/notification", params: {} })
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text("x".repeat(3_000_000)) })
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text("\nSURVIVED") })
+    notify(sessionId, { sessionUpdate: "usage_update", used: 1400, size: 1000000 })
+    return endTurn(sessionId, s, { stopReason: "end_turn" })
+  }
+  const deaf = /^DEAF (\d+)$/m.exec(prompt)?.[1]
+  if (deaf) {
+    // An agent that does not act on `session/cancel`: it finishes in its own time.
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text("working") })
+    await sleep(Number(deaf))
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text(" DEAF DONE") })
+    notify(sessionId, { sessionUpdate: "usage_update", used: 1500, size: 1000000 })
+    return endTurn(sessionId, s, { stopReason: "end_turn" })
+  }
+  const wakeTool = /^WAKE_TOOL (\d+)$/m.exec(prompt)?.[1]
+  if (wakeTool) {
+    // Work the agent starts itself that runs a FOREGROUND command in silence for a while.
+    notify(sessionId, { sessionUpdate: "usage_update", used: 1000, size: 1000000 })
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text("Will check later.") })
+    endTurn(sessionId, s, { stopReason: "end_turn" })
+    await sleep(100)
+    const callId = `call_fg_${++callSeq}`
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text("Checking now.") })
+    notify(sessionId, { sessionUpdate: "usage_update", used: 1100, size: 1000000 })
+    notify(sessionId, { sessionUpdate: "tool_call", toolCallId: callId, name: "run_command", title: "long check", kind: "execute", status: "in_progress", rawInput: { CommandLine: "long check", WaitMsBeforeAsync: 600000 } })
+    await sleep(Number(wakeTool))
+    notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: callId, name: "run_command", status: "completed", rawOutput: commandOutput("checked\r\n") })
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text("CHECK DONE") })
+    notify(sessionId, { sessionUpdate: "usage_update", used: 1300, size: 1000000 })
+    return
+  }
   if (prompt.includes("SLOW")) {
     notify(sessionId, { sessionUpdate: "tool_call", toolCallId: "call_slow", name: "run_command", title: "sleep 60", kind: "execute", status: "in_progress", rawInput: { CommandLine: "sleep 60", WaitMsBeforeAsync: 60000, toolSummary: "Waiting" } })
     for (let i = 1; i <= 400; i++) {

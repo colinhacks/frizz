@@ -5,16 +5,18 @@
 //
 //   nub packages/server/src/backend/_live_antigravity.mts [scenario ...]     default: all of them
 //
-// Scenarios: models, contract, tools, steer, wake, question, permission, profile, resume, cancel.
+// Scenarios: models, contract, tools, steer, wake, question, permission, profile, resume, cancel, and the
+// ones a restart or a race decides: restart, restart-card, stop-send, crash, steers, parallel.
 // Exit 0 only when every check of every scenario run passed.
 
+import { execFileSync } from "node:child_process"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Database from "../sqlite.ts"
 import { createInteractionStore, type InteractionStore } from "../interaction-store.ts"
 import { acpUserRecordProjector, opencodeToolCards } from "../transcript.ts"
-import { liveAcpDaemonSessionIds, stopAcpDaemon } from "./acp-host.ts"
+import { liveAcpDaemonSessionIds, readAcpDaemonRecord, stopAcpDaemon } from "./acp-host.ts"
 import { parseAcpRecord, type AcpRecord } from "./acp-transcript.ts"
 import { createAntigravityBridge, type AntigravityBridge, type AntigravityProfile } from "./antigravity-bridge.ts"
 import { antigravityTranscriptPath, projectAntigravityTranscript } from "./antigravity-transcript.ts"
@@ -42,8 +44,9 @@ function ok(name: string, pass: boolean, detail = ""): void {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 interface Rig { bridge: AntigravityBridge; store: InteractionStore; diagnostics: string[] }
-function rig(): Rig {
-  const store = createInteractionStore(new Database(":memory:"))
+/** `storePath`: the store in a file, as the server's is, so a second rig reads what the first journaled. */
+function rig(storePath = ":memory:"): Rig {
+  const store = createInteractionStore(new Database(storePath))
   const diagnostics: string[] = []
   const bridge = createAntigravityBridge({
     projectId: "proj-1", stateDir, interactions: store, env: process.env,
@@ -223,6 +226,128 @@ try {
     ok("the agent is still there for the next message", r.bridge.isAgentAlive(t.threadSlug, t.sessionId))
     dump(t.sessionId)
     await r.bridge.endSession(t.threadSlug, t.sessionId)
+  }
+
+  // ---- what a restart or a race decides (the stress run of 2026-11-20) --------------------------------
+
+  if (runs("restart")) {
+    console.log("restart (Frizz goes away mid-turn, twice: with the prompt still running, and with it finishing meanwhile)")
+    const t = thread()
+    const a = rig()
+    await a.bridge.spawnDispatch({ ...t, cwd, ...CHEAP, prompt: "Run the shell command `sleep 12 && echo slept` and wait for it. Then reply with the single word RESTARTED.", userText: "sleep" })
+    ok("the command started", await until(() => count(t.sessionId, "tool-call") === 1, 60_000))
+    await a.bridge.shutdown()
+    const b = rig()
+    await b.bridge.warmUp([{ ...t, cwd, ...CHEAP }])
+    ok("the prompt in flight is the new runtime's turn", b.bridge.turnLiveness(t.threadSlug, t.sessionId)?.turnActive === true && b.bridge.turnLiveness(t.threadSlug, t.sessionId)?.autonomous === false, JSON.stringify(b.bridge.turnLiveness(t.threadSlug, t.sessionId)))
+    ok("turn ended", await untilIdle(b, t.threadSlug, t.sessionId, 90_000))
+    ok("the call that spanned the restart is one call with one result", count(t.sessionId, "tool-call") === 1 && count(t.sessionId, "tool-result") === 1, `${count(t.sessionId, "tool-call")}/${count(t.sessionId, "tool-result")}`)
+    ok("one turn, ending on the agent's answer", count(t.sessionId, "turn-end") === 1 && /RESTARTED/.test(finalTexts(t.sessionId).at(-1) ?? ""), JSON.stringify(finalTexts(t.sessionId)))
+    console.log(`      the session after the reattach: ${JSON.stringify(b.bridge.session(t.threadSlug, t.sessionId))}`)
+
+    await b.bridge.followUp({ ...t, cwd, ...CHEAP, text: "Run the shell command `sleep 6 && echo slept2` and wait for it. Then reply with the single word AWAY." })
+    ok("the second command started", await until(() => count(t.sessionId, "tool-call") === 2, 60_000))
+    await b.bridge.shutdown()
+    await sleep(30_000) // the command ends, the agent answers and the prompt returns, all to nobody
+    const c = rig()
+    const t0 = Date.now()
+    await c.bridge.warmUp([{ ...t, cwd, ...CHEAP }])
+    const closed = await untilIdle(c, t.threadSlug, t.sessionId, 20_000)
+    ok("a turn that finished while Frizz was away closes within seconds of the reattach", closed, `${Date.now() - t0}ms`)
+    ok("its call is one call with one result", count(t.sessionId, "tool-call") === 2 && count(t.sessionId, "tool-result") === 2, `${count(t.sessionId, "tool-call")}/${count(t.sessionId, "tool-result")}`)
+    ok("its answer is the turn's final text", count(t.sessionId, "turn-end") === 2 && /AWAY/.test(finalTexts(t.sessionId).at(-1) ?? ""), JSON.stringify(finalTexts(t.sessionId)))
+    console.log(`      records after the last reattach: ${kinds(t.sessionId).slice(kinds(t.sessionId).lastIndexOf("acp-note")).join(" ")}`)
+    if (a.diagnostics.length + b.diagnostics.length + c.diagnostics.length) console.log(`      diagnostics: ${[...a.diagnostics, ...b.diagnostics, ...c.diagnostics].slice(-8).join(" | ")}`)
+    dump(t.sessionId)
+    await c.bridge.endSession(t.threadSlug, t.sessionId)
+    await c.bridge.shutdown()
+  }
+
+  if (runs("restart-card")) {
+    console.log("restart-card (an approval is open when Frizz goes away)")
+    const t = thread()
+    const storePath = join(root, "interactions.db")
+    const asking: AntigravityProfile = { ...CHEAP, permissionMode: "default" }
+    const a = rig(storePath)
+    await a.bridge.spawnDispatch({ ...t, cwd, ...asking, prompt: "Run the shell command `echo asked` and reply with exactly what it printed.", userText: "run" })
+    ok("a card was raised", await until(() => pending(a, t.threadSlug, t.sessionId).length === 1))
+    const firstId = pending(a, t.threadSlug, t.sessionId)[0]?.id
+    await a.bridge.shutdown()
+    const b = rig(storePath)
+    await b.bridge.warmUp([{ ...t, cwd, ...asking }])
+    ok("the card is raised again after the restart", await until(() => pending(b, t.threadSlug, t.sessionId).length === 1, 20_000), `first ${firstId}, now ${pending(b, t.threadSlug, t.sessionId)[0]?.id}`)
+    if (pending(b, t.threadSlug, t.sessionId).length) answer(b, t.threadSlug, t.sessionId, "accept")
+    ok("turn ended", await untilIdle(b, t.threadSlug, t.sessionId))
+    ok("the approval given after the restart ran the command", /asked/.test(finalTexts(t.sessionId).at(-1) ?? ""), JSON.stringify(finalTexts(t.sessionId).at(-1)))
+    ok("one call, one result", count(t.sessionId, "tool-call") === 1 && count(t.sessionId, "tool-result") === 1, `${count(t.sessionId, "tool-call")}/${count(t.sessionId, "tool-result")}`)
+    await b.bridge.endSession(t.threadSlug, t.sessionId)
+    await b.bridge.shutdown()
+  }
+
+  if (runs("stop-send")) {
+    console.log("stop-send (a message sent while the turn is being stopped)")
+    const t = thread()
+    await r.bridge.spawnDispatch({ ...t, cwd, ...CHEAP, prompt: "Run the shell command `sleep 40 && echo slept` and wait for it. Then reply with the single word DONE.", userText: "sleep" })
+    ok("the command started", await until(() => count(t.sessionId, "tool-call") === 1, 60_000))
+    const t0 = Date.now()
+    const stop = r.bridge.interruptTurn(t.threadSlug, t.sessionId)
+    const follow = await r.bridge.followUp({ ...t, cwd, ...CHEAP, text: "Reply with the single word AFTER and nothing else." })
+    await stop
+    ok("the message waited for the stop and started a turn of its own", follow.state === "delivered" && follow.resumed === "live", `${follow.state}/${follow.resumed}, ${Date.now() - t0}ms after Stop`)
+    ok("turn ended", await untilIdle(r, t.threadSlug, t.sessionId))
+    ok("two turns: the stopped one, then the message's", count(t.sessionId, "turn-end") === 2 && /AFTER/.test(finalTexts(t.sessionId).at(-1) ?? ""), JSON.stringify(finalTexts(t.sessionId)))
+    const result = records(t.sessionId).find((rec) => rec.kind === "tool-result") as { cancelled?: boolean } | undefined
+    ok("the stopped command is recorded as cancelled", result?.cancelled === true, JSON.stringify(result))
+    dump(t.sessionId)
+    await r.bridge.endSession(t.threadSlug, t.sessionId)
+  }
+
+  if (runs("crash")) {
+    console.log("crash (the agent process is killed mid-turn)")
+    const t = thread()
+    const info = await r.bridge.spawnDispatch({ ...t, cwd, ...CHEAP, prompt: "Run the shell command `sleep 40 && echo slept` and wait for it. Then reply with the single word DONE.", userText: "sleep" })
+    ok("the command started", await until(() => count(t.sessionId, "tool-call") === 1, 60_000))
+    const record = readAcpDaemonRecord(stateDir, t.sessionId)
+    if (record?.childPid) process.kill(record.childPid, "SIGKILL")
+    ok("the session is dropped", await until(() => r.bridge.turnLiveness(t.threadSlug, t.sessionId) === undefined, 20_000))
+    const end = records(t.sessionId).filter((rec) => rec.kind === "turn-end").at(-1)
+    ok("the turn is closed, unsuccessfully, and says why", end?.kind === "turn-end" && end.successful === false && kinds(t.sessionId).includes("provider-error"), kinds(t.sessionId).slice(-4).join(" "))
+    const back = await r.bridge.followUp({ ...t, cwd, ...CHEAP, agySessionId: info.agySessionId, text: "Which shell command were you running when you were interrupted? Reply with the command alone." })
+    ok("the next message resumes the session", back.resumed === "resumed" && back.agySessionId === info.agySessionId, `${back.resumed}`)
+    ok("turn ended", await untilIdle(r, t.threadSlug, t.sessionId))
+    ok("and the agent still has the conversation", /sleep 40/.test(finalTexts(t.sessionId).at(-1) ?? ""), JSON.stringify(finalTexts(t.sessionId).at(-1)))
+    await r.bridge.endSession(t.threadSlug, t.sessionId)
+  }
+
+  if (runs("steers")) {
+    console.log("steers (three messages in quick succession while a turn runs)")
+    const t = thread()
+    await r.bridge.spawnDispatch({ ...t, cwd, ...CHEAP, prompt: "Run the shell command `sleep 10 && echo slept` and wait for it. Then reply with the single word BASE.", userText: "sleep" })
+    ok("the command started", await until(() => count(t.sessionId, "tool-call") === 1, 60_000))
+    const steers = await Promise.all(["ONE", "TWO", "THREE"].map((word) => r.bridge.followUp({ ...t, cwd, ...CHEAP, text: `When you reply, also include the word ${word}.` })))
+    ok("all three joined the running turn", steers.every((s) => s.state === "steered"), steers.map((s) => s.state).join(","))
+    ok("turn ended", await untilIdle(r, t.threadSlug, t.sessionId, 90_000))
+    ok("the four messages made ONE turn", count(t.sessionId, "turn-start") === 1 && count(t.sessionId, "turn-end") === 1, `${count(t.sessionId, "turn-start")}/${count(t.sessionId, "turn-end")}`)
+    const final = finalTexts(t.sessionId).at(-1) ?? ""
+    ok("the last steer was read", /THREE/.test(final), JSON.stringify(final.slice(0, 160)))
+    console.log(`      steers read: ${["ONE", "TWO", "THREE"].filter((w) => final.includes(w)).join(",") || "none"}`)
+    await r.bridge.endSession(t.threadSlug, t.sessionId)
+  }
+
+  if (runs("parallel")) {
+    console.log("parallel (three threads at once)")
+    const threads = [thread(), thread(), thread()]
+    const words = ["HERON", "IBIS", "KITE"]
+    await Promise.all(threads.map((t, i) => r.bridge.spawnDispatch({ ...t, cwd, ...CHEAP, prompt: `Reply with the single word ${words[i]} and nothing else.`, userText: words[i]! })))
+    for (const t of threads) {
+      const pid = readAcpDaemonRecord(stateDir, t.sessionId)?.childPid
+      const rss = pid ? Number(execFileSync("ps", ["-o", "rss=", "-p", String(pid)], { encoding: "utf8" }).trim()) : 0
+      console.log(`      ${t.threadSlug}: agy pid ${pid}, ${Math.round(rss / 1024)} MB resident`)
+    }
+    const ended = await Promise.all(threads.map((t) => untilIdle(r, t.threadSlug, t.sessionId)))
+    ok("all three turns ended", ended.every(Boolean))
+    ok("each thread got its own answer", threads.every((t, i) => new RegExp(words[i]!).test(finalTexts(t.sessionId).at(-1) ?? "") && !words.some((w, j) => j !== i && (finalTexts(t.sessionId).at(-1) ?? "").includes(w))), threads.map((t) => JSON.stringify(finalTexts(t.sessionId).at(-1))).join(" "))
+    for (const t of threads) await r.bridge.endSession(t.threadSlug, t.sessionId)
   }
 } finally {
   await r.bridge.shutdown()

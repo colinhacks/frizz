@@ -23,10 +23,17 @@ const FAKE = fileURLToPath(new URL("./antigravity.fixtures/fake-agy.mjs", import
 
 interface Rig { bridge: AntigravityBridge; stateDir: string; store: InteractionStore; log: string; status: number; diagnostics: string[] }
 
-function rig(opts: { mode?: string; daemon?: boolean; stateDir?: string; installed?: boolean; quietMs?: number; contract?: string } = {}): Rig {
+interface RigOptions {
+  mode?: string; daemon?: boolean; stateDir?: string; installed?: boolean; quietMs?: number; idleMs?: number; cancelWaitMs?: number; contract?: string
+  /** The store in a file under the state directory, as the server's is: a second rig on the same
+   *  directory reads what the first one journaled. */
+  persistentStore?: boolean
+}
+
+function rig(opts: RigOptions = {}): Rig {
   const stateDir = opts.stateDir ?? mkdtempSync(join(tmpdir(), "agy-bridge-"))
   const log = join(stateDir, "agy-frames.jsonl")
-  const store = createInteractionStore(new Database(":memory:"))
+  const store = createInteractionStore(new Database(opts.persistentStore ? join(stateDir, "interactions.db") : ":memory:"))
   const r: Rig = { stateDir, store, log, status: 0, diagnostics: [], bridge: undefined as unknown as AntigravityBridge }
   // The fake is "installed" as a node script: every launch is `node fake-agy.mjs <agy's own arguments>`.
   const asNode = <T extends { command: string; args: readonly string[] }>(o: T): T => ({ ...o, command: process.execPath, args: [FAKE, ...o.args] })
@@ -45,6 +52,8 @@ function rig(opts: { mode?: string; daemon?: boolean; stateDir?: string; install
     onDiagnostic: (d) => { if (d.kind !== "stderr") r.diagnostics.push(`${d.kind}: ${d.message}`) },
     flushMs: 20,
     quietMs: opts.quietMs ?? 150,
+    ...(opts.idleMs ? { idleMs: opts.idleMs } : {}),
+    ...(opts.cancelWaitMs ? { cancelWaitMs: opts.cancelWaitMs } : {}),
     initializeTimeoutMs: 5_000,
   })
   return r
@@ -54,6 +63,7 @@ function rig(opts: { mode?: string; daemon?: boolean; stateDir?: string; install
 async function teardown(r: Rig): Promise<void> {
   await r.bridge.shutdown()
   for (const sessionId of liveAcpDaemonSessionIds(r.stateDir)) await stopAcpDaemon(r.stateDir, sessionId)
+  rmSync(r.stateDir, { recursive: true, force: true })
 }
 
 const records = (r: Rig, sessionId = "s1"): AcpRecord[] =>
@@ -69,6 +79,9 @@ async function until(what: string, check: () => boolean, timeoutMs = 5_000): Pro
     await new Promise((res) => setTimeout(res, 15))
   }
 }
+const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms))
+const count = (r: Rig, kind: string): number => kinds(r).filter((k) => k === kind).length
+const finalTexts = (r: Rig): Array<string | undefined> => records(r).filter((x) => x.kind === "turn-end").map((x) => (x as { finalText?: string }).finalText)
 const untilIdle = (r: Rig, sessionId = "s1", slug = "t1") => until("the turn to end", () => r.bridge.turnLiveness(slug, sessionId)?.turnActive !== true)
 const untilTurn = (r: Rig, sessionId = "s1", slug = "t1") => until("a turn to start", () => r.bridge.turnLiveness(slug, sessionId)?.turnActive === true)
 
@@ -447,5 +460,200 @@ test("antigravity-bridge: quota never runs the CLI's own prompt mode for an acco
     const quota = await failing.bridge.quota(failing.stateDir)
     assert.deepEqual({ status: quota.status, windows: quota.windows }, { status: "unavailable", windows: [] })
     assert.match(quota.detail ?? "", /^Antigravity did not report its usage: it exited with code 1$/)
+  } finally { await teardown(failing) }
+})
+
+// ---- restarts, stops and races, each found by the stress run of 2026-11-20 ----------------------------
+
+test("antigravity-bridge: a turn whose prompt returned while Frizz was away ends on the quiet rule, its tool call written once", async () => {
+  const a = rig({ daemon: true })
+  let b: Rig | undefined
+  try {
+    await a.bridge.spawnDispatch({ ...base, cwd: a.stateDir, prompt: "WAIT 300", userText: "wait" })
+    await until("the tool call", () => kinds(a).includes("tool-call"))
+    await a.bridge.shutdown()
+    await sleep(800) // the call settles, the agent answers and the prompt returns, all to nobody
+    b = rig({ daemon: true, stateDir: a.stateDir })
+    await b.bridge.warmUp([{ ...base, cwd: a.stateDir }])
+    // The replay ends on the MESSAGE: in a turn a prompt started, `agy` sends a step's usage reading
+    // first. The idle fallback is five minutes away, so only the quiet rule can end this in time.
+    await untilIdle(b)
+    assert.deepEqual(kinds(b), ["acp-session", "user-message", "turn-start", "tool-call", "acp-note", "tool-result", "context-usage", "assistant-text", "turn-end"])
+    assert.deepEqual(records(b).at(-1), { ...records(b).at(-1), kind: "turn-end", finalText: "WAITED", successful: true })
+  } finally { await teardown(b ?? a) }
+})
+
+test("antigravity-bridge: a tool call that spans a Frizz restart is one call with one result", async () => {
+  const a = rig({ daemon: true })
+  let b: Rig | undefined
+  try {
+    await a.bridge.spawnDispatch({ ...base, cwd: a.stateDir, prompt: "WAIT 700", userText: "wait" })
+    await until("the tool call", () => kinds(a).includes("tool-call"))
+    await a.bridge.shutdown()
+    b = rig({ daemon: true, stateDir: a.stateDir })
+    await b.bridge.warmUp([{ ...base, cwd: a.stateDir }])
+    assert.deepEqual(b.bridge.turnLiveness("t1", "s1"), { sessionLive: true, turnActive: true, autonomous: false })
+    await untilIdle(b)
+    assert.deepEqual([count(b, "tool-call"), count(b, "tool-result"), count(b, "turn-start"), count(b, "turn-end")], [1, 1, 1, 1])
+    const tools = projectAntigravityTranscript(readFileSync(antigravityTranscriptPath(a.stateDir, "s1"), "utf8"), "antigravity:s1", opencodeToolCards).flatMap((m) => m.tools)
+    assert.deepEqual(tools.map((t) => t.status), ["completed"], "the drawer shows no second, forever-pending row")
+  } finally { await teardown(b ?? a) }
+})
+
+test("antigravity-bridge: a card open across a Frizz restart is raised again, and its answer reaches the agent", async () => {
+  const a = rig({ daemon: true, persistentStore: true })
+  let b: Rig | undefined
+  try {
+    await a.bridge.spawnDispatch({ ...base, cwd: a.stateDir, permissionMode: "default", prompt: "RUN: ls -la", userText: "go" })
+    const first = await card(a)
+    await a.bridge.shutdown()
+    assert.equal(a.store.listPending(scope).length, 0, "the old runtime cancels its card on the way out")
+    // The same store, as the server's is: the daemon sends the request again, under the same tool call.
+    b = rig({ daemon: true, stateDir: a.stateDir, persistentStore: true })
+    await b.bridge.warmUp([{ ...base, cwd: a.stateDir }])
+    const again = await card(b)
+    assert.notEqual(again.id, first.id, "a new card, not the cancelled one")
+    b.store.resolve(scope, { slug: "t1", sessionId: "s1", interactionId: again.id, sessionEpoch: again.owner.sessionEpoch, capabilityRevision: again.owner.capabilityRevision, expectedRecordRevision: again.recordRevision, responseId: "resp-1", decisionId: "accept" })
+    await untilIdle(b)
+    assert.deepEqual(frames(b).filter((f) => f.permissionOutcome).at(-1)?.permissionOutcome, { outcome: "selected", optionId: "allow" })
+    assert.deepEqual([finalTexts(b).at(-1), count(b, "tool-call"), count(b, "tool-result")], ["ALLOWED", 1, 1])
+  } finally { await teardown(b ?? a) }
+})
+
+test("antigravity-bridge: Stop ends an agent that does not act on the cancel, and the next message resumes the session", async () => {
+  const r = rig({ daemon: true, cancelWaitMs: 300 })
+  try {
+    const first = await r.bridge.spawnDispatch({ ...base, cwd: r.stateDir, prompt: "DEAF 6000", userText: "deaf" })
+    await until("the agent to speak", () => kinds(r).includes("assistant-text"))
+    assert.deepEqual(await r.bridge.interruptTurn("t1", "s1"), { interrupted: true })
+    // Detaching from the daemon would have left it working unobserved, for the next message to join.
+    assert.equal(r.bridge.isAgentAlive("t1", "s1"), false)
+    assert.deepEqual(kinds(r).slice(-2), ["turn-end", "acp-note"])
+    assert.equal((records(r).at(-1) as { text: string }).text, "Turn cancelled.")
+    const again = await r.bridge.followUp({ ...base, cwd: r.stateDir, agySessionId: first.agySessionId, text: "ECHO after" })
+    assert.deepEqual({ state: again.state, resumed: again.resumed }, { state: "delivered", resumed: "resumed" })
+    await untilIdle(r)
+    assert.equal(finalTexts(r).at(-1), "ECHO after")
+    assert.deepEqual([count(r, "turn-start"), count(r, "turn-end")], [2, 2])
+  } finally { await teardown(r) }
+})
+
+test("antigravity-bridge: a message sent while a turn is being stopped waits for the stop and gets a turn of its own", async () => {
+  const r = rig()
+  try {
+    await r.bridge.spawnDispatch({ ...base, cwd: r.stateDir, prompt: "DEAF 400", userText: "deaf" })
+    await until("the agent to speak", () => kinds(r).includes("assistant-text"))
+    const stop = r.bridge.interruptTurn("t1", "s1")
+    const follow = await r.bridge.followUp({ ...base, cwd: r.stateDir, text: "ECHO after" })
+    assert.equal(follow.state, "delivered", "it did not join the turn being cancelled")
+    await stop
+    await untilIdle(r)
+    const recs = records(r)
+    const firstEnd = recs.findIndex((x) => x.kind === "turn-end")
+    assert.ok(recs.findIndex((x) => x.kind === "user-message" && (x as { text: string }).text === "ECHO after") > firstEnd, "its words follow the stopped turn's ending")
+    assert.deepEqual([count(r, "turn-start"), count(r, "turn-end"), finalTexts(r).at(-1)], [2, 2, "ECHO after"])
+  } finally { await teardown(r) }
+})
+
+test("antigravity-bridge: a turn the agent started is not closed while a command of its own runs in silence", async () => {
+  // The last resort is 200ms here and the command runs for 900ms.
+  const r = rig({ quietMs: 100, idleMs: 200 })
+  try {
+    await r.bridge.spawnDispatch({ ...base, cwd: r.stateDir, prompt: "WAKE_TOOL 900", userText: "go" })
+    await until("the first turn to end", () => kinds(r).includes("turn-end"))
+    await until("the agent to finish its check", () => records(r).some((x) => x.kind === "assistant-text" && (x as { text: string }).text.includes("CHECK DONE")))
+    await untilIdle(r)
+    const after = kinds(r).slice(kinds(r).indexOf("turn-end") + 1)
+    assert.deepEqual(after, ["user-message", "turn-start", "assistant-text", "context-usage", "tool-call", "tool-result", "assistant-text", "context-usage", "turn-end"], "one turn, not one before the command and one after")
+  } finally { await teardown(r) }
+})
+
+test("antigravity-bridge: a profile change made while the session is opening reaches it", async () => {
+  const r = rig()
+  try {
+    const dispatch = r.bridge.spawnDispatch({ ...base, cwd: r.stateDir, modelId: "gem-flash", effort: "high", prompt: "ECHO a", userText: "a" })
+    assert.deepEqual(await r.bridge.setProfile("t1", "s1", { modelId: "third-party" }), { applied: true, model: "third-party" })
+    await dispatch
+    await untilIdle(r)
+    assert.equal(r.bridge.session("t1", "s1")?.model, "third-party")
+  } finally { await teardown(r) }
+})
+
+test("antigravity-bridge: leaving Bypass mid-turn is still owed a restart after Frizz itself restarts", async () => {
+  const a = rig({ daemon: true })
+  let b: Rig | undefined
+  try {
+    const first = await a.bridge.spawnDispatch({ ...base, cwd: a.stateDir, permissionMode: "bypassPermissions", prompt: "SLOW", userText: "SLOW" })
+    await until("the agent to speak", () => kinds(a).includes("assistant-text"))
+    assert.equal((await a.bridge.setProfile("t1", "s1", { permissionMode: "default" })).restarting, true)
+    await a.bridge.shutdown()
+    // The thread's row says Ask by now. The agent still running was launched to ask nothing.
+    b = rig({ daemon: true, stateDir: a.stateDir })
+    await b.bridge.warmUp([{ ...base, cwd: a.stateDir, permissionMode: "default" }])
+    await b.bridge.followUp({ ...base, cwd: a.stateDir, permissionMode: "default", text: "STOP_NOW" })
+    await until("the bypass agent to be retired", () => b!.bridge.turnLiveness("t1", "s1") === undefined)
+    await b.bridge.followUp({ ...base, cwd: a.stateDir, agySessionId: first.agySessionId, permissionMode: "default", text: "ECHO asked" })
+    await untilIdle(b)
+    assert.deepEqual(frames(b).filter((f) => f.argv).map((f) => f.argv), [["acp", "--dangerously-skip-permissions"], ["acp"]])
+    assert.equal(finalTexts(b).at(-1), "ECHO asked")
+  } finally { await teardown(b ?? a) }
+})
+
+test("antigravity-bridge: a turn whose agent did not survive the restart is closed at boot", async () => {
+  const a = rig({ daemon: true })
+  let b: Rig | undefined
+  try {
+    await a.bridge.spawnDispatch({ ...base, cwd: a.stateDir, prompt: "SLOW", userText: "SLOW" })
+    await until("the agent to speak", () => kinds(a).includes("assistant-text"))
+    await a.bridge.shutdown()
+    await stopAcpDaemon(a.stateDir, "s1") // a reboot: the daemon is gone with everything else
+    b = rig({ daemon: true, stateDir: a.stateDir })
+    await b.bridge.warmUp([{ ...base, cwd: a.stateDir }])
+    assert.deepEqual(kinds(b).slice(-2), ["turn-end", "acp-note"])
+    assert.match((records(b).at(-1) as { text: string }).text, /agent stopped while this turn was running/)
+    const state = newTailState("t1", "s1", "/x")
+    const backend = createAntigravityBackend({ stateDir: a.stateDir })
+    for (const line of readFileSync(antigravityTranscriptPath(a.stateDir, "s1"), "utf8").split("\n")) backend.foldLine(state, line)
+    assert.equal(state.turn, "idle", "the board stops spinning")
+    // And it is written once: the next boot finds the turn closed.
+    const before = kinds(b).length
+    await b.bridge.warmUp([{ ...base, cwd: a.stateDir }])
+    assert.equal(kinds(b).length, before)
+  } finally { await teardown(b ?? a) }
+})
+
+test("antigravity-bridge: a dispatch racing a shutdown is refused, and the closed bridge holds no session", async () => {
+  const r = rig({ daemon: true })
+  try {
+    const dispatch = r.bridge.spawnDispatch({ ...base, cwd: r.stateDir, prompt: "ECHO a", userText: "a" })
+    await r.bridge.shutdown()
+    await assert.rejects(dispatch, /Antigravity bridge is closed/)
+    assert.equal(r.bridge.turnLiveness("t1", "s1"), undefined)
+    assert.equal(sent(r, "session/prompt").length, 0)
+  } finally { await teardown(r) }
+})
+
+test("antigravity-bridge: a reading that cannot be had is held, so a poll does not start agy each time", async () => {
+  const launches = (r: Rig) => frames(r).filter((f) => f.argv).length
+  const signedOut = rig({ mode: "no-auth" })
+  try {
+    const first = await signedOut.bridge.models(signedOut.stateDir)
+    assert.match(first.error ?? "", /not signed in/)
+    assert.deepEqual(await signedOut.bridge.models(signedOut.stateDir), first)
+    assert.equal(launches(signedOut), 1, "the second ask is answered from the first")
+    await signedOut.bridge.models(signedOut.stateDir, { refresh: true })
+    assert.equal(launches(signedOut), 2, "an explicit refresh asks again")
+  } finally { await teardown(signedOut) }
+  const failing = rig()
+  try {
+    writeFileSync(join(failing.stateDir, "usage-fails"), "")
+    const usageRuns = () => frames(failing).filter((f) => f.argv?.[0] === "-p").length
+    const first = await failing.bridge.quota(failing.stateDir)
+    assert.equal(first.status, "unavailable")
+    assert.deepEqual(await failing.bridge.quota(failing.stateDir), first)
+    assert.equal(usageRuns(), 1, "the gauge's next poll runs nothing")
+    rmSync(join(failing.stateDir, "usage-fails"))
+    assert.equal((await failing.bridge.quota(failing.stateDir, { force: true })).status, "ok", "the gauge's click asks again")
+    assert.equal(usageRuns(), 2)
   } finally { await teardown(failing) }
 })

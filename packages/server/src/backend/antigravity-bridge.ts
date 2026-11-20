@@ -1,4 +1,5 @@
 import { spawn as spawnProcess } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import type { AntigravityModel, AntigravityModels, PermissionMode, ProviderQuota } from "@frizz/shared"
 import type { InteractionSessionScope, InteractionStore } from "../interaction-store.ts"
 import { log } from "../logging.ts"
@@ -14,9 +15,9 @@ import {
   contentText, parseSessionUpdate,
   type AcpConfigOption, type AcpInitializeResult as AcpInitializeResultType, type AcpRequestPermissionResult, type AcpToolCallUpdate,
 } from "./acp-types.ts"
-import { antigravityTranscriptPath, antigravityTurnOpen } from "./antigravity-transcript.ts"
+import { antigravityToolCalls, antigravityTranscriptPath, antigravityTurnOpen } from "./antigravity-transcript.ts"
 import {
-  ANTIGRAVITY_COMMAND, ANTIGRAVITY_LABEL, AntigravityElicitationParams, AntigravityUsage,
+  ANTIGRAVITY_BYPASS_FLAG, ANTIGRAVITY_COMMAND, ANTIGRAVITY_LABEL, AntigravityElicitationParams, AntigravityUsage,
   antigravityAnswerLabels, antigravityCommandLine, antigravityLaunchArgs, antigravityOption, antigravityPermissionParams, antigravityQuestionAnswer,
   antigravityQuotaFromUsage, antigravitySessionMode, antigravityTier, antigravityToolShape, buildAntigravityQuestionInteraction, isPlainFrizzctlCommand,
   type AntigravityElicitationResult, type AntigravityQuestionField,
@@ -35,8 +36,11 @@ import { inheritWorkerEnvironment } from "./worker-env.ts"
 //     turn counts the prompts it has in flight, and a follow-up never queues.
 //   - TURNS THE AGENT STARTS. A background command that finishes, a sub-agent that reports back and a
 //     schedule that fires all wake the agent with no prompt outstanding, and nothing marks the end of
-//     what it then does. The bridge opens a turn on the first frame of such a stretch and closes it when
-//     a usage reading (the last frame of every model step) is followed by silence.
+//     what it then does. The bridge opens a turn on the first frame of such a stretch and closes it on
+//     silence once a usage reading has ended a model step and no tool call has started since.
+//   - RESTARTS. The daemon keeps the agent, so the next runtime finds it mid-turn, between turns, or
+//     waiting on a card, and learns the rest from the transcript and the daemon's record: which calls
+//     are already written, and which flag the agent was launched with.
 //   - THE CONTRACT IS A SYSTEM PROMPT. `session/new` takes `_meta.antigravity.systemPrompt.append`, and
 //     the session keeps it across `session/resume` and `/compact`. Nothing is prepended to a prompt and
 //     nothing is re-sent, where acp-bridge.ts has to do both.
@@ -74,6 +78,8 @@ export interface AntigravityBridgeOptions {
   quietMs?: number
   /** The same turn's last resort: silent this long with no card open, it is over whatever came last. */
   idleMs?: number
+  /** How long a stop waits for the agent to act on `session/cancel` before the agent itself is ended. */
+  cancelWaitMs?: number
   /** Test seam: runs `agy -p "/usage" --output-format json` and resolves with what it printed. */
   runUsage?: (input: AntigravityUsageRun) => Promise<string>
 }
@@ -166,11 +172,21 @@ interface Turn {
   heard: boolean
   /** A prompt of this turn was `/compact` and has not returned yet. */
   compacting: boolean
+  /** A usage reading has closed a model step and no tool call has started since: on a turn the agent
+   *  started, silence from here on means the turn is over. */
+  stepOver: boolean
   done: Promise<void>
   finish: () => void
 }
 
-interface ToolMeta { name: string; done: boolean; background?: boolean }
+interface ToolMeta {
+  name: string
+  done: boolean
+  background?: boolean
+  /** The turn the call was made in. A turn the agent started is not over while one of its own
+   *  foreground calls is still running, however quiet the agent is meanwhile. */
+  turn?: Turn
+}
 
 interface Live {
   slug: string
@@ -180,6 +196,9 @@ interface Live {
   init: AcpInitializeResultType
   agySessionId: string
   writer: AcpTranscriptWriter
+  /** This attachment's own mark, in every id that must not be taken for one a previous runtime wrote:
+   *  a streamed message's id, and the id a card is journaled under. */
+  nonce: string
   /** Launched with `--dangerously-skip-permissions`. */
   bypass: boolean
   /** The profile last asked for, so a restart for a bypass change can reopen on it. */
@@ -213,6 +232,11 @@ const MODEL_CACHE_MS = 10 * 60_000
 const QUOTA_CACHE_MS = 5 * 60_000
 const QUOTA_KEPT_MS = 30 * 60_000
 const USAGE_TIMEOUT_MS = 20_000
+// A reading that could not be had is held too, so a gauge standing on a signed-out account does not
+// start `agy` at every poll. Short for the model list, which someone who has just signed in is waiting on.
+const MODEL_FAILURE_MS = 30_000
+const QUOTA_FAILURE_MS = 2 * 60_000
+const DEFAULT_CANCEL_WAIT_MS = 15_000
 const DEFAULT_QUIET_MS = 2_000
 const DEFAULT_IDLE_MS = 5 * 60_000
 const SETTLED_KEPT = 400
@@ -359,7 +383,7 @@ export class AntigravityBridge {
       }))
     } catch (err) { return fail(err instanceof Error ? new Error(`${ANTIGRAVITY_LABEL} did not complete the ACP handshake: ${err.message}`) : err) }
     live = {
-      slug, sessionId, cwd, conn, init, agySessionId: "", writer, bypass,
+      slug, sessionId, cwd, conn, init, agySessionId: "", writer, nonce: randomUUID().slice(0, 8), bypass,
       wanted: { modelId: input.modelId ?? null, effort: input.effort ?? null, permissionMode: input.permissionMode ?? null },
       messageSeq: 0, cards: new Map(), tools: new Map(), commands: [], settled: [], answers: new Map(), exited: false, detaching: false, ending: false, restartOwed: false,
     }
@@ -372,35 +396,51 @@ export class AntigravityBridge {
     // nobody listened: the replayed frames land in that turn, and the quiet rule closes it.
     if (attachment.reattached && attachment.hello.acpSessionId) {
       live.agySessionId = attachment.hello.acpSessionId
+      // The flag the RUNNING agent was launched with. The thread's mode may have moved to or from Bypass
+      // while it worked, and that move is still owed a restart: the mode alone would say it was made.
+      if (attachment.launchArgs) live.bypass = attachment.launchArgs.includes(ANTIGRAVITY_BYPASS_FLAG)
+      if (live.bypass !== bypass) live.restartOwed = true
+      if (this.closed) return this.refuseClosed(live)
       writer.append({ kind: "acp-note", at: this.now(), text: `Reattached to the running ${ANTIGRAVITY_LABEL} session after a Frizz restart.` })
       if (attachment.hello.droppedWhileDetached > 0) {
         writer.append({ kind: "acp-note", at: this.now(), text: `${attachment.hello.droppedWhileDetached} message(s) from the agent were lost while Frizz was away; the transcript may have gaps.` })
       }
+      // The calls the file already holds. One still running gets its result where it was written, not
+      // a second row; a closing frame the daemon replays for one that has its result is a repeat.
+      const calls = antigravityToolCalls(writer.path)
+      live.settled = calls.settled.slice(-SETTLED_KEPT)
       this.sessions.set(sessionId, live)
       const prompts = attachment.hello.outstanding.filter((o) => o.method === "session/prompt")
+      let turn: Turn | undefined
       if (prompts.length) {
-        const turn = this.newTurn(live, false)
-        live.turn = turn
+        turn = this.newTurn(live, false)
+        // A prompt in flight whose turn the file does not hold open: give it one, so its ending has a start.
+        if (!turnLeftOpen) writer.append({ kind: "turn-start", at: turn.startedAt })
         for (const prompt of prompts) {
           turn.outstanding++
           void this.awaitPrompt(live, turn, conn.adoptPending("session/prompt", (id) => attachment.adopt(prompt.daemonId, id)), false)
         }
       } else if (turnLeftOpen) {
-        const turn = this.newTurn(live, true)
-        live.turn = turn
-        this.armQuiet(live, turn)
+        turn = this.newTurn(live, true)
+        // Whatever the agent did while nobody listened is in the replay below. If that was all of it,
+        // nothing follows, and the silence is this turn's ending, whichever frame the replay ends on.
+        turn.stepOver = true
+      }
+      live.turn = turn
+      for (const call of calls.open) {
+        live.tools.set(call.id, { name: call.name, done: false, ...(call.background ? { background: true } : {}), ...(turn && call.inOpenTurn ? { turn } : {}) })
       }
       this.options.onStatusChange?.()
       ready()
+      if (turn && live.turn === turn && turn.autonomous && turn.stepOver) this.armQuiet(live, turn)
+      // The agent kept its options, and the thread's may have changed while it ran unattended. Not
+      // waited for: a busy agent may take its time to answer, and nothing here depends on the answer.
+      void this.applyProfile(current, input).then((problems) => { for (const problem of problems) this.diagnostic(slug, "protocol", problem) }, () => {})
       return { live, resumed: "reattached" }
     }
     ready()
     // A turn left open by an agent that is gone will never be closed by it.
-    if (turnLeftOpen) {
-      const at = this.now()
-      writer.append({ kind: "turn-end", at, successful: false })
-      writer.append({ kind: "acp-note", at, text: `The ${ANTIGRAVITY_LABEL} agent stopped while this turn was running.` })
-    }
+    if (turnLeftOpen) this.closeAbandonedTurn(writer)
 
     const authError = (err: AcpRemoteError): Error => new Error(`${AUTH_HINT}(${err.error.message})`)
     let resumed: "resumed" | "fresh" = "fresh"
@@ -437,8 +477,24 @@ export class AntigravityBridge {
       if (input.agySessionId) writer.append({ kind: "acp-note", at: this.now(), text: `Resumed with a fresh ${ANTIGRAVITY_LABEL} session: the previous one (${input.agySessionId}) could not be resumed, so the agent no longer has the earlier conversation.` })
     }
     for (const problem of problems) writer.append({ kind: "acp-note", at: this.now(), text: problem })
+    if (this.closed) return this.refuseClosed(live)
     this.sessions.set(sessionId, live)
     return { live, resumed }
+  }
+
+  /** The bridge shut down while this open was under way. Let go of the agent (a daemon's keeps running,
+   *  for the next runtime to reattach to) rather than hold a session nothing will ever close. */
+  private async refuseClosed(live: Live): Promise<never> {
+    live.detaching = true
+    await live.conn.close(1_000)
+    throw new Error("Antigravity bridge is closed")
+  }
+
+  /** A turn the file leaves open whose agent is gone will never be closed by it: write its ending. */
+  private closeAbandonedTurn(writer: AcpTranscriptWriter): void {
+    const at = this.now()
+    writer.append({ kind: "turn-end", at, successful: false })
+    writer.append({ kind: "acp-note", at, text: `The ${ANTIGRAVITY_LABEL} agent stopped while this turn was running.` })
   }
 
   private openOnce(input: AntigravityOpenInput): Promise<{ live: Live; resumed: "resumed" | "fresh" | "reattached" }> {
@@ -479,6 +535,12 @@ export class AntigravityBridge {
         problems.push(describe(clip(message, 200)))
       }
     }
+    const mode = antigravitySessionMode(profile.permissionMode)
+    // A reattached session's options were told to the runtime before this one. Asking for the mode is
+    // how they are read: the answer lists all three, and what follows then changes only what differs.
+    if (live.model === undefined && live.mode === undefined) {
+      await attempt("mode", mode, (m) => `${ANTIGRAVITY_LABEL} could not switch to its ${mode} mode (${m}).`)
+    }
     if (profile.modelId && profile.modelId !== live.model) {
       await attempt("model", profile.modelId, (m) => `${ANTIGRAVITY_LABEL} could not switch to ${profile.modelId} (${m}); the session runs on ${live.model ?? "its own default model"}.`)
     }
@@ -486,7 +548,6 @@ export class AntigravityBridge {
     if (profile.effort && live.effort !== undefined && profile.effort !== live.effort) {
       await attempt("thought_level", profile.effort, (m) => `${ANTIGRAVITY_LABEL} could not set the thinking level to ${profile.effort} (${m}); the session runs at ${live.effort ?? "the model's default"}.`)
     }
-    const mode = antigravitySessionMode(profile.permissionMode)
     if (mode !== live.mode) {
       await attempt("mode", mode, (m) => `${ANTIGRAVITY_LABEL} could not switch to its ${mode} mode (${m}); the session stays in ${live.mode ?? "its default mode"}.`)
     }
@@ -520,6 +581,15 @@ export class AntigravityBridge {
     if (this.closed) throw new Error("Antigravity bridge is closed")
     await this.sessionEnded(input.sessionId)
     let live = this.sessions.get(input.sessionId)
+    // A turn being stopped takes no more prompts: one sent now would join work that is about to be
+    // cancelled, and go with it. The message waits for the stop and starts a turn of its own.
+    const stopping = live?.turn?.cancelRequested ? live.turn : undefined
+    if (stopping) {
+      await stopping.done
+      await this.sessionEnded(input.sessionId)
+      if (this.closed) throw new Error("Antigravity bridge is closed")
+      live = this.sessions.get(input.sessionId)
+    }
     const pinned = input.agySessionId ?? live?.agySessionId ?? null
     // The launch flag is stale and nothing is running: this is the moment to restart on the right one.
     if (live && live.restartOwed && !live.turn) {
@@ -551,8 +621,16 @@ export class AntigravityBridge {
       if (live.turn === turn) this.endTurn(live, turn, { successful: false, note: "Turn cancelled." })
       return { interrupted: true }
     }
-    const settled = await Promise.race([turn.done.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 15_000).unref?.())])
-    if (!settled) await live.conn.close(1_000)
+    const settled = await Promise.race([turn.done.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), this.options.cancelWaitMs ?? DEFAULT_CANCEL_WAIT_MS).unref?.())])
+    if (!settled && this.sessions.get(sessionId) === live) {
+      // The agent did not act on the cancel. Letting go of the connection would stop nothing: from a
+      // daemon it only detaches, and the agent works on with nobody watching. End the agent instead;
+      // the session resumes, with its history, at the next message.
+      this.diagnostic(threadSlug, "protocol", "the agent did not act on session/cancel; ending it")
+      this.releaseSession(threadSlug, sessionId)
+      await this.stopping.get(sessionId)
+      await Promise.race([turn.done, new Promise<void>((r) => setTimeout(r, 5_000).unref?.())])
+    }
     return { interrupted: true }
   }
 
@@ -604,8 +682,14 @@ export class AntigravityBridge {
   async warmUp(rows: ReadonlyArray<AntigravityOpenInput>): Promise<void> {
     for (const row of rows) {
       if (this.closed) return
-      if (!liveAcpDaemonRecord(this.options.stateDir, row.sessionId)) continue
-      if (this.sessions.has(row.sessionId)) continue
+      if (this.sessions.has(row.sessionId) || this.opening.has(row.sessionId)) continue
+      if (!liveAcpDaemonRecord(this.options.stateDir, row.sessionId)) {
+        // No agent to reattach to (a reboot, a daemon that died): a turn it left open is over, and
+        // nothing else would say so until the thread's next message.
+        const path = antigravityTranscriptPath(this.options.stateDir, row.sessionId)
+        if (antigravityTurnOpen(path)) { this.closeAbandonedTurn(new AcpTranscriptWriter(path)); this.options.onStatusChange?.() }
+        continue
+      }
       try { await this.openOnce(row) } catch (err) {
         this.diagnostic(row.threadSlug, "reattach", `could not reattach to the running agent: ${(err as Error).message}`)
       }
@@ -619,6 +703,8 @@ export class AntigravityBridge {
    * is idle, and when its turn ends otherwise. The session resumes with its history either way.
    */
   async setProfile(threadSlug: string, sessionId: string, profile: AntigravityProfile): Promise<{ applied: boolean; restarting?: boolean; model?: string; effort?: string }> {
+    // A session being opened right now would take the profile it was opened with and never hear of this one.
+    await this.opening.get(sessionId)?.catch(() => {})
     const live = this.sessions.get(sessionId)
     if (!live || live.slug !== threadSlug || live.exited || live.conn.closed) return { applied: false }
     live.wanted = { modelId: profile.modelId ?? null, effort: profile.effort ?? null, permissionMode: profile.permissionMode ?? null }
@@ -696,16 +782,19 @@ export class AntigravityBridge {
 
   private modelProbe: Promise<AntigravityModels> | undefined
   private modelCache: { at: number; value: AntigravityModels } | undefined
+  private modelFailure: { at: number; value: AntigravityModels } | undefined
 
   /** The models the signed-in account is offered, each with its own thinking levels, read from a
    *  throwaway session (there is no other way to ask) by selecting each model in turn, which costs no
    *  tokens. Cached for ten minutes; a probe that cannot open a session yields an empty list with the
-   *  reason, never a throw, so the composer says what to do. */
+   *  reason, never a throw, so the composer says what to do, and that answer is held half a minute. */
   models(cwd: string, opts: { refresh?: boolean } = {}): Promise<AntigravityModels> {
     if (this.modelCache && !opts.refresh && Date.now() - this.modelCache.at < MODEL_CACHE_MS) return Promise.resolve(this.modelCache.value)
+    if (this.modelFailure && !opts.refresh && Date.now() - this.modelFailure.at < MODEL_FAILURE_MS) return Promise.resolve(this.modelFailure.value)
     if (this.modelProbe) return this.modelProbe
     const probe = this.probeModels(cwd).then((value) => {
-      if (!value.error) this.modelCache = { at: Date.now(), value }
+      if (value.error) this.modelFailure = { at: Date.now(), value }
+      else { this.modelCache = { at: Date.now(), value }; this.modelFailure = undefined }
       return value
     }).finally(() => { this.modelProbe = undefined })
     this.modelProbe = probe
@@ -768,19 +857,26 @@ export class AntigravityBridge {
 
   private quotaRead: Promise<ProviderQuota> | undefined
   private quotaCache: { at: number; value: ProviderQuota } | undefined
+  private quotaFailure: { at: number; value: ProviderQuota } | undefined
 
   /** What the signed-in account has left of each limit, from `agy`'s own `/usage` report. Never a throw:
    *  a reading that cannot be had is "unavailable" with the reason, and the gauge draws nothing. */
   quota(cwd: string, opts: { force?: boolean } = {}): Promise<ProviderQuota> {
     if (this.quotaCache && !opts.force && Date.now() - this.quotaCache.at < QUOTA_CACHE_MS) return Promise.resolve(this.quotaCache.value)
+    if (this.quotaFailure && !opts.force && Date.now() - this.quotaFailure.at < QUOTA_FAILURE_MS) return Promise.resolve(this.keptQuota() ?? this.quotaFailure.value)
     if (this.quotaRead) return this.quotaRead
     const read = this.readQuota(cwd).then((value) => {
-      if (value.status === "ok") this.quotaCache = { at: Date.now(), value }
-      else if (this.quotaCache && Date.now() - this.quotaCache.at < QUOTA_KEPT_MS) return this.quotaCache.value
-      return value
+      if (value.status === "ok") { this.quotaCache = { at: Date.now(), value }; this.quotaFailure = undefined; return value }
+      this.quotaFailure = { at: Date.now(), value }
+      return this.keptQuota() ?? value
     }).finally(() => { this.quotaRead = undefined })
     this.quotaRead = read
     return read
+  }
+
+  /** The last good reading, for as long as it is worth showing in place of a failed refresh. */
+  private keptQuota(): ProviderQuota | undefined {
+    return this.quotaCache && Date.now() - this.quotaCache.at < QUOTA_KEPT_MS ? this.quotaCache.value : undefined
   }
 
   private async readQuota(cwd: string): Promise<ProviderQuota> {
@@ -815,7 +911,13 @@ export class AntigravityBridge {
   private newTurn(live: Live, autonomous: boolean): Turn {
     let finish!: () => void
     const done = new Promise<void>((r) => { finish = r })
-    return { startedAt: this.now(), outstanding: 0, autonomous, text: "", messageId: `m${++live.messageSeq}`, messageText: "", thought: "", cancelRequested: false, heard: false, compacting: false, done, finish }
+    return { startedAt: this.now(), outstanding: 0, autonomous, text: "", messageId: this.messageId(live), messageText: "", thought: "", cancelRequested: false, heard: false, compacting: false, stepOver: false, done, finish }
+  }
+
+  /** A streamed message's id. The fold joins the pieces that share one, so it carries this attachment's
+   *  mark: the first message after a restart is not the first message before it. */
+  private messageId(live: Live): string {
+    return `${live.nonce}.${++live.messageSeq}`
   }
 
   /** Send one prompt: it starts a turn, or joins the one running (a steer). The transcript records the
@@ -881,7 +983,14 @@ export class AntigravityBridge {
       this.flushText(live, false)
       live.writer.append({ kind: "compaction", at: this.now() })
     }
-    if (turn.outstanding > 0) return
+    if (turn.outstanding > 0) {
+      // A later prompt steered this one, and its return is the agent saying it has read those words.
+      // What was said up to here was said before it had: commentary, not the answer to them.
+      this.flushThought(live)
+      this.flushText(live, false)
+      this.nextMessage(live, turn)
+      return
+    }
     if (stopReason === "cancelled") { this.endTurn(live, turn, { successful: false, note: "Turn cancelled." }); return }
     this.endTurn(live, turn, { successful: stopReason !== "refusal" })
   }
@@ -919,38 +1028,60 @@ export class AntigravityBridge {
     return turn
   }
 
-  /** A usage reading ended a model step of a turn the agent started. If nothing follows it, that step
-   *  was the last: a step that calls a tool sends the call within milliseconds of its reading. */
+  /** One of the turn's own foreground calls has no result yet: the agent is working, however quiet. */
+  private callRunning(live: Live, turn: Turn): boolean {
+    for (const meta of live.tools.values()) if (!meta.done && !meta.background && meta.turn === turn) return true
+    return false
+  }
+
+  /** A model step of a turn the agent started is over. If nothing follows, that step was the last: a
+   *  step that calls a tool sends the call within milliseconds of its reading. */
   private armQuiet(live: Live, turn: Turn): void {
     if (turn.quietTimer) clearTimeout(turn.quietTimer)
     turn.quietTimer = setTimeout(() => {
       turn.quietTimer = undefined
       if (live.turn !== turn || !turn.autonomous || turn.outstanding > 0) return
-      // A card is open: the agent is waiting on a person, not finished.
-      if (live.cards.size) return
+      // A card is open, or a command of the turn's is still running: the agent is waiting, not finished.
+      if (live.cards.size || this.callRunning(live, turn)) return
       this.endTurn(live, turn, { successful: true })
     }, this.options.quietMs ?? DEFAULT_QUIET_MS)
     turn.quietTimer.unref?.()
   }
 
-  /** Every frame of a turn the agent started pushes its last-resort ending back. */
-  private touchAutonomous(live: Live, turn: Turn, endsStep: boolean): void {
-    if (!turn.autonomous) return
-    if (turn.quietTimer) { clearTimeout(turn.quietTimer); turn.quietTimer = undefined }
+  /** The last resort for a turn the agent started: silent this long with nothing of its own running,
+   *  it is over whatever came last. */
+  private armIdle(live: Live, turn: Turn): void {
     if (turn.idleTimer) clearTimeout(turn.idleTimer)
     turn.idleTimer = setTimeout(() => {
       turn.idleTimer = undefined
-      if (live.turn !== turn || !turn.autonomous || turn.outstanding > 0 || live.cards.size) return
+      if (live.turn !== turn || !turn.autonomous || turn.outstanding > 0) return
+      // Waiting on a person or on its own command is not idling. Look again later.
+      if (live.cards.size || this.callRunning(live, turn)) { this.armIdle(live, turn); return }
       this.endTurn(live, turn, { successful: true })
     }, this.options.idleMs ?? DEFAULT_IDLE_MS)
     turn.idleTimer.unref?.()
-    if (endsStep) this.armQuiet(live, turn)
+  }
+
+  /**
+   * A frame of a turn the agent started. Each one pushes the last resort back, and they decide between
+   * them whether silence now means the turn is over: a usage reading closes a model step, a tool call
+   * (or a foreground call's result, which the model goes on to read) opens the next, and text leaves
+   * that as it was. The order within a step is not relied on: `agy` sends a step's reading before its
+   * message in a turn a prompt started, and after it in one it started itself.
+   */
+  private touchAutonomous(live: Live, turn: Turn, frame: "usage" | "tool" | "other"): void {
+    if (!turn.autonomous) return
+    this.armIdle(live, turn)
+    if (frame === "usage") turn.stepOver = true
+    else if (frame === "tool") turn.stepOver = false
+    if (turn.stepOver) this.armQuiet(live, turn)
+    else if (turn.quietTimer) { clearTimeout(turn.quietTimer); turn.quietTimer = undefined }
   }
 
   /** A new agent message begins: what was said so far is no longer the turn's final text. */
   private nextMessage(live: Live, turn: Turn): void {
     turn.messageText = ""
-    turn.messageId = `m${++live.messageSeq}`
+    turn.messageId = this.messageId(live)
   }
 
   /** Write the buffered text as one record. Returns, for a FINAL flush, the whole text of the agent's
@@ -991,7 +1122,7 @@ export class AntigravityBridge {
         if (!t) return
         const turn = live.turn ?? this.openAutonomousTurn(live)
         turn.heard = true
-        this.touchAutonomous(live, turn, false)
+        this.touchAutonomous(live, turn, "other")
         turn.thought += t
         return
       }
@@ -1000,7 +1131,7 @@ export class AntigravityBridge {
         if (!t) return
         const turn = live.turn ?? this.openAutonomousTurn(live)
         turn.heard = true
-        this.touchAutonomous(live, turn, false)
+        this.touchAutonomous(live, turn, "other")
         this.flushThought(live)
         // A message that picks up after a pause opens with blank lines of its own.
         const piece = turn.messageText ? t : t.trimStart()
@@ -1023,7 +1154,6 @@ export class AntigravityBridge {
         }
         const turn = live.turn ?? this.openAutonomousTurn(live)
         turn.heard = true
-        this.touchAutonomous(live, turn, false)
         let meta = known
         if (!meta) {
           this.flushThought(live)
@@ -1031,10 +1161,12 @@ export class AntigravityBridge {
           // Text before a tool call is commentary, not the answer.
           this.nextMessage(live, turn)
           const shaped = antigravityToolShape(toolName(update) ?? update.title ?? update.kind ?? "tool", update.rawInput)
-          meta = { name: shaped.name, done: false, ...(shaped.input.run_in_background === true ? { background: true } : {}) }
+          meta = { name: shaped.name, done: false, turn, ...(shaped.input.run_in_background === true ? { background: true } : {}) }
           live.tools.set(update.toolCallId, meta)
           live.writer.append({ kind: "tool-call", at: this.now(), id: update.toolCallId, name: shaped.name, input: shaped.input })
         }
+        // A background call that reports back has not, by that alone, put the agent back to work.
+        this.touchAutonomous(live, turn, settles && meta.background ? "other" : "tool")
         if (settles) this.recordToolResult(live, update, meta)
         return
       }
@@ -1042,7 +1174,7 @@ export class AntigravityBridge {
         // Keep the file in reading order: the text this reading follows goes first.
         this.flushText(live, false)
         if (update.used > 0) live.writer.append({ kind: "context-usage", at: this.now(), tokens: update.used, window: update.size })
-        if (live.turn) this.touchAutonomous(live, live.turn, true)
+        if (live.turn) this.touchAutonomous(live, live.turn, "usage")
         return
       }
       case "session_info_update":
@@ -1116,6 +1248,18 @@ export class AntigravityBridge {
     return { projectId: this.options.projectId, threadSlug: live.slug, sessionId: live.sessionId }
   }
 
+  /**
+   * Journal a card and return its id. The agent names a request by its tool call, and the store keeps
+   * one record per name: a request the daemon sends AGAIN after a Frizz restart would be handed the
+   * record the previous runtime cancelled on its way out, and wait on it for good. So the name carries
+   * this attachment's mark, and a record that is not pending is never waited on.
+   */
+  private journal(live: Live, store: InteractionStore, request: Parameters<InteractionStore["create"]>[0]): string {
+    const created = store.create({ ...request, providerRequestId: `${clip(request.providerRequestId, 480)}#${live.nonce}` }).interaction
+    if (created.lifecycle !== "pending") throw new Error(`the request is already ${created.lifecycle}`)
+    return created.id
+  }
+
   private handlePermission(live: Live, params: unknown): Promise<AcpRequestPermissionResult> {
     const parsed = AcpRequestPermissionParams.safeParse(params)
     const cancelled: AcpRequestPermissionResult = { outcome: { outcome: "cancelled" } }
@@ -1132,7 +1276,7 @@ export class AntigravityBridge {
     const built = buildAcpPermissionInteraction(antigravityPermissionParams(parsed.data), { projectId: this.options.projectId, threadSlug: live.slug, sessionId: live.sessionId, cwd: live.cwd }, { id: "antigravity", label: ANTIGRAVITY_LABEL, provider: "antigravity" })
     if (!built) { this.diagnostic(live.slug, "permission", "request could not be represented as a card; denying"); return Promise.resolve(failClosed) }
     let id: string
-    try { id = store.create(built.request).interaction.id } catch (err) {
+    try { id = this.journal(live, store, built.request) } catch (err) {
       this.diagnostic(live.slug, "permission", `could not record the approval: ${(err as Error).message}`)
       return Promise.resolve(failClosed)
     }
@@ -1152,7 +1296,7 @@ export class AntigravityBridge {
     const built = buildAntigravityQuestionInteraction(parsed.data, { projectId: this.options.projectId, threadSlug: live.slug, sessionId: live.sessionId, turnId: clip(requestId, 500), itemId: clip(requestId, 500), sessionEpoch: 0, capabilityRevision: 0 }, requestId)
     if (!built) { this.diagnostic(live.slug, "question", "a question could not be shown as a card; cancelling it"); return Promise.resolve(cancel) }
     let id: string
-    try { id = store.create(built.request).interaction.id } catch (err) {
+    try { id = this.journal(live, store, built.request) } catch (err) {
       this.diagnostic(live.slug, "question", `could not record the question: ${(err as Error).message}`)
       return Promise.resolve(cancel)
     }

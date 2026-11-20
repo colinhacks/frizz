@@ -38,6 +38,8 @@ export interface AcpDaemonRecord {
   createdAt: string
   /** The daemon's own exact start marker, where the platform has one (daemon-identity.ts). */
   processStart?: string
+  /** The arguments the agent was launched with. Absent on a record written before 2026-11-20. */
+  args?: string[]
 }
 
 /** What the daemon reports about the stream a client is about to join. */
@@ -59,6 +61,9 @@ export interface AcpAttachment {
   reattached: boolean
   generation: string
   daemonPid: number
+  /** The arguments the agent this attachment reaches was launched with: this open's own for a new
+   *  agent, the daemon record's for one that was already running (absent when its record predates them). */
+  launchArgs?: readonly string[]
   hello: AcpDaemonHello
   /** Take ownership of an outstanding request under `clientId`: the daemon then maps that request's
    *  response onto the new id. */
@@ -119,6 +124,7 @@ export function readAcpDaemonRecord(stateDir: string, sessionId: string): AcpDae
       // Copied by name like every field here, so a new one is lost unless it is listed: the stamp was
       // written and never read back until this line, which left a Linux record judged as unstamped.
       ...(typeof value.processStart === "string" && value.processStart ? { processStart: value.processStart } : {}),
+      ...(Array.isArray(value.args) && value.args.every((arg) => typeof arg === "string") ? { args: value.args } : {}),
     }
   } catch {
     return null
@@ -336,7 +342,7 @@ export const daemonAcpHost: AcpHost = async (options) => {
   if (existing) {
     try {
       const attached = await attach(existing, timeoutMs)
-      return { ...attached, reattached: true, generation: existing.generation, daemonPid: existing.daemonPid }
+      return { ...attached, reattached: true, generation: existing.generation, daemonPid: existing.daemonPid, ...(existing.args ? { launchArgs: existing.args } : {}) }
     } catch {
       // The record outlived its socket (a daemon killed between the pid check and connect). Drop it
       // and fall through to a fresh fork rather than failing the whole open.
@@ -350,7 +356,7 @@ export const daemonAcpHost: AcpHost = async (options) => {
   try {
     const record = await forkDaemon(options)
     const attached = await attach(record, timeoutMs)
-    return { ...attached, reattached: false, generation: record.generation, daemonPid: record.daemonPid }
+    return { ...attached, reattached: false, generation: record.generation, daemonPid: record.daemonPid, launchArgs: options.args }
   } catch (error) {
     // LAST RESORT, and deliberately not a hard failure: the daemon buys restart survival, and a daemon
     // that cannot start must cost that property, never the ACP thread itself.
@@ -367,6 +373,7 @@ export function directAcpHost(spawnChild: AcpSpawn): AcpHost {
     reattached: false,
     generation: randomUUID(),
     daemonPid: process.pid,
+    launchArgs: options.args,
     hello: { outstanding: [], droppedWhileDetached: 0 },
     adopt() {},
   })

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs"
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs"
 import { join } from "node:path"
 import type { TranscriptMessage } from "@frizz/shared"
 import { applyEvent } from "../tailer.ts"
@@ -43,18 +43,59 @@ export function createAntigravityBackend(opts: { stateDir: string }): AgentBacke
 }
 
 /** Whether the file's last turn was never closed: a `turn-start` with no `turn-end` after it. What a
- *  bridge reattaching to an agent with no prompt in flight asks, so that turn gets its ending. */
+ *  bridge asks of a thread whose agent it is reattaching to, or has lost, so that turn gets its ending.
+ *  It is asked of every thread at boot, and the answer is the file's LAST turn marker, so the file is
+ *  read from its end, a window at a time. */
 export function antigravityTurnOpen(path: string): boolean {
+  let fd: number
+  try { fd = openSync(path, "r") } catch { return false }
+  try {
+    const size = fstatSync(fd).size
+    for (let window = 64 * 1024; ; window *= 8) {
+      const start = Math.max(0, size - window)
+      const buffer = Buffer.alloc(size - start)
+      readSync(fd, buffer, 0, buffer.length, start)
+      const lines = buffer.toString("utf8").split("\n")
+      // A window that does not reach the start of the file opens on the tail of a line: skip it.
+      for (let i = lines.length - 1; i >= (start === 0 ? 0 : 1); i--) {
+        const line = lines[i]!
+        if (!line.includes('"turn-start"') && !line.includes('"turn-end"')) continue
+        const rec = parseAcpRecord(line)
+        if (rec?.kind === "turn-start") return true
+        if (rec?.kind === "turn-end") return false
+      }
+      if (start === 0) return false
+    }
+  } catch { return false } finally { closeSync(fd) }
+}
+
+export interface AntigravityKnownCalls {
+  /** Calls that have their result, oldest first. */
+  settled: string[]
+  /** Calls with no result yet. `inOpenTurn`: made in the turn the file leaves open. */
+  open: Array<{ id: string; name: string; background: boolean; inOpenTurn: boolean }>
+}
+
+/** The tool calls a transcript already holds. A bridge reattaching to a running agent starts from
+ *  these: a call that spans the restart is settled where it was written, and a closing frame the daemon
+ *  replays for a call that has its result is not a new call. */
+export function antigravityToolCalls(path: string): AntigravityKnownCalls {
   let text: string
-  try { text = readFileSync(path, "utf8") } catch { return false }
-  let open = false
+  try { text = readFileSync(path, "utf8") } catch { return { settled: [], open: [] } }
+  const settled: string[] = []
+  const open = new Map<string, { id: string; name: string; background: boolean; turn: number }>()
+  let turn = 0
+  let turnOpen = false
   for (const line of text.split("\n")) {
-    if (!line.includes('"turn-start"') && !line.includes('"turn-end"')) continue
+    if (!line.includes('"tool-call"') && !line.includes('"tool-result"') && !line.includes('"turn-start"') && !line.includes('"turn-end"')) continue
     const rec = parseAcpRecord(line)
-    if (rec?.kind === "turn-start") open = true
-    else if (rec?.kind === "turn-end") open = false
+    if (!rec) continue
+    if (rec.kind === "turn-start") { turn++; turnOpen = true }
+    else if (rec.kind === "turn-end") turnOpen = false
+    else if (rec.kind === "tool-call") open.set(rec.id, { id: rec.id, name: rec.name, background: (rec.input as { run_in_background?: unknown } | null | undefined)?.run_in_background === true, turn })
+    else if (rec.kind === "tool-result") { open.delete(rec.id); settled.push(rec.id) }
   }
-  return open
+  return { settled, open: [...open.values()].map(({ turn: madeIn, ...call }) => ({ ...call, inOpenTurn: turnOpen && madeIn === turn })) }
 }
 
 export function projectAntigravityTranscript(raw: string, identityPrefix: string, buildCards: OpencodeToolCardBuilder, userProjector?: AcpUserRecordProjector): TranscriptMessage[] {

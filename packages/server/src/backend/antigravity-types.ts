@@ -19,8 +19,10 @@ function clip(text: string, max: number): string { return text.length > max ? `$
 
 /** `agy acp`'s arguments for a thread in `mode`. Bypass is a LAUNCH flag, not a session mode: it is the
  *  only setting that lifts the terminal sandbox, so moving a thread to or from it restarts the agent. */
+export const ANTIGRAVITY_BYPASS_FLAG = "--dangerously-skip-permissions"
+
 export function antigravityLaunchArgs(mode: PermissionMode | null | undefined): string[] {
-  return mode === "bypassPermissions" ? ["acp", "--dangerously-skip-permissions"] : ["acp"]
+  return mode === "bypassPermissions" ? ["acp", ANTIGRAVITY_BYPASS_FLAG] : ["acp"]
 }
 
 /** The session mode (`mode` config option) a Frizz permission mode asks for. Under the bypass flag the
