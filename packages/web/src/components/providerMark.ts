@@ -4,13 +4,13 @@ import { acpAgentIdFromModel } from "@frizz/shared"
  *  mark per ACP agent Frizz has a CC0 glyph for. `acp:<id>` keys match the catalogue ids in
  *  packages/server/src/backend/acp-agents.ts. */
 export type ProviderMarkKey =
-  | "claude" | "codex" | "acp"
+  | "claude" | "codex" | "acp" | "antigravity"
   | "acp:opencode" | "acp:cursor" | "acp:gemini" | "acp:copilot" | "acp:qwen" | "acp:kimi"
 
 export interface ProviderMarkDefinition {
   key: ProviderMarkKey
   /** Backend value carried on a known, owned thread. */
-  backend: "claude" | "codex" | "acp"
+  backend: "claude" | "codex" | "acp" | "antigravity"
   /** Exposed to assistive technology because the mark is the provider cue. */
   label: string
 }
@@ -34,6 +34,8 @@ export const PROVIDER_MARK_GEOMETRY: Record<ProviderMarkKey, string> = {
   // height, riding 0.92px HIGH of the cap band before `translate-y-px` — the same 1px drop the Claude
   // asterisk needs.
   acp: "h-[11px] w-[6.65px] translate-y-px",
+  // The Gemini spark, with the geometry measured for it below.
+  antigravity: "size-[10px]",
   // The brand marks take the Codex knot's treatment (a 10px box, no baseline nudge) and read the SAME
   // residual as it on the rail's font: ink centre 0.42px above the cap band's in 13px system-ui, 0.85px
   // in the mono UI font — sub-pixel, and identical to the mark they sit beside, so left alone. Ink
@@ -55,6 +57,7 @@ const PROVIDER_MARKS: Record<ProviderMarkKey, ProviderMarkDefinition> = {
   // The generic mark for an ACP agent Frizz has no brand glyph for (Grok Build, pi, Kilo):
   // the protocol is the identity Frizz can vouch for, the agent is named in the profile readout.
   acp: { key: "acp", backend: "acp", label: "ACP agent" },
+  antigravity: { key: "antigravity", backend: "antigravity", label: "Antigravity" },
   "acp:opencode": { key: "acp:opencode", backend: "acp", label: "OpenCode" },
   "acp:cursor": { key: "acp:cursor", backend: "acp", label: "Cursor agent" },
   "acp:gemini": { key: "acp:gemini", backend: "acp", label: "Gemini CLI" },
@@ -71,6 +74,7 @@ function isMarkKey(key: string): key is ProviderMarkKey { return Object.hasOwn(P
 export function providerMarkFor(backend: string | null | undefined, model?: string | null): ProviderMarkDefinition | undefined {
   if (backend === "claude" || backend === "codex") return PROVIDER_MARKS[backend]
   if (backend === "opencode") return PROVIDER_MARKS["acp:opencode"]
+  if (backend === "antigravity") return PROVIDER_MARKS.antigravity
   if (backend !== "acp") return undefined
   const agent = acpAgentIdFromModel(model)
   const key = agent ? `acp:${agent}` : "acp"
@@ -83,6 +87,7 @@ export function providerNameFor(backend: string | null | undefined, model?: stri
   if (backend === "codex") return "Codex"
   if (backend === "claude") return "Claude"
   if (backend === "opencode") return "OpenCode"
+  if (backend === "antigravity") return "Antigravity"
   if (backend !== "acp") return "Agent"
   const agent = acpAgentIdFromModel(model)
   const key = agent ? `acp:${agent}` : "acp"

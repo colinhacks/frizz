@@ -2276,6 +2276,110 @@ test("Mark as done on an idle ACP thread whose agent is alive asks first, then r
   } finally { h.storage.close() }
 })
 
+// ---- AN ANTIGRAVITY THREAD ----
+// Its bridge is ACP's transport with a different turn (backend/antigravity-bridge.ts): a follow-up joins a
+// running turn instead of waiting for it, the profile is a model and a thinking level the live session
+// takes at once, and one of its permission modes is a launch flag. These pin what the router does at each
+// seam; the bridge itself is tested against a fake `agy`, and against the real one in _live_antigravity.mts.
+function antigravityHarness(turn: "idle" | "in-flight" = "idle") {
+  const tailer = { ...noopTailer, get: () => ({ turn, subAgents: [], lastAssistantAt: "2026-01-01T00:00:00.000Z" }) as never }
+  const h = harness(tailer)
+  const slug = "agy-thread"
+  h.storage.upsertSession({ ...row(slug), exited: 0 })
+  h.storage.setBackend(slug, "antigravity")
+  h.storage.setProfile(slug, "antigravity:gemini-3.8-flash", "low")
+  h.storage.setPermissionMode(slug, "bypassPermissions")
+  h.storage.setAgentSession(slug, "agy-1")
+  h.addExitedThread(slug)
+  const calls: Array<[string, unknown]> = []
+  const bridge = {
+    answers: { followUp: { agySessionId: "agy-1", state: "steered", resumed: "live" } as Record<string, unknown>, setProfile: { applied: true } as Record<string, unknown> },
+    followUp: async (input: unknown) => { calls.push(["followUp", input]); return bridge.answers.followUp },
+    setProfile: async (_slug: string, _sessionId: string, profile: unknown) => { calls.push(["setProfile", profile]); return bridge.answers.setProfile },
+    interruptTurn: async (...args: unknown[]) => { calls.push(["interruptTurn", args]); return { interrupted: true } },
+    commands: () => [{ name: "compact", description: "Compact the conversation" }],
+    models: async (_cwd: string, opts: unknown) => { calls.push(["models", opts]); return { available: true, models: [{ id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", efforts: ["low"] }] } },
+    bin: () => "/usr/local/bin/agy" as string | undefined,
+    isEnding: () => false,
+    isAgentAlive: () => true,
+    turnLiveness: () => ({ sessionLive: true, turnActive: turn === "in-flight", autonomous: false }),
+    endSession: async () => {},
+  }
+  ;(h.ctx as { antigravityBridge?: unknown }).antigravityBridge = bridge
+  return { h, slug, calls, bridge, sessionId: `sid-${slug}` }
+}
+
+test("a message sent mid-turn on an Antigravity thread goes straight to its agent, on the thread's own profile", async () => {
+  const { h, slug, sessionId, calls, bridge } = antigravityHarness("in-flight")
+  try {
+    bridge.answers.followUp = { agySessionId: "agy-2", state: "steered", resumed: "fresh" }
+    await h.router.followUp.handler({ input: { slug, sessionId, message: "also check the tests", deliveryId: "d-1" } })
+    assert.equal(calls.length, 1, "nothing is held for the turn's end: the prompt joins the turn")
+    const sent = calls[0]![1] as Record<string, unknown>
+    assert.match(sent.text as string, /^also check the tests/)
+    assert.deepEqual(
+      { threadSlug: sent.threadSlug, sessionId: sent.sessionId, agySessionId: sent.agySessionId, modelId: sent.modelId, effort: sent.effort, permissionMode: sent.permissionMode, deliveryId: sent.deliveryId },
+      { threadSlug: slug, sessionId, agySessionId: "agy-1", modelId: "gemini-3.8-flash", effort: "low", permissionMode: "bypassPermissions", deliveryId: "d-1" },
+    )
+    assert.deepEqual(parseDeliveryLedger(h.storage.getSession(slug)?.delivery_ledger).map((item) => [item.id, item.state]), [["d-1", "delivered"]])
+    assert.equal(h.storage.getSession(slug)?.agent_session_id, "agy-2", "a session the bridge had to start afresh is re-pinned")
+  } finally { h.storage.close() }
+})
+
+test("an Antigravity thread's permission change is stored first, and says whether the agent took it or restarts for it", async () => {
+  const { h, slug, calls, bridge } = antigravityHarness()
+  try {
+    assert.deepEqual(await h.router.setThreadPermission.handler({ input: { slug, permissionMode: "acceptEdits" } }), { effect: "applied" })
+    assert.equal(h.storage.getSession(slug)?.permission_mode, "acceptEdits")
+    assert.deepEqual(calls.at(-1), ["setProfile", { modelId: "gemini-3.8-flash", effort: "low", permissionMode: "acceptEdits" }])
+    // Bypass is a launch flag: the bridge restarts the agent for it, and the answer is "next turn".
+    bridge.answers.setProfile = { applied: true, restarting: true }
+    assert.deepEqual(await h.router.setThreadPermission.handler({ input: { slug, permissionMode: "bypassPermissions" } }), { effect: "next-turn" })
+    // No live session: the stored mode is what the next open launches on.
+    bridge.answers.setProfile = { applied: false }
+    assert.deepEqual(await h.router.setThreadPermission.handler({ input: { slug, permissionMode: "plan" } }), { effect: "next-resume" })
+    assert.equal(h.storage.getSession(slug)?.permission_mode, "plan")
+  } finally { h.storage.close() }
+})
+
+test("an Antigravity thread's model and thinking level change on the live session, and the row records what it kept", async () => {
+  const { h, slug, calls, bridge } = antigravityHarness()
+  try {
+    // The agent kept its own level for a model that takes none: the row says none, not the one asked for.
+    bridge.answers.setProfile = { applied: true, model: "claude-sonnet-4-6" }
+    assert.deepEqual(await h.router.setThreadProfile.handler({ input: { slug, model: "antigravity:claude-sonnet-4-6", effort: "high" } }), { effect: "applied" })
+    assert.deepEqual(calls.at(-1), ["setProfile", { modelId: "claude-sonnet-4-6", effort: "high", permissionMode: "bypassPermissions" }])
+    assert.deepEqual([h.storage.getSession(slug)?.model, h.storage.getSession(slug)?.effort], ["antigravity:claude-sonnet-4-6", ""])
+    // A level-less pick is the model's own default, and needs no effort at all.
+    bridge.answers.setProfile = { applied: true, model: "gemini-3.8-flash", effort: "high" }
+    assert.deepEqual(await h.router.setThreadProfile.handler({ input: { slug, model: "antigravity:gemini-3.8-flash" } }), { effect: "applied" })
+    assert.deepEqual([h.storage.getSession(slug)?.model, h.storage.getSession(slug)?.effort], ["antigravity:gemini-3.8-flash", "high"])
+    // With no live session the pick is stored as asked, for the next open.
+    bridge.answers.setProfile = { applied: false }
+    assert.deepEqual(await h.router.setThreadProfile.handler({ input: { slug, model: "antigravity:gemini-3.8-flash", effort: "medium" } }), { effect: "next-resume" })
+    assert.equal(h.storage.getSession(slug)?.effort, "medium")
+    await assert.rejects(h.router.setThreadProfile.handler({ input: { slug, model: "opus", effort: "high" } }), /Pick a model Antigravity lists/)
+  } finally { h.storage.close() }
+})
+
+test("an Antigravity thread's turn can be stopped, its slash commands are its agent's, and its models are asked of agy", async () => {
+  const { h, slug, sessionId, calls, bridge } = antigravityHarness("in-flight")
+  try {
+    await h.router.stopThreadTurn.handler({ input: { slug, sessionId } })
+    assert.deepEqual(calls.at(-1), ["interruptTurn", [slug, sessionId]])
+    const skills = await h.router.threadSkills.handler({ input: { slug } })
+    assert.deepEqual(skills.skills.map((skill: { name: string }) => skill.name), ["compact"])
+    // Whether agy is installed is answered without starting it; the list itself is the bridge's probe.
+    assert.deepEqual(await h.router.antigravityModels.handler({ input: { installedOnly: true } }), { available: true, models: [] })
+    assert.equal(calls.some(([name]) => name === "models"), false)
+    bridge.bin = () => undefined
+    assert.deepEqual(await h.router.antigravityModels.handler({ input: { installedOnly: true } }), { available: false, models: [] })
+    const listed = await h.router.antigravityModels.handler({ input: { refresh: true } })
+    assert.deepEqual(calls.at(-1), ["models", { refresh: true }])
+    assert.equal(listed.models[0]!.id, "gemini-3.8-flash")
+  } finally { h.storage.close() }
+})
+
 // ---- A MESSAGE WAITING ON AN ACP THREAD ----
 // ACP has no steer, so a message sent mid-turn waits, and it has to survive whatever ends that turn:
 // a stop opens the next turn on a new agent, and Mark as done leaves it visibly failed.

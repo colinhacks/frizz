@@ -319,7 +319,9 @@ export const AntigravityModels = z.object({
   error: z.string().optional(),
 })
 export type AntigravityModels = z.infer<typeof AntigravityModels>
-export const AntigravityModelsInput = z.object({ refresh: z.boolean().optional() }).strict()
+/** `installedOnly` asks whether `agy` is on the server's PATH and nothing else: the answer starts no CLI
+ *  and lists no models, so a model menu may ask it on every open. */
+export const AntigravityModelsInput = z.object({ refresh: z.boolean().optional(), installedOnly: z.boolean().optional() }).strict()
 export type AntigravityModelsInput = z.infer<typeof AntigravityModelsInput>
 
 /** One model OpenCode offers (`GET /api/model`), as the composer's picker reads it. `variants` is the

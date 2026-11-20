@@ -46,7 +46,7 @@ const NEW_THREAD_MARKS = <NewThreadAgentMarks />
 // preview — only the layout around them differs.
 function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, agentMarks?: ReactNode) {
   // The one durable new-thread profile, shared with the GitHub picker's own selector.
-  const { resolved, codexList, claudeList, acpList, opencodeInstalled, opencodeProfile, firstGroup, signedOut, opencode, acp, loadError: profileLoadError, saveProfile } = useDispatchProfile()
+  const { resolved, codexList, claudeList, acpList, opencodeInstalled, opencodeProfile, firstGroup, signedOut, opencode, acp, antigravity, loadError: profileLoadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — a compaction window picked in the model picker a moment ago —
   // must land before a dispatch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
@@ -188,6 +188,10 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         showToast("OpenCode signs in through its own CLI: run `opencode auth login`")
         return
       }
+      if (resolved.backend === "antigravity") {
+        showToast("Antigravity signs in through its own CLI: run `agy` and sign in there")
+        return
+      }
       if (alias === "login") {
         gatedInputRef.current = null // nothing to dispatch after sign-in — this is a pure account action
         setSignInFor(resolved.backend)
@@ -217,7 +221,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
     // Auth gate: block ONLY on a positive "signed-out" for this dispatch's backend. Loading/unknown/
     // authed all fall through (fail open) so a flaky or slow read never blocks a logged-in user. An ACP
     // agent has no account here at all — its own CLI reports a missing login on the first prompt.
-    if (resolved.backend !== "acp" && resolved.backend !== "opencode" && authStatus.data?.[resolved.backend] === "signed-out" && !settings.data?.launchPrefix?.[resolved.backend]?.trim()) {
+    if (resolved.backend !== "acp" && resolved.backend !== "opencode" && resolved.backend !== "antigravity" && authStatus.data?.[resolved.backend] === "signed-out" && !settings.data?.launchPrefix?.[resolved.backend]?.trim()) {
       gatedInputRef.current = input
       setSignInFor(resolved.backend)
       return
@@ -248,7 +252,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </PromptControlGroup>
       )
     }
-    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp)
+    const profileGroups = dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp, antigravity)
     const showPermission = permissionMode !== null && resolved.backend === "claude" && !isMobile
     return (
       // `gap-1.5` for the phone's tool row, where the project chip and the model chip stand side by side
@@ -297,7 +301,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
         </div>
       </div>
     )
-  }, [resolved, codexList, claudeList, acpList, firstGroup, signedOut, opencode, acp, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
+  }, [resolved, codexList, claudeList, acpList, firstGroup, signedOut, opencode, acp, antigravity, profileLoadError, saveProfile, projectPicker, agentMarks, permissionMode, isMobile, changePermission])
 
   const accountModals = (
     <>

@@ -2,6 +2,7 @@ import {
   acpAgentIdFromModel,
   acpModelIdFromModel,
   acpModelSlug,
+  ANTIGRAVITY_MODEL_PREFIX,
   OPENCODE_MODEL_PREFIX,
   opencodeModelSlug,
   type AcpAgent,
@@ -15,6 +16,7 @@ import type { SelectGroup, SelectOption } from "../components/ui/Select.tsx"
 import type { ProfileGridGroup, ProfileGridSelection } from "./profileGrid.ts"
 import { opencodeProfileGroup, opencodeSelection, opencodeSlugOf } from "./opencodeProfile.ts"
 import { acpProfileGroup, acpSelection, isAcpGroupId } from "./acpProfile.ts"
+import { antigravityProfileGroup, antigravitySelection } from "./antigravityProfile.ts"
 import type { AcpAgentModelLists } from "../hooks/useAcpAgentModels.ts"
 import {
   CLAUDE_MODELS,
@@ -48,12 +50,14 @@ export interface ResolvedDispatchPreferences {
 // and an ACP agent's group is the agent itself (lib/acpProfile.ts).
 export function dispatchProfileValue(resolved: ResolvedDispatchPreferences): ProfileGridSelection {
   if (resolved.backend === "opencode") return opencodeSelection(resolved.opencodeModel)
+  if (resolved.backend === "antigravity") return antigravitySelection(resolved.model, resolved.effort)
   if (resolved.backend === "acp") return acpSelection(resolved.model)
   return { provider: resolved.backend, model: resolved.pickerModel, effort: resolved.effort }
 }
 
 // The preference write for a pick in the model menu. An ACP or OpenCode row carries no Frizz effort: an
-// ACP agent has none, and OpenCode's variant rides in its model slug.
+// ACP agent has none, and OpenCode's variant rides in its model slug. An Antigravity row's thinking level
+// is its effort, absent for the model's own default and on a model that takes none.
 export function dispatchProfileUpdate(selection: ProfileGridSelection): SetDispatchPreferenceInput {
   if (selection.provider === "opencode") return { field: "profile", backend: "opencode", model: opencodeSlugOf(selection) }
   if (isAcpGroupId(selection.provider)) return { field: "profile", backend: "acp", model: selection.model }
@@ -102,6 +106,9 @@ export function dispatchProfileGroups(
   signedOut: readonly string[] = [],
   // Each ACP agent's listed models (hooks/useAcpAgentModels.ts) and the saved slug, for its dropdown group.
   acp?: AcpAgentModelLists & { saved?: string },
+  // Antigravity's listed models and the saved profile, for its dropdown group (lib/antigravityProfile.ts).
+  // The group is there only when `agy` is installed.
+  antigravity?: Parameters<typeof antigravityProfileGroup>[0] & { installed: boolean },
 ): ProfileGridGroup[] {
   // Only the agents actually on the server's PATH get a row: the catalogue lists eight, and a grid of
   // "not installed" rows would bury the two the operator has. A SAVED agent that has since gone
@@ -144,6 +151,7 @@ export function dispatchProfileGroups(
       })),
     },
     ...(opencodeNative ? [opencodeProfileGroup(opencode ?? {})] : []),
+    ...(antigravity?.installed ? [antigravityProfileGroup(antigravity)] : []),
     ...acpGroups,
   ]
   return firstGroup ? [...groups.filter((group) => group.id === firstGroup), ...groups.filter((group) => group.id !== firstGroup)] : groups
@@ -153,6 +161,9 @@ export function resolveDispatchPreferences(
   preferences: DispatchPreferences,
   codexModels: readonly CodexModel[],
   acpAgents: readonly AcpAgent[] = [],
+  // Whether `agy` is on the server's PATH (hooks/useAntigravityModels.ts), which is what makes a saved
+  // Antigravity profile one a thread can start on.
+  antigravityInstalled = false,
 ): ResolvedDispatchPreferences {
   // A profile saved when OpenCode ran over ACP becomes the native one once this machine can run that,
   // keeping the model it named. A thread already running over ACP stays there: this is only what the
@@ -162,7 +173,7 @@ export function resolveDispatchPreferences(
     const inner = acpModelIdFromModel(preferences.acp?.model)
     const slash = inner?.indexOf("/") ?? -1
     const model = inner && slash > 0 ? opencodeModelSlug({ providerID: inner.slice(0, slash), id: inner.slice(slash + 1) }) : OPENCODE_MODEL_PREFIX
-    return resolveDispatchPreferences({ ...preferences, backend: "opencode", opencode: { ...preferences.opencode, model } }, codexModels, acpAgents)
+    return resolveDispatchPreferences({ ...preferences, backend: "opencode", opencode: { ...preferences.opencode, model } }, codexModels, acpAgents, antigravityInstalled)
   }
   const backend = preferences.backend
   // `acp` is optional on the record (older rows predate it), so an ACP backend with no saved profile
@@ -173,7 +184,8 @@ export function resolveDispatchPreferences(
     backend === "claude" ? "opus"
       : backend === "codex" ? codexModels[0]?.slug ?? ""
         : backend === "opencode" ? OPENCODE_MODEL_PREFIX
-          : firstAcpAgent ? acpModelSlug(firstAcpAgent.id) : ""
+          : backend === "antigravity" ? ANTIGRAVITY_MODEL_PREFIX
+            : firstAcpAgent ? acpModelSlug(firstAcpAgent.id) : ""
   )
   const codexModel = backend === "codex"
     ? codexModels.find((candidate) => candidate.slug === model)
@@ -189,18 +201,23 @@ export function resolveDispatchPreferences(
       ? codexModels.some((candidate) => candidate.slug === model)
       : backend === "opencode"
         ? acpAgents.some((candidate) => candidate.native === true && candidate.available)
-        : acpAgents.some((candidate) => candidate.available && candidate.id === acpAgentId)
+        : backend === "antigravity"
+          // The model inside it is the agent's to honour or refuse, as an ACP agent's is.
+          ? antigravityInstalled
+          : acpAgents.some((candidate) => candidate.available && candidate.id === acpAgentId)
   const opencodeModel = backend === "opencode" ? model : undefined
   const defaultEffort = backend === "claude" ? "high" : codexModel?.defaultEffort ?? ""
   // An ACP agent has no effort axis in Frizz — it runs on its own CLI's model and effort — so its
   // effort is "" and always "available": there is nothing to be unavailable.
-  const effort = backend === "acp" || backend === "opencode" ? "" : profile.effort ?? defaultEffort
+  // Antigravity's effort is its thinking level, whose choices are each model's own and come from the agent
+  // (lib/antigravityProfile.ts): "" is the model's default, and no fixed ladder can call a level unavailable.
+  const effort = backend === "acp" || backend === "opencode" ? "" : backend === "antigravity" ? profile.effort ?? "" : profile.effort ?? defaultEffort
   const baseEfforts = backend === "claude"
     ? claudeEffortOptions(model, { withDefault: false })
     : backend === "codex"
       ? codexEffortOptions(codexModel, { withDefault: false })
       : []
-  const effortAvailable = backend === "acp" || backend === "opencode" || baseEfforts.some((option) => option.value === effort)
+  const effortAvailable = backend === "acp" || backend === "opencode" || backend === "antigravity" || baseEfforts.some((option) => option.value === effort)
   const effortOptions = effort && !effortAvailable
     ? [{ value: effort, label: `${effort} (unavailable)`, title: "Saved reasoning level is not available for this model" }, ...baseEfforts]
     : baseEfforts
@@ -228,7 +245,7 @@ export function dispatchModelGroups(
   const groups = modelGroups(codexModels, { withDefault: false }, claudeModels)
   if (!selectedModel || groups.some((group) => group.options.some((option) => option.value === selectedModel))) return groups
   const unavailable: SelectGroup = {
-    label: backend === "codex" ? "Saved Codex model" : backend === "acp" ? "Saved ACP agent" : backend === "opencode" ? "Saved OpenCode model" : "Saved Claude model",
+    label: backend === "codex" ? "Saved Codex model" : backend === "acp" ? "Saved ACP agent" : backend === "opencode" ? "Saved OpenCode model" : backend === "antigravity" ? "Saved Antigravity model" : "Saved Claude model",
     options: [{ value: selectedModel, label: `${selectedModel} (unavailable)`, title: "This saved model is no longer in the runtime catalogue" }],
   }
   return [unavailable, ...groups]

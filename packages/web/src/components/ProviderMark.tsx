@@ -30,6 +30,9 @@ const MARKS: Record<ProviderMarkKey, () => ReactElement> = {
   claude: ClaudeMark,
   codex: OpenAIMark,
   acp: AcpMark,
+  // Antigravity is Google's agent and Simple Icons has no glyph of its own for it, so it wears Gemini's,
+  // the mark Google's other CLI wears here. The label says which of the two a thread is.
+  antigravity: GeminiMark,
   "acp:opencode": OpenCodeMark,
   "acp:cursor": CursorMark,
   "acp:gemini": GeminiMark,

@@ -17,7 +17,12 @@ export function dispatchProfileError(
   profile: DispatchProfileSnapshot,
   codexModels: readonly CodexModel[],
   acpAgents: readonly AcpAgent[] = [],
+  antigravityInstalled = false,
 ): string | undefined {
+  if (profile.backend === "antigravity") {
+    // The model and its thinking level are the agent's to honour, as an ACP agent's model is.
+    return antigravityInstalled ? undefined : "Antigravity is not installed on this machine"
+  }
   if (profile.backend === "opencode") {
     return acpAgents.some((agent) => agent.native && agent.available) ? undefined : "OpenCode 2 is not installed on this machine"
   }

@@ -174,6 +174,7 @@ export function interactionProviderLabel(kind: InteractionProvider["kind"]): str
     case "codex": return "Codex"
     case "acp": return "ACP agent"
     case "opencode": return "OpenCode"
+    case "antigravity": return "Antigravity"
     case "frizz": return "Frizz"
   }
 }

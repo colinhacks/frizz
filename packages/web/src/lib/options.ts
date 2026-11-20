@@ -1,4 +1,4 @@
-import { ACP_MODEL_PREFIX, CODEX_MODELS_FALLBACK, OPENCODE_MODEL_PREFIX, PermissionMode, type Backend, type ClaudeModel, type CodexModel } from "@frizz/shared"
+import { ACP_MODEL_PREFIX, ANTIGRAVITY_MODEL_PREFIX, CODEX_MODELS_FALLBACK, OPENCODE_MODEL_PREFIX, PermissionMode, type Backend, type ClaudeModel, type CodexModel } from "@frizz/shared"
 export { CODEX_MODELS_FALLBACK } from "@frizz/shared"
 import type { SelectOption, SelectGroup } from "../components/ui/Select.tsx"
 
@@ -107,6 +107,18 @@ export function claudeModelOptions(claudeModels: readonly ClaudeModel[] = []): S
 // with whatever live list a caller passes.
 const FALLBACK_CODEX_SLUGS = new Set(CODEX_MODELS_FALLBACK.map((m) => m.slug))
 
+// An Antigravity thread's five modes (ARCHITECTURE.md § Antigravity backend), in `agy`'s own terms. New
+// threads start in bypass: `agy` runs every command in a sandbox otherwise, which in `auto` cuts the worker
+// off from Frizz with nothing to approve. Ask and Accept edits raise a card per command instead, and the
+// sandbox lifts for the ones that are allowed.
+export const ANTIGRAVITY_PERMISSION_OPTIONS: SelectOption[] = [
+  { value: "bypassPermissions", label: "Bypass", title: "Nothing asks, and commands run outside Antigravity's sandbox. What new threads start in." },
+  { value: "default", label: "Ask", title: "Asks before each command and file edit." },
+  { value: "acceptEdits", label: "Accept edits", title: "Edits go through. Commands still ask." },
+  { value: "auto", label: "Auto", title: "Antigravity decides what runs, inside its sandbox. The sandbox cuts the worker off from Frizz's own commands (timers, watches, done)." },
+  { value: "plan", label: "Plan", title: "Runs in Antigravity's plan mode, which doesn't edit." },
+]
+
 // The backend a model id runs on — the model→backend derivation the whole picker keys off. An `acp:<id>`
 // slug ⇒ "acp" (an ACP agent IS the model there); a slug in the codex catalogue ⇒ "codex"; anything
 // else (a Claude alias, "", or an unknown) ⇒ "claude" (the default).
@@ -116,6 +128,7 @@ export function backendForModel(model: string | undefined, codexModels?: readonl
   if (!model) return "claude"
   if (model.startsWith(ACP_MODEL_PREFIX)) return "acp"
   if (model.startsWith(OPENCODE_MODEL_PREFIX)) return "opencode"
+  if (model.startsWith(ANTIGRAVITY_MODEL_PREFIX)) return "antigravity"
   if (FALLBACK_CODEX_SLUGS.has(model)) return "codex"
   return codexModels?.some((m) => m.slug === model) ? "codex" : "claude"
 }

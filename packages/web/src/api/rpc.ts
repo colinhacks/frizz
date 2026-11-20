@@ -119,6 +119,7 @@ export const PROJECT_SCOPED_PROCEDURES: ReadonlySet<string> = new Set([
   "acpAgents",
   "acpAgentModels",
   "opencodeModels",
+  "antigravityModels",
   // Names its threads in a list, not by a keyed `slug`, so the key cannot route it: the Console makes
   // one call per project through `rpcFor` (lib/consoleBoard.ts reorderConsolePins).
   "reorderConsolePinnedThreads",

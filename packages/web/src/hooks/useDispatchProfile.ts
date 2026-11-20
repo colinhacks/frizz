@@ -9,6 +9,8 @@ import { settingsQuery } from "./useSettingsAutosave.tsx"
 import { useOpencodeModels } from "./useOpencodeModels.ts"
 import { useAcpAgentModels, type AcpAgentModelLists } from "./useAcpAgentModels.ts"
 import type { opencodeProfileGroup } from "../lib/opencodeProfile.ts"
+import { useAntigravityInstalled, useAntigravityModels } from "./useAntigravityModels.ts"
+import type { antigravityProfileGroup } from "../lib/antigravityProfile.ts"
 import {
   applyDispatchPreferenceUpdate,
   resolveDispatchPreferences,
@@ -46,6 +48,10 @@ export function useDispatchProfile(): {
   // The same for each ACP agent's group: its listed models, read only once that agent is chosen or its
   // list is opened (hooks/useAcpAgentModels.ts), and the saved slug.
   acp: AcpAgentModelLists & { saved?: string }
+  // The same for Antigravity's group, which the menu has only when `agy` is installed: its listed models,
+  // read only once Antigravity is chosen or its list is opened (hooks/useAntigravityModels.ts), and the
+  // saved profile.
+  antigravity: Parameters<typeof antigravityProfileGroup>[0] & { installed: boolean }
   loadError: boolean
   saveProfile: (update: SetDispatchPreferenceInput) => void
 } {
@@ -98,10 +104,15 @@ export function useDispatchProfile(): {
   // The ACP catalogue counts once it has SETTLED either way: a saved ACP profile must not read as
   // unavailable merely because the list is cold, and an older server that lacks the RPC must not block
   // the composer forever.
+  //
+  // A saved Antigravity profile waits the same way on whether `agy` is installed, and only that profile
+  // does: the answer changes nothing about any other.
+  const antigravityInstalled = useAntigravityInstalled(project)
   const controlsReady = !!preferences.data && !!codexModels.data && (acpAgents.isSuccess || acpAgents.isError)
+    && (preferences.data.backend !== "antigravity" || antigravityInstalled.settled)
   const resolved = useMemo(
-    () => controlsReady ? resolveDispatchPreferences(preferences.data!, codexList, acpList) : undefined,
-    [controlsReady, preferences.data, codexList, acpList],
+    () => controlsReady ? resolveDispatchPreferences(preferences.data!, codexList, acpList, antigravityInstalled.installed) : undefined,
+    [controlsReady, preferences.data, codexList, acpList, antigravityInstalled.installed],
   )
 
   const opencodeModels = useOpencodeModels(project, resolved?.backend === "opencode")
@@ -111,6 +122,18 @@ export function useDispatchProfile(): {
     saved: resolved?.opencodeModel,
     onRequestOptions: opencodeModels.request,
   }), [opencodeModels.models, opencodeModels.loading, opencodeModels.request, resolved?.opencodeModel])
+
+  const antigravityChosen = resolved?.backend === "antigravity"
+  const antigravityModels = useAntigravityModels(project, antigravityChosen)
+  const antigravitySavedModel = antigravityChosen ? resolved.model : undefined
+  const antigravitySavedEffort = antigravityChosen ? resolved.effort : undefined
+  const antigravity = useMemo(() => ({
+    installed: antigravityInstalled.installed,
+    models: antigravityModels.models,
+    loading: antigravityModels.loading,
+    ...(antigravitySavedModel !== undefined ? { saved: { model: antigravitySavedModel, effort: antigravitySavedEffort } } : {}),
+    onRequestOptions: antigravityModels.request,
+  }), [antigravityInstalled.installed, antigravityModels.models, antigravityModels.loading, antigravityModels.request, antigravitySavedModel, antigravitySavedEffort])
 
   const acpAgentIds = useMemo(() => acpList.filter((agent) => agent.available && !agent.native).map((agent) => agent.id), [acpList])
   const acpModels = useAcpAgentModels(project, acpAgentIds, resolved?.backend === "acp" ? resolved.acpAgentId : undefined)
@@ -135,6 +158,7 @@ export function useDispatchProfile(): {
     signedOut,
     opencode,
     acp,
+    antigravity,
     loadError: preferences.isError || codexModels.isError,
     saveProfile: preference.mutate,
   }

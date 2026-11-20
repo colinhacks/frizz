@@ -4769,7 +4769,7 @@ export function ProviderFaultCard({
 export function LimitPauseCard({ slug, sessionId, pause }: { slug: string; sessionId: string | undefined; pause: NonNullable<ThreadViewData["limitPause"]> }) {
   // Only Claude and Codex report a limit window Frizz can read; an ACP agent's limits stay inside its
   // own CLI, so a pause attributed to one is labelled generically rather than crashing on the lookup.
-  const label = pause.backend === "acp" ? "The agent" : pause.backend === "opencode" ? "OpenCode" : PROVIDER_LABEL[pause.backend]
+  const label = pause.backend === "acp" ? "The agent" : pause.backend === "opencode" ? "OpenCode" : pause.backend === "antigravity" ? "Antigravity" : PROVIDER_LABEL[pause.backend]
   // The window is keyed "session", but it is labelled the way the provider's line above the card names
   // it: Claude Code calls it the "5-hour limit" since 2.1.312 ("session limit" before).
   const which = pause.window === "weekly" ? "weekly limit" : pause.window === "session" ? "5-hour limit" : "usage limit"

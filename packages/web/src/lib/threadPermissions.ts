@@ -56,7 +56,9 @@ export function threadPermissionBlockedReason(thread: ThreadPermissionState): st
   // An ACP thread has no permission axis at all (the agent's own CLI decides what it may do), so the
   // control never shows for it — the server refuses the RPC outright; never fence what cannot change.
   // OpenCode's rules are the session's own and take hold at the next tool call, turn or no turn.
-  if (thread.backend === "codex" || thread.backend === "acp" || thread.backend === "opencode") return null
+  // Antigravity's four modes are a session option it takes at once. Bypass is a launch flag there too,
+  // but its bridge waits for the turn to end before restarting the agent, so nothing needs fencing.
+  if (thread.backend === "codex" || thread.backend === "acp" || thread.backend === "opencode" || thread.backend === "antigravity") return null
   const unresolvedOps = [...(thread.subAgents ?? []), ...(thread.bgShells ?? [])].filter((op) => op.state === "running" || op.state === "stale").length
   if (unresolvedOps > 0) return `Wait for ${unresolvedOps} unresolved background operation${unresolvedOps === 1 ? "" : "s"}`
   if (thread.runtime === "running" || thread.runtime === "spawning") return "Wait for the current turn to finish"
@@ -83,14 +85,18 @@ export function threadFollowUpBlocked(thread: ThreadPermissionState): boolean {
 // to discover that by watching a cold resume replay.
 export function threadPermissionEffectMessage(
   effect: "applied" | "next-turn" | "next-resume",
-  backend: "claude" | "codex",
+  backend: "claude" | "codex" | "antigravity",
 ): string {
   const noun = backend === "codex" ? "Sandbox" : "Permissions"
   if (effect === "applied") return `${noun} applied to the live session`
   if (effect === "next-turn") {
+    // Antigravity's bypass is a launch flag, as Claude's is: its agent restarts once the turn in flight
+    // ends, and the session resumes on the new one.
     return backend === "codex"
       ? `${noun} applied — takes effect on the next turn`
-      : `${noun} saved — the worker restarts on the next turn`
+      : backend === "antigravity"
+        ? `${noun} saved — Antigravity restarts when this turn ends`
+        : `${noun} saved — the worker restarts on the next turn`
   }
   return `${noun} saved for the next resume`
 }

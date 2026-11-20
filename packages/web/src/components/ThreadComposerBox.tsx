@@ -257,6 +257,10 @@ function LocalThreadComposerBox({
         showToast("OpenCode signs in through its own CLI: run `opencode auth login`")
         return
       }
+      if (thread?.backend === "antigravity") {
+        showToast("Antigravity signs in through its own CLI: run `agy` and sign in there")
+        return
+      }
       const backend: AccountBackend = thread?.backend === "codex" ? "codex" : "claude"
       if (alias === "login") setSignInFor(backend)
       else setLogoutFor(backend)

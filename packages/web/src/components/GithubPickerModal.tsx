@@ -61,7 +61,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   // below writes it, so choosing here also becomes the composer's next default (one profile, not a
   // picker-local copy that silently diverges). A Codex cache refresh can invalidate the saved pair
   // while the picker is open; the final revalidation below then fails closed rather than downgrading.
-  const { resolved, codexList, claudeList, acpList, firstGroup, signedOut, opencode, acp, loadError, saveProfile } = useDispatchProfile()
+  const { resolved, codexList, claudeList, acpList, firstGroup, signedOut, opencode, acp, antigravity, loadError, saveProfile } = useDispatchProfile()
   // A settings write still in flight — the triage prompt just edited in the settings panel, a
   // compaction window picked in the selector — must land before a batch that would read it.
   const savingSettings = useIsMutating({ mutationKey: [...SETTINGS_WRITE_KEY] }) > 0
@@ -187,7 +187,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   const n = selected.size
   // Stable identity: ProfileGridSelector memoizes off `groups`, and this modal re-renders on every
   // row toggle.
-  const profileGroups = useMemo(() => dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp), [codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp])
+  const profileGroups = useMemo(() => dispatchProfileGroups(codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp, antigravity), [codexList, acpList, claudeList, firstGroup, opencode, signedOut, acp, antigravity])
   const profile: DispatchProfileSnapshot | undefined = resolved
     ? { backend: resolved.backend, model: resolved.model, effort: (resolved.effort || undefined) as DispatchProfileSnapshot["effort"] }
     : undefined
@@ -196,7 +196,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
   // `dispatchBlocked` also covers the merely-not-loaded-yet case — the selector's own "Profile
   // loading…" placeholder already says that, so it must not paint red.
   const profileError = profile
-    ? dispatchProfileError(profile, codexList, acpList)
+    ? dispatchProfileError(profile, codexList, acpList, antigravity.installed)
     : loadError
       ? "Could not load the model catalogue — reopen once it loads"
       : undefined
@@ -412,7 +412,7 @@ function GithubPicker({ onClose }: { onClose: () => void }) {
                 className="max-w-[min(21rem,60vw)]"
                 field
               />
-              {resolved?.backend === "opencode" && <ExperimentalChip className="shrink-0" />}
+              {(resolved?.backend === "opencode" || resolved?.backend === "antigravity") && <ExperimentalChip className="shrink-0" />}
             </GithubPromptPopover>
             <button
               disabled={n === 0 || dispatch.isPending || !!dispatchBlocked}

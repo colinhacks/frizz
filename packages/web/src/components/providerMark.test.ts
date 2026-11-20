@@ -48,3 +48,13 @@ test("a thread's provider has a name for a sentence, whichever agent it runs on"
   assert.equal(providerNameFor("acp", null), "Agent")
   assert.equal(providerNameFor(undefined), "Agent")
 })
+
+test("an Antigravity thread wears Gemini's spark under its own name, whatever model it runs", () => {
+  assert.deepEqual(providerMarkFor("antigravity", "antigravity:claude-sonnet-4-6"), { key: "antigravity", backend: "antigravity", label: "Antigravity" })
+  assert.deepEqual(providerMarkForBackend("antigravity"), providerMarkFor("antigravity", undefined))
+  assert.equal(providerNameFor("antigravity", "antigravity:gemini-3.8-flash"), "Antigravity")
+  assert.equal(PROVIDER_MARK_GEOMETRY.antigravity, PROVIDER_MARK_GEOMETRY["acp:gemini"], "the same glyph takes the same measured box")
+  const html = renderToStaticMarkup(createElement(ProviderMark, { backend: "antigravity", model: "antigravity:" }))
+  assert.match(html, /aria-label="Antigravity"/)
+  assert.equal(html.replace(/aria-label="[^"]*"/, ""), renderToStaticMarkup(createElement(ProviderMark, { backend: "acp", model: "acp:gemini" })).replace(/aria-label="[^"]*"/, ""))
+})

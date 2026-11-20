@@ -12,13 +12,15 @@ import { ProfileGridSelector } from "../components/ProfileGridSelector.tsx"
 import { AgentMarks } from "../components/AgentMarks.tsx"
 import { Select } from "../components/ui/Select.tsx"
 import { PromptControlGroup } from "../components/ui/PromptControlGroup.tsx"
-import { CLAUDE_DISPATCH_PERMISSION_OPTIONS, OPENCODE_PERMISSION_OPTIONS, claudePermValue } from "../lib/options.ts"
+import { ANTIGRAVITY_PERMISSION_OPTIONS, CLAUDE_DISPATCH_PERMISSION_OPTIONS, OPENCODE_PERMISSION_OPTIONS, claudePermValue } from "../lib/options.ts"
 import { threadProfileControlState } from "../lib/threadProfile.ts"
 import { useIsMobile } from "../lib/mobile.ts"
 import { opencodeProfileGroup, opencodeSelection, opencodeSlugOf } from "../lib/opencodeProfile.ts"
 import { useOpencodeModels } from "./useOpencodeModels.ts"
 import { acpProfileGroup, acpSelection } from "../lib/acpProfile.ts"
 import { useAcpAgentModels } from "./useAcpAgentModels.ts"
+import { antigravityProfileGroup, antigravitySelection } from "../lib/antigravityProfile.ts"
+import { useAntigravityModels } from "./useAntigravityModels.ts"
 
 // One control strip for every place a registered thread can be steered: the model/effort selector, and
 // — for a Claude thread — the Auto/Bypass permission picker beside it. This lives outside the component
@@ -68,7 +70,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
     mutationFn: (sessionId: string) => rpc.stopThreadTurn({ slug, sessionId }),
   })
   const localBusy = profile.isPending || permission.isPending || upgrade.isPending
-  const backend = thread?.backend === "codex" ? "codex" : thread?.backend === "acp" ? "acp" : thread?.backend === "opencode" ? "opencode" : "claude"
+  const backend = thread?.backend === "codex" ? "codex" : thread?.backend === "acp" ? "acp" : thread?.backend === "opencode" ? "opencode" : thread?.backend === "antigravity" ? "antigravity" : "claude"
   // An ACP thread's model slug is `acp:<agent>[@<model>]`. The AGENT cannot be swapped under a live
   // session, so the thread's menu holds that agent's group alone, and its one choice is the model inside
   // it; the agent's label names the group. The same catalogue query the dispatch composer runs; react-query
@@ -84,6 +86,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   // An OpenCode thread's model menu lists what its service offers, and an ACP thread's what its agent does.
   // Above the early return for the reason above.
   const opencodeModels = useOpencodeModels(agentsProject, Boolean(thread) && backend === "opencode")
+  const antigravityModels = useAntigravityModels(agentsProject, Boolean(thread) && backend === "antigravity")
   const threadAcpAgentId = backend === "acp" ? acpAgentIdFromModel(thread?.model?.trim()) : undefined
   const acpModels = useAcpAgentModels(agentsProject, threadAcpAgentId ? [threadAcpAgentId] : [], threadAcpAgentId)
 
@@ -152,6 +155,8 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
     profile.mutate(target, {
       onSuccess: (result) => showToast(backend === "acp"
         ? result.effect === "next-resume" ? "Model saved for the next resume" : "Model applied"
+        : backend === "antigravity"
+          ? result.effect === "next-resume" ? "Model and thinking level saved for the next resume" : "Model and thinking level applied to the session"
         : result.effect === "next-resume"
           ? "Model and effort saved for the next resume"
           : "Model and effort applied"),
@@ -245,6 +250,29 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
           className="max-w-[20rem]"
         />
       )}
+      {/* Antigravity's group alone, as OpenCode's above (lib/antigravityProfile.ts). Its thinking level is
+          the thread's effort, so the write carries it; "" is the model's own default. A live session takes
+          both at once, with a turn running or not. */}
+      {backend === "antigravity" && (
+        <ProfileGridSelector
+          groups={[antigravityProfileGroup({
+            models: antigravityModels.models,
+            loading: antigravityModels.loading,
+            saved: { model, effort },
+            onRequestOptions: antigravityModels.request,
+          })]}
+          value={antigravitySelection(model, effort)}
+          pending={pendingModel ? antigravitySelection(pendingModel, pendingEffort) : undefined}
+          onValueChange={(selection) => changeProfile({ model: selection.model, effort: selection.effort })}
+          ariaLabel="Thread model and effort"
+          menuAriaLabel="Choose Antigravity model and thinking level"
+          title="This thread's Antigravity model and thinking level"
+          disabled={busy}
+          compact
+          side="top"
+          className="max-w-[20rem]"
+        />
+      )}
     </>
   )
 
@@ -302,8 +330,28 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
                 className="shrink-0"
               />
             )}
+            {/* Antigravity's four session modes take at once. Bypass is a launch flag, so a move to or from
+                it restarts the agent, when the turn in flight ends, and the toast says which happened. */}
+            {backend === "antigravity" && (
+              <Select
+                variant="readout"
+                side="top"
+                value={permission.isPending ? (permission.variables as PermissionMode) : thread.permissionMode ?? "bypassPermissions"}
+                onValueChange={(v) => {
+                  permission.mutate(v as PermissionMode, {
+                    onSuccess: (result) => showToast(threadPermissionEffectMessage(result.effect, "antigravity")),
+                    onError: (e) => showToast(`Permission change failed: ${(e as Error).message.slice(0, 120)}`),
+                  })
+                }}
+                options={ANTIGRAVITY_PERMISSION_OPTIONS}
+                ariaLabel="Thread permission mode"
+                title="Ask, Accept edits, Auto and Plan apply to the session at once. A move to or from Bypass restarts Antigravity when the turn ends."
+                disabled={busy}
+                className="shrink-0"
+              />
+            )}
           </PromptControlGroup>
-          {backend === "opencode" && thread.runtime === "running" && thread.sessionId && (
+          {(backend === "opencode" || backend === "antigravity") && thread.runtime === "running" && thread.sessionId && (
             <button
               type="button"
               data-stop-turn
@@ -325,7 +373,7 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
           )}
           {/* Up: this box sits at the bottom of its surface. An ACP agent reports no quota, so no gauge. */}
           <AgentMarks
-            gauge={backend === "acp" || backend === "opencode" ? undefined : { backend, model }}
+            gauge={backend === "acp" || backend === "opencode" || backend === "antigravity" ? undefined : { backend, model }}
             mcp={{ slug }}
             side="top"
           />

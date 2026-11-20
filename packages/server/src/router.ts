@@ -5521,9 +5521,11 @@ export function createRouter(ctx: AppContext) {
     antigravityModels: query({
       input: AntigravityModelsInput.optional(),
       output: AntigravityModels,
-      handler: async ({ input }) => ctx.antigravityBridge
-        ? ctx.antigravityBridge.models(ctx.project.dir, { refresh: input?.refresh === true })
-        : { available: false, models: [], error: "The Antigravity bridge is unavailable" },
+      handler: async ({ input }) => {
+        if (!ctx.antigravityBridge) return { available: false, models: [], error: "The Antigravity bridge is unavailable" }
+        if (input?.installedOnly) return { available: ctx.antigravityBridge.bin() !== undefined, models: [] }
+        return ctx.antigravityBridge.models(ctx.project.dir, { refresh: input?.refresh === true })
+      },
     }),
     // The models one ACP agent advertises — read by opening a throwaway session in the project dir
     // (cached in the bridge), so it is a separate query the composer asks only once a model picker

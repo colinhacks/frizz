@@ -270,3 +270,24 @@ test("only a bypass Claude contract teaches monitors, and it routes outside-cond
     assert.match(prompt, /`frizzctl watch-issue`\.\n    For anything else stay ACTIVE/, backend)
   }
 })
+
+// Antigravity's variant is the ACP prose with its own harness section. Each line pinned here states
+// something measured on the real CLI that a worker would otherwise get wrong (plans/antigravity-backend.md).
+test("an Antigravity contract names its own tools, the Auto sandbox, and the turns it starts itself", () => {
+  const prompt = buildWorkerPrompt("antigravity")
+  assert.doesNotMatch(prompt, /\{\{FRIZZ_/)
+  assert.match(prompt, /You are an Antigravity session \(`agy`\) that Frizz drives over the Agent Client Protocol/)
+  assert.match(prompt, /run it\nwith `run_command`, exactly as written/)
+  assert.match(prompt, /a plain `frizzctl` call is\napproved for you/)
+  assert.match(prompt, /\*\*IN AUTO MODE YOUR SHELL IS SANDBOXED AND CANNOT REACH FRIZZ\.\*\*/)
+  assert.match(prompt, /Do not retry it and\ndo not work around the sandbox/)
+  assert.match(prompt, /`ask_question` reaches them\ntoo, as a card, but it holds your turn open/)
+  assert.match(prompt, /A sub-agent runs in the BACKGROUND: the call returns at once/)
+  assert.match(prompt, /never write one on an `agents:` or `shells:` line/)
+  assert.match(prompt, /A message the human sends while you are working joins the turn you are in/)
+  assert.match(prompt, /## Turns you start yourself/)
+  // It is not told what only another harness does: a Claude interrupt, a monitor, an MCP tool list.
+  assert.doesNotMatch(prompt, /cuts a tool call short/)
+  assert.doesNotMatch(prompt, /frizzctl monitor|monitors:/)
+  for (const other of ["claude", "codex", "acp", "opencode"] as const) assert.doesNotMatch(buildWorkerPrompt(other), /Antigravity|run_command/, other)
+})
