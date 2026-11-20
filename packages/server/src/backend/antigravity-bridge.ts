@@ -8,14 +8,14 @@ import { findOnPath } from "./acp-agents.ts"
 import { buildAcpPermissionInteraction } from "./acp-bridge.ts"
 import { daemonAcpHost, directAcpHost, liveAcpDaemonRecord, stopAcpDaemon, type AcpHost } from "./acp-host.ts"
 import { AcpConnection, AcpConnectionClosed, AcpRemoteError, AcpRequestError, spawnAcpChild, type AcpSpawn } from "./acp-rpc.ts"
-import { AcpTranscriptWriter } from "./acp-transcript.ts"
+import { AcpTranscriptWriter, acpOpenMessage, acpTurnOpen } from "./acp-transcript.ts"
 import {
   ACP_ERROR_AUTH_REQUIRED, ACP_ERROR_INTERNAL, ACP_ERROR_METHOD_NOT_FOUND, ACP_PROTOCOL_VERSION,
   AcpInitializeResult, AcpNewSessionResult, AcpPromptResult, AcpRequestPermissionParams, AcpSessionNotification, AcpSetConfigOptionResult,
   contentText, parseSessionUpdate,
   type AcpConfigOption, type AcpInitializeResult as AcpInitializeResultType, type AcpRequestPermissionResult, type AcpToolCallUpdate,
 } from "./acp-types.ts"
-import { antigravityToolCalls, antigravityTranscriptPath, antigravityTurnOpen } from "./antigravity-transcript.ts"
+import { antigravityToolCalls, antigravityTranscriptPath } from "./antigravity-transcript.ts"
 import {
   ANTIGRAVITY_BYPASS_FLAG, ANTIGRAVITY_COMMAND, ANTIGRAVITY_LABEL, AntigravityElicitationParams, AntigravityUsage,
   antigravityAnswerLabels, antigravityCommandLine, antigravityLaunchArgs, antigravityOption, antigravityPermissionParams, antigravityQuestionAnswer,
@@ -346,7 +346,7 @@ export class AntigravityBridge {
     const attachment = await this.host()({ stateDir: this.options.stateDir, threadSlug: slug, sessionId, command: bin, args: antigravityLaunchArgs(input.permissionMode), cwd, env: this.workerEnv(slug) })
     const writer = new AcpTranscriptWriter(antigravityTranscriptPath(this.options.stateDir, sessionId))
     // Read BEFORE this open writes anything: a turn the previous runtime left open in the file.
-    const turnLeftOpen = antigravityTurnOpen(writer.path)
+    const turnLeftOpen = acpTurnOpen(writer.path)
     let live: Live | undefined
     // Traffic that arrives before the session is READY is held, not dropped or refused: on a reattach
     // the daemon replays what the agent said while Frizz was away the instant the socket opens.
@@ -427,6 +427,10 @@ export class AntigravityBridge {
         turn.stepOver = true
       }
       live.turn = turn
+      // The adopted turn carries on with the message the file was in the middle of: the pieces that
+      // follow join it, and the turn's final text is all of it.
+      const message = turn && turnLeftOpen ? acpOpenMessage(writer.path) : undefined
+      if (turn && message) { turn.messageText = message.text; if (message.messageId !== undefined) turn.messageId = message.messageId }
       for (const call of calls.open) {
         live.tools.set(call.id, { name: call.name, done: false, ...(call.background ? { background: true } : {}), ...(turn && call.inOpenTurn ? { turn } : {}) })
       }
@@ -687,7 +691,7 @@ export class AntigravityBridge {
         // No agent to reattach to (a reboot, a daemon that died): a turn it left open is over, and
         // nothing else would say so until the thread's next message.
         const path = antigravityTranscriptPath(this.options.stateDir, row.sessionId)
-        if (antigravityTurnOpen(path)) { this.closeAbandonedTurn(new AcpTranscriptWriter(path)); this.options.onStatusChange?.() }
+        if (acpTurnOpen(path)) { this.closeAbandonedTurn(new AcpTranscriptWriter(path)); this.options.onStatusChange?.() }
         continue
       }
       try { await this.openOnce(row) } catch (err) {

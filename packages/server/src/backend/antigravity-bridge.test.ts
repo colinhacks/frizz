@@ -483,6 +483,26 @@ test("antigravity-bridge: a turn whose prompt returned while Frizz was away ends
   } finally { await teardown(b ?? a) }
 })
 
+for (const [name, away] of [["a restart while the agent writes its answer", 0], ["an answer finished while Frizz was away", 1_200]] as const) {
+  test(`antigravity-bridge: ${name} leaves one message, and the turn's final text is all of it`, async () => {
+    const a = rig({ daemon: true })
+    let b: Rig | undefined
+    try {
+      await a.bridge.spawnDispatch({ ...base, cwd: a.stateDir, prompt: "TALK 40", userText: "talk" })
+      await until("part of the answer in the file", () => count(a, "assistant-text") >= 2)
+      await a.bridge.shutdown()
+      if (away) await sleep(away)
+      b = rig({ daemon: true, stateDir: a.stateDir })
+      await b.bridge.warmUp([{ ...base, cwd: a.stateDir }])
+      await untilIdle(b)
+      const whole = `${Array.from({ length: 40 }, (_, i) => `w${i + 1} `).join("")}END`
+      assert.deepEqual(finalTexts(b), [whole], "what a fence in the answer is read from")
+      const messages = projectAntigravityTranscript(readFileSync(antigravityTranscriptPath(a.stateDir, "s1"), "utf8"), "antigravity:s1", opencodeToolCards).filter((m) => m.role === "assistant")
+      assert.deepEqual(messages.map((m) => m.text), [whole], "one bubble, not one on each side of the restart")
+    } finally { await teardown(b ?? a) }
+  })
+}
+
 test("antigravity-bridge: a tool call that spans a Frizz restart is one call with one result", async () => {
   const a = rig({ daemon: true })
   let b: Rig | undefined

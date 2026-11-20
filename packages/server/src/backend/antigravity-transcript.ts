@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { TranscriptMessage } from "@frizz/shared"
 import { applyEvent } from "../tailer.ts"
@@ -40,33 +40,6 @@ export function createAntigravityBackend(opts: { stateDir: string }): AgentBacke
       }
     },
   }
-}
-
-/** Whether the file's last turn was never closed: a `turn-start` with no `turn-end` after it. What a
- *  bridge asks of a thread whose agent it is reattaching to, or has lost, so that turn gets its ending.
- *  It is asked of every thread at boot, and the answer is the file's LAST turn marker, so the file is
- *  read from its end, a window at a time. */
-export function antigravityTurnOpen(path: string): boolean {
-  let fd: number
-  try { fd = openSync(path, "r") } catch { return false }
-  try {
-    const size = fstatSync(fd).size
-    for (let window = 64 * 1024; ; window *= 8) {
-      const start = Math.max(0, size - window)
-      const buffer = Buffer.alloc(size - start)
-      readSync(fd, buffer, 0, buffer.length, start)
-      const lines = buffer.toString("utf8").split("\n")
-      // A window that does not reach the start of the file opens on the tail of a line: skip it.
-      for (let i = lines.length - 1; i >= (start === 0 ? 0 : 1); i--) {
-        const line = lines[i]!
-        if (!line.includes('"turn-start"') && !line.includes('"turn-end"')) continue
-        const rec = parseAcpRecord(line)
-        if (rec?.kind === "turn-start") return true
-        if (rec?.kind === "turn-end") return false
-      }
-      if (start === 0) return false
-    }
-  } catch { return false } finally { closeSync(fd) }
 }
 
 export interface AntigravityKnownCalls {

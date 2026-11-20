@@ -17,6 +17,7 @@
 //   ASK           asks a two-question form through `elicitation/create`
 //   /compact      returns `end_turn` with no frames, as agy's own does
 //   ECHO <word>   a usage reading, then the answer "ECHO <word>": no tool, and a final text per turn
+//   TALK <n>      no tool: the answer arrives as <n> pieces "w1 w2 … ", 20ms apart, and then "END"
 //   WAIT <ms>     one `run_command` that takes <ms>, then a usage reading, THEN the answer "WAITED"
 //   WAKE_TOOL <ms> ends the turn, then by itself runs a FOREGROUND command for <ms> in silence
 //   DEAF <ms>     ignores `session/cancel` and finishes <ms> later with `end_turn`
@@ -100,6 +101,16 @@ async function runPrompt(sessionId, s, prompt) {
     notify(sessionId, { sessionUpdate: "usage_update", used: 1000, size: 1000000 })
     notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text(`ECHO ${echo}`) })
     return endTurn(sessionId, s, { stopReason: "end_turn" })
+  }
+  const talk = /^TALK (\d+)$/m.exec(prompt)?.[1]
+  if (talk) {
+    for (let i = 1; i <= Number(talk) && !s.cancelled; i++) {
+      notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text(`w${i} `) })
+      await sleep(20)
+    }
+    notify(sessionId, { sessionUpdate: "agent_message_chunk", content: text("END") })
+    notify(sessionId, { sessionUpdate: "usage_update", used: 1150, size: 1000000 })
+    return endTurn(sessionId, s, { stopReason: s.cancelled ? "cancelled" : "end_turn" })
   }
   const wait = /^WAIT (\d+)$/m.exec(prompt)?.[1]
   if (wait) {

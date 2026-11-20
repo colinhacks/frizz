@@ -51,6 +51,7 @@ The account's plan decides the models. The free tier lists Gemini 3.8 Flash, Cla
 15. **Sign-in is the person's own.** Frizz reads no Antigravity credential; a signed-out dispatch says to run `agy` and sign in.
 16. **A Frizz restart adopts the running agent as it is.** The daemon keeps the agent and its turn. The next runtime takes over every prompt still in flight, and a turn whose prompt returned meanwhile closes on the quiet rule once the daemon's replay is read.
     - Tool calls already in the transcript are not announced again: a call that spans the restart gets its result on the row it has.
+    - The message the transcript was in the middle of is carried on, so the answer stays one message and the turn's final text is all of it.
     - The launch flag is read from the daemon's record (`args`), not from the thread's mode, so a move to or from Bypass made before the restart is still owed one.
     - Model, level and mode are set again from the thread's row.
     - A card is journaled under the tool call's id plus a mark of the attachment. The store keeps one record per id, and the previous runtime cancelled its own on the way out.
@@ -94,6 +95,7 @@ The account's plan decides the models. The free tier lists Gemini 3.8 Flash, Cla
 | Restart with the prompt still running | **fixed:** the tool call was written twice, leaving a row that never settles |
 | Restart, prompt returns while Frizz is away | **fixed:** the turn stayed open until the 5m last resort |
 | Restart with an approval card open | **fixed:** the card was never raised again and the turn hung |
+| Restart while the agent writes its answer | **fixed:** the turn's final text was only the part written after the restart |
 | Restart after leaving Bypass mid-turn | **fixed:** the agent kept running without asking |
 | Reboot with a turn open | **fixed:** the thread read as in flight until its next message |
 | Agent that ignores `session/cancel` | **fixed:** Stop detached from the daemon, and the next message joined the old turn |
@@ -101,4 +103,10 @@ The account's plan decides the models. The free tier lists Gemini 3.8 Flash, Cla
 | Profile change, and shutdown, during an open | **fixed:** the change was dropped; the closed bridge kept the session |
 | Real `agy`: both restart cases, a card across a restart, Stop then a message, a killed agent, three steers, three threads at once | all pass; each `agy` process holds about 185MB |
 
-The generic ACP bridge shares two of these: `acp-bridge.ts` journals a card under the bare tool call id, and its `warmUp` skips a row whose daemon is gone. Neither is changed here.
+The generic ACP bridge had the same restart defects, and they are fixed there the same way (`acp-bridge.ts`, pinned in `acp-bridge.test.ts`):
+
+- a card open across a restart was never raised again;
+- a tool call open across a restart was written twice;
+- a turn whose agent did not survive a reboot stayed open;
+- the final text of a turn adopted mid-answer was cut at the restart;
+- a prompt that returned while Frizz was away left its turn open for good, since that bridge has no quiet rule. It now closes the turn with the answer the daemon replays.

@@ -169,8 +169,10 @@ async function handle(msg) {
         notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "call_w", status: "completed", title: "hello.txt", locations: [{ path: "/tmp/hello.txt" }], rawInput: { filePath: "/tmp/hello.txt", content: "hi" }, content: [{ type: "content", content: { type: "text", text: "Wrote file successfully." } }] })
       }
       if (text.includes("SLOW")) {
-        // Stream until cancelled — the shape a long turn has when the human presses stop.
-        for (let i = 1; i <= 200; i++) {
+        // Stream until cancelled — the shape a long turn has when the human presses stop. `SLOW<n>`
+        // streams n numbers instead of 200.
+        const count = Number(/SLOW(\d+)/.exec(text)?.[1] ?? 200)
+        for (let i = 1; i <= count; i++) {
           if (s.cancelled) break
           notify(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `${i}\n` }, messageId: "m2" })
           await sleep(25)

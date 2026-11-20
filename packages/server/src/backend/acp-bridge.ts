@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { INTERACTION_PROTOCOL_VERSION, InteractionRequest, type InteractionRequest as InteractionRequestType } from "@frizz/shared"
 import type { InteractionSessionScope, InteractionStore } from "../interaction-store.ts"
 import { redactCredentialSyntax } from "../credential-redaction.ts"
@@ -5,12 +6,12 @@ import { log } from "../logging.ts"
 import { acpAgentSpecs, resolveAcpAgent, type AcpAgentInput, type AcpAgentSpec, type ResolvedAcpAgent } from "./acp-agents.ts"
 import { AcpConnection, AcpConnectionClosed, AcpRemoteError, AcpRequestError, spawnAcpChild, type AcpSpawn } from "./acp-rpc.ts"
 import { daemonAcpHost, directAcpHost, liveAcpDaemonRecord, stopAcpDaemon, type AcpHost } from "./acp-host.ts"
-import { AcpTranscriptWriter, acpContractOwed, acpTranscriptPath, type AcpContractReason, type AcpRecord } from "./acp-transcript.ts"
+import { AcpTranscriptWriter, acpContractOwed, acpOpenMessage, acpOpenToolCalls, acpTranscriptPath, acpTurnOpen, type AcpContractReason, type AcpRecord } from "./acp-transcript.ts"
 import {
   ACP_ERROR_AUTH_REQUIRED, ACP_ERROR_INTERNAL, ACP_ERROR_METHOD_NOT_FOUND, ACP_PROTOCOL_VERSION,
   AcpInitializeResult, AcpLoadSessionResult, AcpNewSessionResult, AcpPromptResult, AcpRequestPermissionParams, AcpSessionNotification, AcpSetConfigOptionResult, type AcpConfigOption,
   contentText, isAcpChildUpdate, parseSessionUpdate,
-  type AcpInitializeResult as AcpInitializeResultType, type AcpMcpServerStdio, type AcpRequestPermissionResult, type AcpToolCallUpdate,
+  type AcpInitializeResult as AcpInitializeResultType, type AcpMcpServerStdio, type AcpRequestPermissionResult, type AcpToolCallUpdate, type JsonRpcError,
 } from "./acp-types.ts"
 import { FRIZZ_MCP, frizzCliEnv, frizzMcpEnv, withFrizzCliOnPath, type FrizzCli, type FrizzMcp } from "./types.ts"
 import { inheritWorkerEnvironment } from "./worker-env.ts"
@@ -40,6 +41,13 @@ import type { AcpAgentModels } from "@frizz/shared"
 // stated difference from the broker and the app-server, and it is gone. A session whose daemon has
 // actually died is re-opened on the next input: `session/load` when the agent advertised `loadSession`,
 // else a fresh session with a transcript note saying so.
+//
+// A reattach starts from what the FILE says, since the bridge that wrote it is gone. A turn the file
+// leaves open is still running (its prompt is adopted), or ended while Frizz was away (what the agent
+// said meanwhile is replayed into it and it is closed), or lost its agent (it is closed at boot, with a
+// note). A tool call the file leaves open is continued, not written again. And a card is journaled under
+// this attachment's own mark, because the store answers a request id it has seen with the record it
+// has, which after a restart is the card the last runtime cancelled.
 //
 // The worker contract rides a PROMPT, because ACP has no system-prompt channel, so the session holds it
 // only as long as its history does. Two things end that, and after either the next prompt carries the
@@ -184,6 +192,8 @@ interface LiveSession {
   queue: QueuedFollowUp[]
   pendingPerms: Map<string, PendingPermission>
   tools: Map<string, ToolMeta>
+  /** This attachment's mark on the cards it journals (see `handlePermission`). */
+  nonce: string
   exited: boolean
   /** True from `shutdown()` on: the connection is being DETACHED from a daemon that keeps running, so
    *  a rejected prompt is not the turn ending and must not be recorded as one. */
@@ -361,6 +371,11 @@ export class AcpBridge {
     const writer = new AcpTranscriptWriter(acpTranscriptPath(this.options.stateDir, sessionId))
     // Read BEFORE this open writes anything: a compaction the previous runtime recorded and never answered.
     const owedFromTranscript = acpContractOwed(writer.path)
+    // And a turn the previous runtime left open in the file.
+    const turnLeftOpen = acpTurnOpen(writer.path)
+    // Answers to the PREVIOUS runtime's requests that arrived while Frizz was away: the daemon replays
+    // them under ids this connection never used. The `session/prompt` among them is how that turn ended.
+    const orphans: Array<{ result?: unknown; error?: JsonRpcError }> = []
     let live: LiveSession | undefined
     // Traffic from the agent that arrives before the session is READY is held, not dropped or refused.
     // On a reattach the daemon replays everything the agent said while Frizz was away — the running
@@ -383,6 +398,7 @@ export class AcpBridge {
         else held.push(() => this.handleNotification(live!, params))
       },
       onDiagnostic: (d) => this.diagnostic(slug, d.kind, d.message),
+      onOrphanResponse: (frame) => { if (isReady) return false; orphans.push(frame); return true },
       requestTimeoutMs: this.options.initializeTimeoutMs ?? 60_000,
     })
     const fail = async (err: unknown): Promise<never> => {
@@ -404,7 +420,7 @@ export class AcpBridge {
       }))
     } catch (err) { return fail(err instanceof Error ? new Error(`${agent.label} did not complete the ACP handshake: ${err.message}`) : err) }
     const mcpServers = this.options.mountsMcp?.(slug) === false ? [] : frizzMcpServer(this.options.frizzMcp, slug)
-    live = { slug, sessionId, cwd, agent, conn, init, acpSessionId: "", writer, loading: false, queue: [], pendingPerms: new Map(), tools: new Map(), exited: false, detaching: false, ending: false, ...(owedFromTranscript ? { contractOwed: "compaction" as const } : {}) }
+    live = { slug, sessionId, cwd, agent, conn, init, acpSessionId: "", writer, loading: false, queue: [], pendingPerms: new Map(), tools: new Map(), nonce: randomUUID().slice(0, 8), exited: false, detaching: false, ending: false, ...(owedFromTranscript ? { contractOwed: "compaction" as const } : {}) }
     void conn.exited.then(() => { if (live) this.onExit(live) })
 
     // REATTACHED to an agent that outlived a frizz restart: the session is already open (the daemon
@@ -418,18 +434,41 @@ export class AcpBridge {
         writer.append({ kind: "acp-note", at: this.now(), text: `${attachment.hello.droppedWhileDetached} message(s) from the agent were lost while Frizz was away; the transcript may have gaps.` })
       }
       this.sessions.set(sessionId, live)
+      // The calls the file leaves open are this session's: an update for one continues its row.
+      for (const call of acpOpenToolCalls(writer.path)) {
+        const inputJson = nonEmptyInputJson(call.input)
+        live.tools.set(call.id, { ...(call.kind ? { kind: call.kind } : {}), ...(call.title ? { title: call.title } : {}), ...(call.locations ? { locations: call.locations } : {}), written: true, ...(inputJson ? { inputJson } : {}) })
+      }
+      const current = live
+      // An adopted turn carries on with the message the file was in the middle of.
+      const adoptTurn = (): Turn => {
+        const turn = this.newTurn(undefined)
+        const message = turnLeftOpen ? acpOpenMessage(writer.path) : undefined
+        if (message) { turn.messageText = message.text; if (message.messageId !== undefined) turn.messageId = message.messageId }
+        current.turn = turn
+        return turn
+      }
       const prompt = attachment.hello.outstanding.find((o) => o.method === "session/prompt")
       if (prompt) {
-        const current = live
-        const turn = this.newTurn(undefined)
-        current.turn = turn
+        const turn = adoptTurn()
         this.options.onStatusChange?.()
         void this.awaitTurn(current, turn, conn.adoptPending("session/prompt", (id) => attachment.adopt(prompt.daemonId, id)))
-      }
-      ready()
+        ready()
+      } else if (turnLeftOpen) {
+        // The prompt returned while Frizz was away. `ready()` replays what the agent said meanwhile into
+        // the turn, and the answer the daemon replayed with it says how the turn ended.
+        const turn = adoptTurn()
+        ready()
+        const answer = orphans.findLast((o) => o.error === undefined && AcpPromptResult.safeParse(o.result).success) ?? orphans.findLast((o) => o.error !== undefined)
+        // No answer on record means the daemon's queue overflowed and dropped it (noted above).
+        const response = answer?.error !== undefined ? Promise.reject(new AcpRemoteError("session/prompt", answer.error)) : Promise.resolve(answer?.result ?? { stopReason: "end_turn" })
+        void this.awaitTurn(current, turn, response)
+      } else ready()
       return { live, resumed: "reattached" }
     }
     ready()
+    // A turn left open by an agent that is gone will never be closed by it.
+    if (turnLeftOpen) this.closeAbandonedTurn(writer, agent.label)
 
     const authError = (err: AcpRemoteError): Error => {
       const hint = (init.authMethods ?? []).map((m) => m.description ?? m.name ?? m.id).filter(Boolean).join("; ")
@@ -718,8 +757,19 @@ export class AcpBridge {
   async warmUp(rows: ReadonlyArray<{ threadSlug: string; sessionId: string; cwd: string; agentId: string; modelId?: string | null; acpSessionId?: string | null }>): Promise<void> {
     for (const row of rows) {
       if (this.closed) return
-      if (!liveAcpDaemonRecord(this.options.stateDir, row.sessionId)) continue
-      if (this.sessions.has(row.sessionId)) continue
+      if (this.sessions.has(row.sessionId) || this.opening.has(row.sessionId)) continue
+      if (!liveAcpDaemonRecord(this.options.stateDir, row.sessionId)) {
+        // The agent did not survive (a reboot, a crash while Frizz was down). A turn it left open would
+        // read as running until the thread's next message; give it its ending now.
+        const path = acpTranscriptPath(this.options.stateDir, row.sessionId)
+        if (acpTurnOpen(path)) {
+          let label: string | undefined
+          try { label = this.resolveAgent(row.agentId).label } catch { /* an agent that is no longer configured */ }
+          this.closeAbandonedTurn(new AcpTranscriptWriter(path), label)
+          this.options.onStatusChange?.()
+        }
+        continue
+      }
       try {
         await this.openOnce(row)
       } catch (err) {
@@ -797,6 +847,13 @@ export class AcpBridge {
       agent: { id: live.agent.id, ...(live.init.agentInfo?.name ? { name: live.init.agentInfo.name } : {}), ...(live.init.agentInfo?.version ? { version: live.init.agentInfo.version } : {}) },
       ...(live.model ? { model: live.model } : {}),
     }
+  }
+
+  /** A turn the file leaves open whose agent is gone will never be closed by it: write its ending. */
+  private closeAbandonedTurn(writer: AcpTranscriptWriter, label: string | undefined): void {
+    const at = this.now()
+    writer.append({ kind: "turn-end", at, successful: false })
+    writer.append({ kind: "acp-note", at, text: `The ${label ? `${label} agent` : "agent"} stopped while this turn was running.` })
   }
 
   // ---- the turn ---------------------------------------------------------------------------------
@@ -1057,7 +1114,15 @@ export class AcpBridge {
     if (!built) { this.diagnostic(live.slug, "permission", "request could not be represented as a card; denying"); return Promise.resolve(failClosed) }
     const scope: InteractionSessionScope = { projectId: this.options.projectId, threadSlug: live.slug, sessionId: live.sessionId }
     let id: string
-    try { id = store.create(built.request).interaction.id } catch (err) {
+    try {
+      // Journaled under this attachment's mark. The store answers a request id it has seen with the
+      // record it holds, and a daemon re-sends an unanswered request to the runtime that reattaches,
+      // under the same tool call: without the mark that answer is the card the last runtime cancelled
+      // on its way out, and the agent waits on a card nobody can see.
+      const created = store.create({ ...built.request, providerRequestId: `${clip(built.request.providerRequestId, 480)}#${live.nonce}` }).interaction
+      if (created.lifecycle !== "pending") throw new Error(`the request is already ${created.lifecycle}`)
+      id = created.id
+    } catch (err) {
       this.diagnostic(live.slug, "permission", `could not record the approval: ${(err as Error).message}`)
       return Promise.resolve(failClosed)
     }

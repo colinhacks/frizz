@@ -1,9 +1,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { AcpTranscriptWriter, acpTranscriptPath, createAcpBackend, parseAcpLine, projectAcpTranscript, type AcpRecord } from "./acp-transcript.ts"
+import { AcpTranscriptWriter, acpOpenMessage, acpOpenToolCalls, acpTranscriptPath, acpTurnOpen, createAcpBackend, parseAcpLine, projectAcpTranscript, type AcpRecord } from "./acp-transcript.ts"
 import { newTailState } from "../tailer.ts"
 
 // One recorded turn, in the shape the bridge writes it (an opencode turn that wrote a file, ran a
@@ -156,4 +156,75 @@ test("acp-transcript: a later input replaces a path detail with the command, and
   assert.equal(sub!.command, undefined)
   assert.match(sub!.input!, /read it/)
   assert.deepEqual(parseAcpLine(JSON.stringify({ kind: "acp-tool-input", at: T(2), id: "c1", input: {} })), [], "the fold never sees it")
+})
+
+// What a bridge asks of a transcript when it reattaches to a running agent, or finds its agent gone.
+
+function file(lines: Array<Record<string, unknown> | string>): { path: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "acp-transcript-"))
+  const path = join(dir, "s1.jsonl")
+  writeFileSync(path, lines.map((line) => (typeof line === "string" ? line : JSON.stringify(line))).join("\n") + "\n")
+  return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
+test("acp-transcript: a turn is open when the file's last turn marker is a start", () => {
+  const open = file([{ kind: "turn-start", at: "t" }, { kind: "turn-end", at: "t", successful: true }, { kind: "user-message", at: "t", text: "go" }, { kind: "turn-start", at: "t" }, { kind: "assistant-text", at: "t", text: "working" }])
+  const closed = file([{ kind: "turn-start", at: "t" }, { kind: "assistant-text", at: "t", text: 'the agent wrote "turn-start" in its answer' }, { kind: "turn-end", at: "t", successful: true }, { kind: "acp-note", at: "t", text: "after" }])
+  const empty = file([])
+  try {
+    assert.equal(acpTurnOpen(open.path), true)
+    assert.equal(acpTurnOpen(closed.path), false)
+    assert.equal(acpTurnOpen(empty.path), false)
+    assert.equal(acpTurnOpen(join(tmpdir(), "no-such-transcript.jsonl")), false)
+  } finally { open.cleanup(); closed.cleanup(); empty.cleanup() }
+})
+
+test("acp-transcript: the last turn marker is found however far back it is, and across multi-byte text", () => {
+  // The file is read from its end, 64KB at first. Here the marker is megabytes back, and the windows
+  // open in the middle of lines made of three-byte characters.
+  const filler = { kind: "assistant-text", at: "t", text: "世界".repeat(3_000) }
+  const longTurn = file([{ kind: "turn-start", at: "t" }, { kind: "turn-end", at: "t", successful: true }, { kind: "turn-start", at: "t" }, ...Array.from({ length: 200 }, () => filler)])
+  const longAfter = file([{ kind: "turn-start", at: "t" }, { kind: "turn-end", at: "t", successful: true }, ...Array.from({ length: 200 }, () => filler)])
+  try {
+    assert.equal(acpTurnOpen(longTurn.path), true)
+    assert.equal(acpTurnOpen(longAfter.path), false)
+  } finally { longTurn.cleanup(); longAfter.cleanup() }
+})
+
+test("acp-transcript: the calls a file leaves open are those with no result, with what the bridge knew of each", () => {
+  const f = file([
+    { kind: "turn-start", at: "t" },
+    { kind: "tool-call", at: "t", id: "done-1", name: "bash", input: { command: "ls" }, acp: { kind: "execute", title: "ls" } },
+    { kind: "tool-result", at: "t", id: "done-1", text: "a" },
+    "not a record at all",
+    { kind: "tool-call", at: "t", id: "open-1", name: "bash", input: { cwd: "/p" }, acp: { kind: "execute", title: "bash" } },
+    { kind: "acp-tool-input", at: "t", id: "open-1", input: { command: "sleep 600", cwd: "/p" }, acp: { title: "sleep 600", locations: ["/p"] } },
+    { kind: "tool-call", at: "t", id: "open-2", name: "tool", input: {} },
+  ])
+  try {
+    assert.deepEqual(acpOpenToolCalls(f.path), [
+      { id: "open-1", kind: "execute", title: "sleep 600", locations: ["/p"], input: { command: "sleep 600", cwd: "/p" } },
+      { id: "open-2", input: {} },
+    ])
+    assert.deepEqual(acpOpenToolCalls(join(tmpdir(), "no-such-transcript.jsonl")), [])
+  } finally { f.cleanup() }
+})
+
+test("acp-transcript: the message an open turn was in the middle of is its pieces since the last call or steer", () => {
+  const piece = (text: string, messageId?: string) => ({ kind: "assistant-text", at: "t", text, final: false, ...(messageId ? { messageId } : {}) })
+  const midAnswer = file([{ kind: "turn-start", at: "t" }, piece("before the call", "m1"), { kind: "tool-call", at: "t", id: "c1", name: "bash", input: {} }, { kind: "tool-result", at: "t", id: "c1", text: "" }, piece("```do", "m2"), piece("ne\n- it", "m2")])
+  const newMessage = file([{ kind: "turn-start", at: "t" }, piece("first", "m1"), piece("second", "m2")])
+  const noIds = file([{ kind: "turn-start", at: "t" }, piece("a"), piece("b")])
+  const afterCall = file([{ kind: "turn-start", at: "t" }, piece("commentary", "m1"), { kind: "tool-call", at: "t", id: "c1", name: "bash", input: {} }])
+  const afterSteer = file([{ kind: "turn-start", at: "t" }, piece("counting", "m1"), { kind: "user-message", at: "t", text: "stop", synthetic: false }])
+  const closed = file([{ kind: "turn-start", at: "t" }, piece("done", "m1"), { kind: "turn-end", at: "t", successful: true, finalText: "done" }])
+  try {
+    assert.deepEqual(acpOpenMessage(midAnswer.path), { messageId: "m2", text: "```done\n- it" })
+    assert.deepEqual(acpOpenMessage(newMessage.path), { messageId: "m2", text: "second" })
+    assert.deepEqual(acpOpenMessage(noIds.path), { text: "ab" })
+    assert.equal(acpOpenMessage(afterCall.path), undefined)
+    assert.equal(acpOpenMessage(afterSteer.path), undefined)
+    assert.equal(acpOpenMessage(closed.path), undefined)
+    assert.equal(acpOpenMessage(join(tmpdir(), "no-such-transcript.jsonl")), undefined)
+  } finally { for (const f of [midAnswer, newMessage, noIds, afterCall, afterSteer, closed]) f.cleanup() }
 })

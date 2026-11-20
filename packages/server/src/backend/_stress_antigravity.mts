@@ -342,6 +342,31 @@ scenarios["reattach-prompt-finished-while-away"] = async () => {
     expect(count(recs, "turn-end") === 1 && (recs.find((x) => x.kind === "turn-end") as any)?.finalText === "WAITED", `one turn, ending on the agent's answer (${JSON.stringify(finals(recs))})`)
   } finally { await teardown(b, a) }
 }
+scenarios["reattach-mid-answer"] = async () => {
+  // The restart lands in the middle of the agent's answer, 5 times: once the prompt is still running
+  // when Frizz comes back, and once it has returned to nobody.
+  const whole = `${Array.from({ length: 40 }, (_, i) => `w${i + 1} `).join("")}END`
+  let cut = 0
+  for (let round = 0; round < 5; round++) {
+    for (const away of [0, 1_200]) {
+      const a = rig({ daemon: true, quietMs: 150, idleMs: 4_000 })
+      let b: Rig | undefined
+      try {
+        await a.bridge.spawnDispatch({ ...base, cwd: a.stateDir, prompt: "TALK 40", userText: "talk" })
+        await until("part of the answer in the file", () => count(records(a), "assistant-text") >= 1 + round)
+        await a.bridge.shutdown()
+        if (away) await sleep(away)
+        b = rig({ daemon: true, stateDir: a.stateDir, quietMs: 150, idleMs: 4_000 })
+        await b.bridge.warmUp([{ ...base, cwd: a.stateDir }])
+        await idle(b, "s1", "t1", 8_000)
+        const recs = records(b)
+        expectConsistent(recs, `mid-answer, away ${away}ms`)
+        if (finals(recs).length !== 1 || finals(recs)[0] !== whole) cut++
+      } finally { await teardown(b, a) }
+    }
+  }
+  expect(cut === 0, `10 restarts mid-answer: the turn's final text is the whole answer every time (${cut} cut)`)
+}
 scenarios["reattach-mid-tool"] = async () => {
   const a = rig({ daemon: true })
   let b: Rig | undefined

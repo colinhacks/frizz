@@ -24,9 +24,11 @@ const FAKE = fileURLToPath(new URL("./acp.fixtures/fake-acp-agent.mjs", import.m
 
 interface Rig { bridge: AcpBridge; stateDir: string; store: InteractionStore; status: number; diagnostics: string[] }
 
-function rig(mode = "", opts: { customCommand?: string; stateDir?: string; direct?: boolean; host?: AcpHost; agentLog?: string; frizzCli?: FrizzCli; mountsMcp?: (slug: string) => boolean; contractFor?: (slug: string, sessionId: string) => string | undefined } = {}): Rig {
+function rig(mode = "", opts: { customCommand?: string; stateDir?: string; persistentStore?: boolean; direct?: boolean; host?: AcpHost; agentLog?: string; frizzCli?: FrizzCli; mountsMcp?: (slug: string) => boolean; contractFor?: (slug: string, sessionId: string) => string | undefined } = {}): Rig {
   const stateDir = opts.stateDir ?? mkdtempSync(join(tmpdir(), "acp-bridge-"))
-  const store = createInteractionStore(new Database(":memory:"))
+  // `persistentStore` keeps the journal in the state directory, as the server's is: a second rig on the
+  // same directory then reads what the first one wrote, which is what a Frizz restart does.
+  const store = createInteractionStore(new Database(opts.persistentStore ? join(stateDir, "interactions.db") : ":memory:"))
   const r: Rig = { stateDir, store, status: 0, diagnostics: [], bridge: undefined as unknown as AcpBridge }
   r.bridge = createAcpBridge({
     projectId: "proj-1",
@@ -405,7 +407,7 @@ test("acp-bridge: a turn survives the bridge shutting down mid-turn; a fresh bri
     const end = after.filter((x) => x.kind === "turn-end") as Array<{ successful: boolean; finalText?: string }>
     assert.equal(end.length, 1)
     assert.equal(end[0]!.successful, true)
-    assert.match(end[0]!.finalText ?? "", /PONG$/, "the turn's real ending, streamed after the reattach")
+    assert.equal(end[0]!.finalText, `${Array.from({ length: 200 }, (_, i) => `${i + 1}\n`).join("")}PONG`, "the turn's final text is the whole message, the part written before the restart included")
     const streamed = after.filter((x) => x.kind === "assistant-text").map((x) => (x as { text: string }).text).join("")
     for (let i = 1; i <= 200; i++) assert.ok(streamed.includes(`${i}\n`), `chunk ${i} — streamed while nobody was attached — was replayed into the transcript`)
     assert.equal(after.filter((x) => x.kind === "provider-error").length, 0)
@@ -420,25 +422,95 @@ test("acp-bridge: a turn survives the bridge shutting down mid-turn; a fresh bri
 })
 
 test("acp-bridge: a permission card open at shutdown is raised afresh by the reattached bridge, and its answer reaches the agent", async () => {
-  const a = rig("ask-permission")
+  const a = rig("ask-permission", { persistentStore: true })
   let b: Rig | undefined
   try {
     await a.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake", prompt: "go", userText: "go" })
     for (let i = 0; i < 100 && pending(a).length === 0; i++) await new Promise((res) => setTimeout(res, 20))
     assert.equal(pending(a).length, 1, "the card is up")
+    const first = pending(a)[0]!
     await a.bridge.shutdown()
     assert.equal(pending(a).length, 0, "the dead runtime's card is cancelled on its side")
 
-    b = rig("ask-permission", { stateDir: a.stateDir })
+    // The same journal, as the server's is: the daemon sends the request again under the same tool call.
+    b = rig("ask-permission", { stateDir: a.stateDir, persistentStore: true })
     await b.bridge.warmUp([{ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake" }])
     for (let i = 0; i < 100 && pending(b).length === 0; i++) await new Promise((res) => setTimeout(res, 20))
     const card = pending(b)[0]
     assert.ok(card, "the daemon re-sent the unanswered request and the new bridge raised the card")
+    assert.notEqual(card.id, first.id, "a new card, not the cancelled one")
     const scope = { projectId: "proj-1", threadSlug: "t1", sessionId: "s1" }
     b.store.resolve(scope, { slug: "t1", sessionId: "s1", interactionId: card.id, sessionEpoch: card.owner.sessionEpoch, capabilityRevision: card.owner.capabilityRevision, expectedRecordRevision: card.recordRevision, responseId: "resp-1", decisionId: "accept" })
     await untilIdle(b, "s1", "t1", 15_000)
     const result = records(b, "s1").find((x) => x.kind === "tool-result") as { text: string } | undefined
     assert.equal(result?.text, "removed", "the allow reached the agent through the daemon")
+    assert.equal(records(b, "s1").filter((x) => x.kind === "tool-call").length, 1, "the call that was waiting on the card is continued, not written again")
+  } finally {
+    await teardown(a)
+    if (b) await teardown(b)
+  }
+})
+
+test("acp-bridge: a turn that ends while Frizz is away is closed on reattach, with what the agent said meanwhile", async () => {
+  const a = rig()
+  let b: Rig | undefined
+  try {
+    await a.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake", prompt: "SLOW30 count", userText: "SLOW30 count" })
+    await untilTurnActive(a, "s1")
+    await new Promise((res) => setTimeout(res, 200))
+    await a.bridge.shutdown()
+    assert.equal(records(a, "s1").filter((x) => x.kind === "turn-end").length, 0)
+    await new Promise((res) => setTimeout(res, 1_500)) // the prompt returns with nobody attached
+
+    b = rig("", { stateDir: a.stateDir })
+    await b.bridge.warmUp([{ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake" }])
+    await untilIdle(b, "s1")
+    const after = records(b, "s1")
+    assert.deepEqual([after.filter((x) => x.kind === "turn-start").length, after.filter((x) => x.kind === "turn-end").length], [1, 1])
+    const end = after.find((x) => x.kind === "turn-end") as { successful: boolean; finalText?: string }
+    assert.equal(end.successful, true, "the answer the daemon kept says the turn ended well")
+    assert.equal(end.finalText, `${Array.from({ length: 30 }, (_, i) => `${i + 1}\n`).join("")}PONG`, "and its final text is the whole message")
+    const streamed = after.filter((x) => x.kind === "assistant-text").map((x) => (x as { text: string }).text).join("")
+    for (let i = 1; i <= 30; i++) assert.ok(streamed.includes(`${i}\n`), `chunk ${i} is in the transcript`)
+    assert.ok(streamed.endsWith("PONG"))
+    assert.deepEqual(b.diagnostics.filter((d) => /unknown request id/.test(d)), [], "the old prompt's answer was taken, not reported as a fault")
+    const state = newTailState("t1", "s1", "/x")
+    const backend = createAcpBackend({ stateDir: a.stateDir })
+    for (const line of readFileSync(acpTranscriptPath(a.stateDir, "s1"), "utf8").split("\n")) backend.foldLine(state, line)
+    assert.equal(state.turn, "idle", "the board stops spinning")
+    // The session is whole: a follow-up runs as its own turn.
+    await b.bridge.followUp({ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake", text: "again" })
+    await untilIdle(b, "s1")
+    const last = records(b, "s1")
+    assert.deepEqual([last.filter((x) => x.kind === "turn-start").length, last.filter((x) => x.kind === "turn-end").length], [2, 2])
+  } finally {
+    await teardown(a)
+    if (b) await teardown(b)
+  }
+})
+
+test("acp-bridge: a turn whose agent did not survive the restart is closed at boot", async () => {
+  const a = rig()
+  let b: Rig | undefined
+  try {
+    await a.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake", prompt: "SLOW count", userText: "SLOW count" })
+    await untilTurnActive(a, "s1")
+    await new Promise((res) => setTimeout(res, 300))
+    await a.bridge.shutdown()
+    await stopAcpDaemon(a.stateDir, "s1") // a reboot: the daemon is gone with everything else
+
+    b = rig("", { stateDir: a.stateDir })
+    await b.bridge.warmUp([{ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake" }])
+    const after = records(b, "s1")
+    assert.deepEqual(after.slice(-2).map((x) => x.kind), ["turn-end", "acp-note"])
+    assert.match((after.at(-1) as { text: string }).text, /agent stopped while this turn was running/)
+    const state = newTailState("t1", "s1", "/x")
+    const backend = createAcpBackend({ stateDir: a.stateDir })
+    for (const line of readFileSync(acpTranscriptPath(a.stateDir, "s1"), "utf8").split("\n")) backend.foldLine(state, line)
+    assert.equal(state.turn, "idle", "the board stops spinning")
+    // And it is written once: the next boot finds the turn closed.
+    await b.bridge.warmUp([{ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake" }])
+    assert.equal(records(b, "s1").length, after.length)
   } finally {
     await teardown(a)
     if (b) await teardown(b)

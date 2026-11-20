@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs"
 import { dirname, join } from "node:path"
 import type { TranscriptMessage, TranscriptToolCall } from "@frizz/shared"
 import type { AgentBackend, BuiltCommand, FoldState, NormalizedEvent, ResumeOpts, SpawnOpts } from "./types.ts"
@@ -102,6 +102,80 @@ export function acpContractOwed(path: string): boolean {
     else if (rec?.kind === "acp-contract") owed = false
   }
   return owed
+}
+
+/** Whether the file's last turn was never closed: a `turn-start` with no `turn-end` after it. What a
+ *  bridge asks of a thread whose agent it is reattaching to, or has lost, so that turn gets its ending.
+ *  It is asked of every thread at boot, and the answer is the file's LAST turn marker, so the file is
+ *  read from its end, a window at a time. */
+export function acpTurnOpen(path: string): boolean {
+  let fd: number
+  try { fd = openSync(path, "r") } catch { return false }
+  try {
+    const size = fstatSync(fd).size
+    for (let window = 64 * 1024; ; window *= 8) {
+      const start = Math.max(0, size - window)
+      const buffer = Buffer.alloc(size - start)
+      readSync(fd, buffer, 0, buffer.length, start)
+      const lines = buffer.toString("utf8").split("\n")
+      // A window that does not reach the start of the file opens on the tail of a line: skip it.
+      for (let i = lines.length - 1; i >= (start === 0 ? 0 : 1); i--) {
+        const line = lines[i]!
+        if (!line.includes('"turn-start"') && !line.includes('"turn-end"')) continue
+        const rec = parseAcpRecord(line)
+        if (rec?.kind === "turn-start") return true
+        if (rec?.kind === "turn-end") return false
+      }
+      if (start === 0) return false
+    }
+  } catch { return false } finally { closeSync(fd) }
+}
+
+/** The agent message a transcript's open turn was in the middle of: its id, and the text written for
+ *  it so far. A bridge that adopts the turn after a restart carries on from here, so the pieces that
+ *  follow join the same message and the turn's final text is all of it. Read from the pieces after the
+ *  restart alone, a sign-off fence opened before it would be cut in half and never read. Undefined when
+ *  the file has no open turn, or the turn has said nothing since its last tool call or steer. */
+export function acpOpenMessage(path: string): { messageId?: string; text: string } | undefined {
+  let text: string
+  try { text = readFileSync(path, "utf8") } catch { return undefined }
+  let message: { messageId?: string; text: string } | undefined
+  for (const line of text.split("\n")) {
+    if (!line.includes('"turn-') && !line.includes('"tool-call"') && !line.includes('"user-message"') && !line.includes('"assistant-text"')) continue
+    const rec = parseAcpRecord(line) as (AcpRecord & { text?: string; messageId?: string }) | undefined
+    if (!rec) continue
+    // Text before a tool call is commentary, and a steer starts the answer over: neither is the message.
+    if (rec.kind === "turn-start" || rec.kind === "turn-end" || rec.kind === "tool-call" || rec.kind === "user-message") message = undefined
+    else if (rec.kind === "assistant-text" && typeof rec.text === "string") {
+      if (!message || (rec.messageId !== undefined && message.messageId !== undefined && rec.messageId !== message.messageId)) message = { ...(rec.messageId !== undefined ? { messageId: rec.messageId } : {}), text: "" }
+      message.text += rec.text
+    }
+  }
+  return message
+}
+
+/** A tool call the file holds with no result yet, as the bridge that wrote it knew it. */
+export interface AcpOpenToolCall { id: string; kind?: string; title?: string; locations?: string[]; input?: unknown }
+
+/** The tool calls a transcript leaves open. A bridge reattaching to a running agent starts from these:
+ *  the agent's next update for one of them continues the row that is there, where a bridge that had
+ *  forgotten the call would write it a second time. */
+export function acpOpenToolCalls(path: string): AcpOpenToolCall[] {
+  let text: string
+  try { text = readFileSync(path, "utf8") } catch { return [] }
+  const open = new Map<string, AcpOpenToolCall>()
+  for (const line of text.split("\n")) {
+    if (!line.includes('"tool-call"') && !line.includes('"tool-result"') && !line.includes('"acp-tool-input"')) continue
+    const rec = parseAcpRecord(line) as (AcpRecord & { id?: string; input?: unknown; acp?: { kind?: string; title?: string; locations?: string[] } }) | undefined
+    if (!rec || typeof rec.id !== "string") continue
+    if (rec.kind === "tool-result") open.delete(rec.id)
+    else if (rec.kind === "tool-call") open.set(rec.id, { id: rec.id, ...(rec.acp?.kind ? { kind: rec.acp.kind } : {}), ...(rec.acp?.title ? { title: rec.acp.title } : {}), ...(rec.acp?.locations?.length ? { locations: rec.acp.locations } : {}), input: rec.input })
+    else if (rec.kind === "acp-tool-input") {
+      const call = open.get(rec.id)
+      if (call) { call.input = rec.input; if (rec.acp?.title) call.title = rec.acp.title; if (rec.acp?.locations?.length) call.locations = rec.acp.locations }
+    }
+  }
+  return [...open.values()]
 }
 
 /** Appends records; creates the directory and file on first write so the tailer can find it at once. */

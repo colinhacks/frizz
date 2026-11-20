@@ -59,6 +59,10 @@ export interface AcpConnectionOptions {
   onRequest: (method: string, params: unknown) => Promise<unknown>
   onNotification: (method: string, params: unknown) => void
   onDiagnostic?: (d: AcpDiagnostic) => void
+  /** A response to a request this connection never sent. Behind a daemon that is what the PREVIOUS
+   *  runtime's request looks like when its answer came while nobody was attached (acp-daemon.ts replays
+   *  it under the old id). Return true to take it; otherwise it is reported as a protocol fault. */
+  onOrphanResponse?: (frame: { id: JsonRpcId; result?: unknown; error?: JsonRpcError }) => boolean
   /** Default per-request timeout; `request()` may override. */
   requestTimeoutMs?: number
   /** Lines longer than this are dropped (with a diagnostic) instead of buffered. Default 8 MiB. */
@@ -254,7 +258,11 @@ export class AcpConnection {
     }
     const id = frame.id as JsonRpcId
     const p = this.pending.get(id)
-    if (!p) { this.options.onDiagnostic?.({ kind: "protocol", message: `response to unknown request id ${String(id)}` }); return }
+    if (!p) {
+      if (this.options.onOrphanResponse?.({ id, ...(frame.error !== undefined ? { error: frame.error } : { result: frame.result }) })) return
+      this.options.onDiagnostic?.({ kind: "protocol", message: `response to unknown request id ${String(id)}` })
+      return
+    }
     this.pending.delete(id)
     if (p.timer) clearTimeout(p.timer)
     if (frame.error !== undefined) p.reject(new AcpRemoteError(p.method, frame.error))
