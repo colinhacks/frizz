@@ -6,7 +6,7 @@
 //   nub packages/server/src/backend/_live_antigravity.mts [scenario ...]     default: all of them
 //
 // Scenarios: models, contract, tools, steer, wake, question, permission, profile, resume, cancel, and the
-// ones a restart or a race decides: restart, restart-card, stop-send, crash, steers, parallel.
+// ones a restart or a race decides: restart, restart-answer, restart-card, stop-send, crash, steers, parallel.
 // Exit 0 only when every check of every scenario run passed.
 
 import { execFileSync } from "node:child_process"
@@ -317,6 +317,28 @@ try {
     ok("turn ended", await untilIdle(r, t.threadSlug, t.sessionId))
     ok("and the agent still has the conversation", /sleep 40/.test(finalTexts(t.sessionId).at(-1) ?? ""), JSON.stringify(finalTexts(t.sessionId).at(-1)))
     await r.bridge.endSession(t.threadSlug, t.sessionId)
+  }
+
+  if (runs("restart-answer")) {
+    console.log("restart-answer (Frizz goes away while the agent is writing its answer)")
+    const t = thread()
+    const a = rig()
+    await a.bridge.spawnDispatch({ ...t, cwd, ...CHEAP, prompt: "Without using any tool, write the numbers 1 to 150, one per line, each as `line N` (line 1, line 2, and so on). Write nothing before line 1. After line 150 write the single word FINISHED.", userText: "count" })
+    ok("the answer began", await until(() => count(t.sessionId, "assistant-text") >= 2, 60_000))
+    const before = records(t.sessionId).flatMap((r) => (r.kind === "assistant-text" ? [r.text] : [])).join("")
+    await a.bridge.shutdown()
+    const b = rig()
+    await b.bridge.warmUp([{ ...t, cwd, ...CHEAP }])
+    ok("turn ended", await untilIdle(b, t.threadSlug, t.sessionId, 90_000))
+    const final = finalTexts(t.sessionId).at(-1) ?? ""
+    const lines = Array.from({ length: 150 }, (_, i) => `line ${i + 1}`)
+    ok("the restart landed inside the answer", before.length > 0 && !/FINISHED/.test(before), `${before.length} characters were written before it`)
+    ok("the turn's final text is the whole answer, the part written before the restart included", count(t.sessionId, "turn-end") === 1 && final.startsWith(before.trimStart().slice(0, 40)) && lines.every((line) => final.includes(line)) && /FINISHED\s*$/.test(final), `${final.length} characters, opens ${JSON.stringify(final.slice(0, 24))}`)
+    const messages = projectAntigravityTranscript(readFileSync(antigravityTranscriptPath(stateDir, t.sessionId), "utf8"), `antigravity:${t.sessionId}`, opencodeToolCards).filter((m) => m.role === "assistant")
+    ok("and the drawer shows it as one message with no break at the restart", messages.length === 1 && messages[0]!.text === final, `${messages.length} message(s), ${messages[0]?.parts.length} part(s)`)
+    if (a.diagnostics.length + b.diagnostics.length) console.log(`      diagnostics: ${[...a.diagnostics, ...b.diagnostics].slice(-8).join(" | ")}`)
+    await b.bridge.endSession(t.threadSlug, t.sessionId)
+    await b.bridge.shutdown()
   }
 
   if (runs("steers")) {
