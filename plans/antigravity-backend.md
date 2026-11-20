@@ -80,7 +80,7 @@ The account's plan decides the models. The free tier lists Gemini 3.8 Flash, Cla
 
 ## Stress run
 
-2026-11-20, against the fake `agy` unless a row says otherwise. The driver kept a transcript to its own rules after every scenario: no turn opened inside another, no ending without a start, no tool call or result written twice, no agent text outside a turn.
+2026-11-20, against the fake `agy` unless a row says otherwise. The driver is `backend/_stress_antigravity.mts`, and it kept a transcript to its own rules after every scenario: no turn opened inside another, no ending without a start, no tool call or result written twice, no agent text outside a turn.
 
 | Scenario | Result |
 | --- | --- |
