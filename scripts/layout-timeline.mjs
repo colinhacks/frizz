@@ -356,7 +356,7 @@ try {
   const zero = await page.evaluate(() => { window.__mark({ ev: "ACTION" }); return performance.now() })
   const zeroWall = Date.now()
   acting = true
-  const pressSend = async () => click(await page.evaluateHandle(() => [...window.__pane().querySelectorAll("[data-composer-box] button[aria-label=Send]")].find((b) => !b.disabled && b.getBoundingClientRect().height > 0) ?? null), "enabled Send in the prompt box")
+  const pressSend = async () => click(await page.evaluateHandle(() => [...window.__pane().querySelectorAll("[data-composer-box] button[aria-label^=Send]")].find((b) => !b.disabled && b.getBoundingClientRect().height > 0) ?? null), "enabled Send in the prompt box")
 
   const pending = []
   if (boardChange) {

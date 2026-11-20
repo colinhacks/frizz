@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { AGENT_MARKS, composerRail, GAUGE_GLYPH, GAUGE_MARK, GOAL_GLYPH, markGlyph, MIC_GLYPH, PAPERCLIP_GLYPH, PLUG_GLYPH, PLUG_MARK, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_ROW_INSET, RAIL_MARK_SQUARE, SEND_SPLIT_WIDTH } from "./iconRhythm.ts"
+import { AGENT_MARKS, composerRail, GAUGE_GLYPH, GAUGE_MARK, GOAL_GLYPH, markGlyph, MIC_GLYPH, PAPERCLIP_GLYPH, PLUG_GLYPH, PLUG_MARK, PROMPT_BOX_CORNER, PROMPT_FOOTER_ROW, PROMPT_ROW_INSET, RAIL_MARK_SQUARE, SEND_SPLIT_LABEL_WIDTH, sendSplitWidth } from "./iconRhythm.ts"
 
 // Measured with scripts/ink-gaps.mjs (the table's comment in iconRhythm.ts).
 test("without a microphone the rail keeps its measured offsets", () => {
@@ -72,19 +72,24 @@ test("the microphone sits beside send and the marks to its left close up behind 
 })
 
 // The thread composer's Send is the split button (word, hairline, caret). It is wider than the square
-// and nothing else about the rail changes: the same gaps, measured from its left edge instead.
+// and nothing else about the rail changes: the same gaps, measured from its left edge instead. The word
+// is the ticked way of sending and each word has its own measured width, so the marks follow the word.
 test("a wider Send moves every mark to its left by exactly the extra width, on whole pixels", () => {
-  assert.equal(SEND_SPLIT_WIDTH, 69.5)
-  const extra = Math.ceil(SEND_SPLIT_WIDTH) - 24
-  for (const present of [{}, { lead: true }, { mic: true, lead: true }]) {
-    const square = composerRail(present)
-    const split = composerRail({ ...present, sendWidth: SEND_SPLIT_WIDTH })
-    assert.equal(split.right.send, square.right.send, "Send keeps its inset from the box's right edge")
-    for (const mark of ["mic", "paperclip", "lead"] as const) {
-      if (square.right[mark] === undefined) continue
-      assert.equal(split.right[mark], square.right[mark]! + extra, mark)
-      assert.ok(Number.isInteger(split.right[mark]), `${mark} sits on a whole pixel`)
+  assert.equal(sendSplitWidth("steer"), 71.5)
+  assert.equal(sendSplitWidth("queue"), 77.5)
+  for (const mode of ["steer", "queue"] as const) {
+    assert.ok(Number.isInteger(SEND_SPLIT_LABEL_WIDTH[mode] * 2), `${mode}: the hairline lands on a device pixel of a 2x screen`)
+    const extra = Math.ceil(sendSplitWidth(mode)) - 24
+    for (const present of [{}, { lead: true }, { mic: true, lead: true }]) {
+      const square = composerRail(present)
+      const split = composerRail({ ...present, sendWidth: sendSplitWidth(mode) })
+      assert.equal(split.right.send, square.right.send, "Send keeps its inset from the box's right edge")
+      for (const mark of ["mic", "paperclip", "lead"] as const) {
+        if (square.right[mark] === undefined) continue
+        assert.equal(split.right[mark], square.right[mark]! + extra, `${mode} ${mark}`)
+        assert.ok(Number.isInteger(split.right[mark]), `${mode}: ${mark} sits on a whole pixel`)
+      }
+      assert.equal(split.reserve, square.reserve + extra)
     }
-    assert.equal(split.reserve, square.reserve + extra)
   }
 })

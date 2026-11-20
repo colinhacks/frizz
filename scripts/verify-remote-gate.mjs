@@ -1019,7 +1019,7 @@ try {
   await page.click("textarea:not([disabled])")
   await page.keyboard.type("[script ending=done paras=1] typed on the page")
   await sleep(300)
-  await page.click('[aria-label="Send"]')
+  await page.click('[aria-label^="Send"]')
   for (let i = 0; i < 40 && pageFollowUps().length === followUpsBefore; i++) await sleep(250)
   const typedRecord = pageFollowUps().at(-1)
   check("a message typed on the page is sent", pageFollowUps().length > followUpsBefore && typedRecord?.outcome === "ok" && typedRecord?.origin?.access === "full", JSON.stringify(typedRecord ?? {}).slice(0, 200))

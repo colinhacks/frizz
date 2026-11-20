@@ -92,7 +92,7 @@ const HERO = {
   hero: { w: 1440, h: 900, stage: async (page) => {
     await stageAnswer(page)
     await (await page.$('section[aria-label="Snoozed"] button'))?.click()
-    await pointAt(page, await need(page, `${PANE} button[aria-label="Send"]`), 0.82, 0.78)
+    await pointAt(page, await need(page, `${PANE} button[aria-label^="Send"]`), 0.82, 0.78)
     await settle(1200)
     // Where the page's callouts point, as percentages of the shot.
     console.log("callouts", JSON.stringify(await page.evaluate(() => {
@@ -105,7 +105,7 @@ const HERO = {
         option: at(text("[data-question-option]", "SQLite")),
         rail: at(document.querySelector("[data-focus-rail]")),
         subAgents: at(text("[data-focus-rail] *", "Audit every reader of the settings store")),
-        send: at(document.querySelector('[data-pane-thread] button[aria-label="Send"]')),
+        send: at(document.querySelector('[data-pane-thread] button[aria-label^="Send"]')),
       }
     })))
   } },
@@ -275,7 +275,7 @@ const FEATURES = {
     await (await need(page, "[data-composer-box] textarea")).click()
     await page.keyboard.type("Keep it behind the notification service, so the vendor can change later.")
     await settle(300)
-    await pointAt(page, await need(page, 'button[aria-label="Send"]'), 0.82, 0.78)
+    await pointAt(page, await need(page, 'button[aria-label^="Send"]'), 0.82, 0.78)
     await settle(500)
   } },
   // The parent's option is picked, so the question that hangs on it has opened.
@@ -524,7 +524,7 @@ const FEATURES = {
     // ⌘I collapses the selection. Select the line again, so the shot shows which line the reference names,
     // with the pointer in the chat, where the comment is going.
     await select(line)
-    await pointAt(page, await need(page, '[data-composer-box] button[aria-label="Send"]'), 0.84, 0.72)
+    await pointAt(page, await need(page, '[data-composer-box] button[aria-label^="Send"]'), 0.84, 0.72)
     await settle(300)
   } },
 }

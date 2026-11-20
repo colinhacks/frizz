@@ -154,6 +154,25 @@ function Fixture() {
                 placeholder="Ask anything"
               />
             </section>
+            {/* The thread composer's SPLIT SEND, once per face. The word is the ticked way of sending and
+                each word has its own measured width (lib/iconRhythm SEND_SPLIT_LABEL_WIDTH), so the marks to
+                its left sit at a different offset under each: all three are drawn, and measured, here. */}
+            {(["steer", "queue", "solo"] as const).map((face) => (
+              <section key={face} data-send-rail={face} className="flex flex-col gap-2">
+                {/* A whole-pixel line, unlike the headings above: a 16.5px one would seat every other box on
+                    a half pixel, where its label snaps the other way and reads half a pixel off its twin. */}
+                <h2 className="text-[11px] uppercase leading-4 tracking-wide text-muted">Composer rail · split send, {face}</h2>
+                <Composer
+                  value={value}
+                  onChange={setValue}
+                  onSubmit={() => {}}
+                  surface={`iconRhythmFixtureSend-${face}`}
+                  placeholder="Reply to the agent…"
+                  railLead={<RecurringPromptControl thread={thread} />}
+                  send={{ mode: face === "steer" ? "steer" : "queue", onMode: () => {}, running: true, staged: 0, steerable: face !== "solo" }}
+                />
+              </section>
+            ))}
           </div>
         </main>
       </TooltipProvider>
