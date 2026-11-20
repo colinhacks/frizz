@@ -1,6 +1,6 @@
 # A dedicated Antigravity backend
 
-**Status:** built and on `main`, 2026-11-20, and revised the same day after a stress run and a review (§ Stress run). Measured against `agy` 1.5.12 and 1.5.13 on a free-tier Google account.
+**Status:** built and on `main`, 2026-11-20, and revised the same day after a stress run and a review (§ Stress run). Measured against `agy` 1.5.12 and 1.5.13 on a free-tier Google account, and on Google AI Pro from 2026-11-20.
 
 **Maintainer's brief (2026-11-20):** a dedicated backend on `agy acp`, at the depth of the Codex one. The Python SDK and its `localharness` binary are ruled out. Google publishes no TypeScript or Go SDK.
 
@@ -17,7 +17,7 @@ Every row is a frame read off the real CLI's stdio with a scratch JSON-RPC drive
 | System prompt | `session/new {_meta:{antigravity:{systemPrompt:{append}}}}` reached the model, and a control without it did not |
 | Resume | `session/resume` restores history with no replay and keeps the appended system prompt; `session/load` replays every message |
 | Config options | `model`, `thought_level` and `mode` are set with `session/set_config_option`, and none survives a resume |
-| Thinking levels | present only on a model that has them: low, medium and high on Gemini 3.8 Flash, none on the Claude and GPT models; a model switch resets the level |
+| Thinking levels | present only on a model that has them, and read per model: low to high on Gemini 3.8 Flash, low to `xhigh` on Gemini 4 Neon and Hydrogen, none on the orchestrators and GPT-OSS; a model switch resets the level |
 | Steer | a second `session/prompt` mid-turn joins the turn; the first prompt's response returns at once and the last one's ends the turn |
 | Self-started work | a background command or a sub-agent reporting back sends updates with no prompt outstanding and no end marker: text, then `usage_update`, then silence |
 | Sub-agents | `invoke_subagent` returns in milliseconds, and the report arrives later as self-started work; the child's own tool calls are not on the stream |
@@ -28,9 +28,17 @@ Every row is a frame read off the real CLI's stdio with a scratch JSON-RPC drive
 | Compaction | `/compact` sent as a prompt returns `end_turn` with no frames; the appended system prompt survives it |
 | Sandbox | in `auto` mode the shell cannot reach loopback or Frizz's state directory, and no permission request is raised |
 | Bypass | `agy acp --dangerously-skip-permissions` is a launch flag; with it no call asks and no shell is sandboxed |
-| Quota | `agy -p "/usage" --output-format json` prints one group per family of models sharing a weekly limit, with no session and no tokens, in about 3s |
+| Quota | `agy -p "/usage" --output-format json` prints one group per family of models sharing a limit, with no session and no tokens, in about 3s |
+| Quota on a paid plan | each family has a 5h and a weekly limit, and Gemini 4 Argon's allowance is a group of its own that lists no models |
 
-The account's plan decides the models. The free tier lists Gemini 3.8 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS 120B, so no Gemini 4 model and no `xhigh` or `max` level has been run.
+The account's plan decides the models.
+
+| Plan | Models |
+| --- | --- |
+| Free | Gemini 3.8 Flash, Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS 120B |
+| Google AI Pro | Gemini 4 Neon, Argon and Hydrogen, Orchestrator (Neon) and (Argon), Gemini 3.8 Flash, Claude Opus 5.5 and Sonnet 5.5, GPT-OSS 120B |
+
+Gemini 4 Neon has run every live scenario at the low level and the dispatch and resume ones at `xhigh`. No model on either plan offers `max`.
 
 ## Decisions
 
@@ -48,6 +56,9 @@ The account's plan decides the models. The free tier lists Gemini 3.8 Flash, Cla
 12. **Questions are cards.** An `elicitation/create` becomes an `agent-question` interaction, and its answer goes back as the form's content.
 13. **The model list is read from a throwaway session.** There is no other way to ask, and selecting each model in turn to read its levels costs no tokens. It is held for ten minutes and read only when Antigravity is the chosen profile or its list is opened.
 14. **Quota is the CLI's own usage report,** read only by a gauge standing on an Antigravity model and held for five minutes. It runs only after the model list has answered over ACP, which fails cleanly for a signed-out account.
+    - A window lists the models it meters. A group says so in its description, or is named for the one model it meters ("Gemini 4 Argon"). An orchestrator no group names is metered with the model it is called after, as the report files Orchestrator (Neon) beside Neon.
+    - With several limits in a family, the panel heads the family once and each row is its span, since "Claude and GPT, weekly" does not fit beside a percentage and a reset time.
+    - The gauge reads the selected model's 5h window, and a weekly one only once it is low, as it does for Claude.
 15. **Sign-in is the person's own.** Frizz reads no Antigravity credential; a signed-out dispatch says to run `agy` and sign in.
 16. **A Frizz restart adopts the running agent as it is.** The daemon keeps the agent and its turn. The next runtime takes over every prompt still in flight, and a turn whose prompt returned meanwhile closes on the quiet rule once the daemon's replay is read.
     - Tool calls already in the transcript are not announced again: a call that spans the restart gets its result on the row it has.

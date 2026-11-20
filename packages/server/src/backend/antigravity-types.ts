@@ -271,32 +271,68 @@ export type AntigravityUsage = z.infer<typeof AntigravityUsage>
 // names the model menu lists them under, less a suffix such as "(Thinking)".
 const GROUP_MODELS = /^Models within this group:\s*(.+)$/i
 
-/** The usage report as the quota Frizz's gauge reads: one window per limit, each naming the models it
- *  meters by the ids a thread's slug carries ("" is the configured model, the bare slug). A group that
- *  does not say which models it holds meters all of them. */
+/** A limit's span in hours, to put a family's shorter limit first. An unfamiliar span sorts last. */
+function spanHours(span: string | undefined): number {
+  const counted = /^(\d+)\s*([hd])$/i.exec(span?.trim() ?? "")
+  if (counted) return Number(counted[1]) * (counted[2]!.toLowerCase() === "d" ? 24 : 1)
+  return ({ daily: 24, weekly: 168, monthly: 720 } as Record<string, number>)[span?.trim().toLowerCase() ?? ""] ?? 1e9
+}
+
+/**
+ * The usage report as the quota Frizz's gauge reads: one window per limit, each naming the models it
+ * meters by the ids a thread's slug carries ("" is the configured model, the bare slug).
+ *
+ * The free plan reports one weekly limit per family of models. A paid plan reports a 5h and a weekly
+ * limit per family, and Gemini 4 Argon's allowance as a group of its own (measured on Google AI Pro,
+ * 2026-11-20). Which models a group meters is read three ways:
+ *   - its description lists them ("Models within this group: …");
+ *   - failing that, it is named for the one model it meters ("Gemini 4 Argon");
+ *   - a model no group names that is called after another ("Orchestrator (Argon)") is metered with that
+ *     one, as the report itself files "Orchestrator (Neon)" beside Gemini 4 Neon.
+ * A group that says none of this meters every model.
+ */
 export function antigravityQuotaFromUsage(
   usage: AntigravityUsage,
   account: { models: ReadonlyArray<{ id: string; name: string }>; defaultModel?: string; tier?: string },
 ): ProviderQuota {
-  const windows: QuotaWindow[] = []
-  for (const group of usage.command.data.groups) {
+  const groups = usage.command.data.groups
+  const metered = groups.map((group): string[] | undefined => {
     const names = GROUP_MODELS.exec(group.description?.trim() ?? "")?.[1]?.split(",").map((name) => name.trim()).filter(Boolean) ?? []
-    const ids = account.models.filter((model) => names.some((name) => model.name === name || model.name.startsWith(`${name} `))).map((model) => model.id)
-    const metered = names.length === 0 ? undefined : [...ids, ...(account.defaultModel !== undefined && ids.includes(account.defaultModel) ? [""] : [])]
+    if (names.length) return account.models.filter((model) => names.some((name) => model.name === name || model.name.startsWith(`${name} `))).map((model) => model.id)
+    const own = account.models.filter((model) => model.name.toLowerCase() === group.name.trim().toLowerCase()).map((model) => model.id)
+    return own.length ? own : undefined
+  })
+  const listed = new Set(metered.flatMap((ids) => ids ?? []))
+  for (const model of account.models) {
+    if (listed.has(model.id)) continue
+    const word = /\(([^)]+)\)\s*$/.exec(model.name)?.[1]?.toLowerCase()
+    const host = word ? account.models.find((other) => listed.has(other.id) && other.name.toLowerCase().endsWith(` ${word}`)) : undefined
+    if (host) for (const ids of metered) if (ids?.includes(host.id)) ids.push(model.id)
+  }
+  // With several limits in a family, each row is its span under the family's name, shorter span first.
+  const families = groups.some((group) => group.buckets.length > 1)
+  const windows: QuotaWindow[] = []
+  groups.forEach((group, index) => {
+    const ids = metered[index]
+    const models = ids && [...ids, ...(account.defaultModel !== undefined && ids.includes(account.defaultModel) ? [""] : [])]
     // "Gemini Models" is the group's title. The row it labels sits under Antigravity's own name, beside
     // "79% left" and a reset day in a 15rem panel, so it keeps the part that tells the groups apart.
     const label = group.name.replace(/\s+models$/i, "")
-    for (const bucket of group.buckets) {
+    const buckets = families ? [...group.buckets].sort((a, b) => spanHours(a.window) - spanHours(b.window)) : group.buckets
+    for (const bucket of buckets) {
+      const span = bucket.window?.trim().toLowerCase()
       const resetsAt = bucket.reset_time ? Math.floor(Date.parse(bucket.reset_time) / 1000) : Number.NaN
       windows.push({
         key: bucket.id ?? `${group.name}-${bucket.window ?? windows.length}`.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-        label: group.buckets.length > 1 && bucket.window ? `${label}, ${bucket.window}` : label,
+        label: families && span ? span.charAt(0).toUpperCase() + span.slice(1) : label,
         usedPercent: (1 - Math.max(0, Math.min(1, bucket.remaining_fraction))) * 100,
         ...(Number.isFinite(resetsAt) ? { resetsAt } : {}),
-        ...(metered ? { models: metered } : {}),
+        ...(models ? { models } : {}),
+        ...(families ? { group: label } : {}),
+        ...(span ? { span } : {}),
       })
     }
-  }
+  })
   if (windows.length === 0) return { status: "unavailable", windows: [], detail: `${ANTIGRAVITY_LABEL} reported no limits` }
   // The gauge's panel prints "Antigravity · <plan> plan", so the tier's name ("Antigravity Starter Quota",
   // "Google AI Pro") gives up the words that line already says.
