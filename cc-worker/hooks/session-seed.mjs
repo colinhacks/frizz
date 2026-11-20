@@ -27,6 +27,7 @@ import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:
 import { delimiter, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { setSessionOverride, currentSessionId } from '../scripts/frizz/config.mjs';
+import { isHomeDirectory, scratchDirLabel } from '../lib/project-frizz-dir.mjs';
 
 /** @type {{ agent_id?: unknown, agentId?: unknown, source?: string, session_id?: string }} */
 let input = {};
@@ -51,13 +52,13 @@ try {
   sid = currentSessionId(input.session_id);
   // Never into a project folder that has gone: CLAUDE_PROJECT_DIR keeps the old path after a rename,
   // and the sentinel's `mkdir -p` would recreate it as an empty stub (see scratchpad.mjs).
-  if (sid && existsSync(dir)) setSessionOverride(dir, sid, 'off');
+  // Never in the home project: the sentinel's folder would be `~/.frizz`, Frizz's own legacy state root,
+  // and the classic plugin it silences is dormant there anyway, with no `.frizz/` of the project's own.
+  if (sid && existsSync(dir) && !isHomeDirectory(dir)) setSessionOverride(dir, sid, 'off');
 } catch {
   /* best-effort — a failed sentinel write just leaves cc at its dormant default */
 }
-const scratch = sid
-  ? '.frizz/threads/' + sid + '/'
-  : '.frizz/threads/<session-id>/';
+const scratch = scratchDirLabel(dir, sid ?? '<session-id>') ?? 'the scratch directory named in your prompt';
 
 // A RUNTIME pointer, NOT a copy of the contract. The full worker contract (signal fences,
 // scratch-directory rules, sub-agent rules, the question handback, the stop criterion) lives ONCE in

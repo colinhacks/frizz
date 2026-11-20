@@ -3,6 +3,7 @@ import { lstatSync, realpathSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
 import { ThreadSlug } from "@frizz/shared"
+import { isHomeDirectory } from "./project-root.ts"
 
 const execFileP = promisify(execFile)
 
@@ -61,6 +62,9 @@ export interface FrizzBoard {
 }
 
 function directFrizzRoot(projectDir: string): string | null {
+  // The home project has no legacy board, and its `.frizz` would be Frizz's own legacy state root
+  // (project-root.ts projectFrizzDir): the board's CLI must never read thread files out of that.
+  if (isHomeDirectory(projectDir)) return null
   try {
     const projectRoot = realpathSync(projectDir)
     const path = join(projectRoot, ".frizz")

@@ -276,7 +276,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, defaultAgentProfile, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, boardQueuedThread } from "@frizz/shared"
 import { imageDimensions } from "./image-header.ts"
 import { homedir } from "node:os"
-import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, isHomeDirectory, writeProjectIdFile } from "./project-root.ts"
+import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, projectFrizzDir, writeProjectIdFile } from "./project-root.ts"
 import { resolveProjectLabel } from "./project-identity.ts"
 import { registerProject, seedProjectId } from "./project-registry.ts"
 import { detectProjectIcon } from "./project-icon.ts"
@@ -833,20 +833,19 @@ export function addProjectAtPath(input: string, home = homedir()): ProjectCard {
   // A folder INSIDE a checkout still adds the checkout, but an explicitly chosen folder is otherwise
   // the project itself — an adopted plain-directory ancestor does not capture it (chosenProjectRoot).
   const root = chosenProjectRoot(absolute, home)
-  // Minting an id in $HOME writes a project into ~/.frizz — Frizz's own state root — and every
-  // unmarked directory under home then resolves to it. The launcher refuses this; so does the grid.
-  if (isHomeDirectory(root, home)) throw new Error("The home folder cannot be a project — choose a folder inside it.")
+  // The home directory is a project only through here, chosen by name, and keeps its Frizz folder out of
+  // `~/.frizz` (project-root.ts projectFrizzDir). A launch never adopts it (launch-routing.ts).
   // SEEDED, exactly as the launcher seeds it: an established repository whose id lives only in
   // `git config frizz.id` keeps that id, and a folder whose `.frizz/` was deleted keeps the id the
   // registry has for it (seedProjectId), so adding it from the grid finds its existing board instead
   // of minting a fresh one and orphaning every thread on it.
-  const id = ensureProjectIdFile(root, home, seedProjectId(root, home, existingProjectId(root)))
+  const id = ensureProjectIdFile(root, home, seedProjectId(root, home, existingProjectId(root, home)))
   const remoteOwner = resolveProjectLabel(root)?.split("/")[0]
   let registered = registerProject({ dir: root, id, remoteOwner }, home)
   if (registered.action === "duplicate") {
     // A copied checkout brought another project's `.frizz/.id` with it; give it one of its own
     // rather than letting it adopt the original's threads.
-    registered = registerProject({ dir: root, id: writeProjectIdFile(root, randomUUID()), remoteOwner }, home)
+    registered = registerProject({ dir: root, id: writeProjectIdFile(root, randomUUID(), home), remoteOwner }, home)
   }
   if (!registered.entry) throw new Error("Could not register that folder.")
   return projectCard(registered.entry, false)
@@ -970,7 +969,7 @@ function mergeSubAgentSteers(messages: TranscriptMessage[], steers: SubAgentStee
 }
 
 export function createRouter(ctx: AppContext) {
-  const frizzDir = join(ctx.project.dir, ".frizz")
+  const frizzDir = projectFrizzDir(ctx.project.dir)
   // Roots for the file-OPEN action + the inline-code path classifier (see openableFileRoots): shared so
   // a path the resolver blesses is exactly a path the open action will accept.
   // Read per call: a checkout a thread registers is a root from that moment (worktree-changes.ts).

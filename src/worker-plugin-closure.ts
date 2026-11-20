@@ -46,6 +46,8 @@ export const WORKER_PLUGIN_REQUIRED_FILES = [
   "cc-worker/bin/frizzctl",
   "cc-worker/bin/frizzctl.mjs",
   "cc-worker/lib/frizz-tools.mjs",
+  // Where a project's Frizz folder is, for the hooks; the home project's is not under it (2026-11-20).
+  "cc-worker/lib/project-frizz-dir.mjs",
   // The board scripts the server shells out to (`index.mjs`, `thread-update.mjs`), the two modules the
   // plugin's hooks import, and everything those four import in turn. Until 2026-11-10 the last three
   // were missing, so a tree without `ownership.mjs` passed this check and failed at its first board

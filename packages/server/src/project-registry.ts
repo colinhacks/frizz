@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { slugify } from "@frizz/shared"
 import { frizzPaths, launchHostDir } from "./frizz-paths.ts"
-import { existingProjectId } from "./project-root.ts"
+import { existingProjectId, isHomeDirectory, projectIdPath } from "./project-root.ts"
 
 // THE MACHINE'S LIST OF PROJECTS.
 //
@@ -214,9 +214,9 @@ function slugifyProject(value: string): string {
 export function deriveSlug(
   dir: string,
   taken: ReadonlySet<string>,
-  options: { remoteOwner?: string } = {},
+  options: { remoteOwner?: string; base?: string } = {},
 ): string {
-  const base = slugifyProject(basename(dir))
+  const base = slugifyProject(options.base ?? basename(dir))
   const parent = slugifyProject(basename(dirname(dir)))
   const qualified = GENERIC.has(base) && parent ? `${parent}-${base}` : base
 
@@ -287,7 +287,7 @@ export function registerProject(
     }
     // The id is claimed by a path that is still there ⇒ this directory is a COPY of it, not the same
     // project relocated. Refuse rather than stealing the original's threads.
-    if (existsSync(join(byId.path, ".frizz", ".id"))) return { action: "duplicate" }
+    if (existsSync(projectIdPath(byId.path, home))) return { action: "duplicate" }
     byId.path = input.dir
     byId.lastOpenedAt = at
     writeRegistry(registry, home)
@@ -304,10 +304,13 @@ export function registerProject(
   }
 
   const taken = new Set(registry.projects.map((p) => p.slug))
+  // The home directory is named for what it is rather than for the account: "Home", at /project/home.
+  const isHome = isHomeDirectory(input.dir, home)
   const entry: RegistryEntry = {
     id: input.id,
     path: input.dir,
-    slug: deriveSlug(input.dir, taken, { remoteOwner: input.remoteOwner }),
+    slug: deriveSlug(input.dir, taken, { remoteOwner: input.remoteOwner, ...(isHome ? { base: "home" } : {}) }),
+    ...(isHome ? { name: "Home" } : {}),
     lastOpenedAt: at,
   }
   registry.projects.push(entry)

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, parse, resolve } from "node:path"
+import { frizzPaths } from "./frizz-paths.ts"
 import { acquireNamedLaunchLockSync, readGitProjectId, validateProjectId } from "./project-identity.ts"
 
 // WHAT A PROJECT IS, WITHOUT ASKING GIT.
@@ -46,8 +47,30 @@ const PROJECT_MARKERS = [
   "Makefile",
 ]
 
-export function projectIdPath(root: string): string {
-  return join(root, FRIZZ_DIR, ID_FILE)
+/**
+ * Where a project keeps its Frizz folder: `<root>/.frizz`, except for the home directory.
+ *
+ * THE HOME PROJECT'S FOLDER CANNOT BE `~/.frizz`. That path is Frizz's legacy state root, and its mere
+ * EXISTENCE moves every Frizz process on the machine onto it (frizz-paths.ts rule 1), including launchers
+ * and servers too old to know about a home project. On an install that keeps its state in the platform's
+ * own place, the next boot would open an empty board. So the home project's folder lives inside Frizz's
+ * data root instead, under a leaf still named `.frizz`, which keeps every check that the folder is a real
+ * `.frizz` directory (dispatch.ts ensureSafeDirectDirectory, frizz.ts directFrizzRoot) true for it.
+ *
+ * Everything Frizz writes for a project goes through here: the id, each thread's scratch directory, the
+ * session sentinels. The worker hooks keep a copy of this rule (cc-worker/lib/project-frizz-dir.mjs).
+ */
+export function projectFrizzDir(root: string, home?: string): string {
+  return isHomeDirectory(root, home ?? homedir()) ? homeProjectFrizzDir(home) : join(root, FRIZZ_DIR)
+}
+
+/** The home project's Frizz folder, whether or not it exists. */
+export function homeProjectFrizzDir(home = homedir()): string {
+  return join(frizzPaths({ home }).data, "home", FRIZZ_DIR)
+}
+
+export function projectIdPath(root: string, home?: string): string {
+  return join(projectFrizzDir(root, home), ID_FILE)
 }
 
 /** The id recorded in this exact directory, or undefined. A malformed file is refused, never guessed at. */
@@ -61,17 +84,17 @@ export function projectIdPath(root: string): string {
  * three times in one change (registry backfill, launch intent, and the grid's add path) and made two
  * of the maintainer's four live projects invisible.
  */
-export function readProjectIdFile(root: string): string | undefined {
+export function readProjectIdFile(root: string, home?: string): string | undefined {
   let raw: string
   try {
-    raw = readFileSync(projectIdPath(root), "utf8")
+    raw = readFileSync(projectIdPath(root, home), "utf8")
   } catch {
     return undefined
   }
   try {
     return validateProjectId(raw.trim())
   } catch {
-    throw new Error(`${projectIdPath(root)} is invalid; expected exactly one UUID`)
+    throw new Error(`${projectIdPath(root, home)} is invalid; expected exactly one UUID`)
   }
 }
 
@@ -81,8 +104,8 @@ export function readProjectIdFile(root: string): string | undefined {
  * open(wx) → fsync → rename is the same shape project-launch.ts uses: a reader either sees the old
  * file or the complete new one, never a half-written id.
  */
-export function writeProjectIdFile(root: string, id: string): string {
-  const dir = join(root, FRIZZ_DIR)
+export function writeProjectIdFile(root: string, id: string, home?: string): string {
+  const dir = projectFrizzDir(root, home)
   mkdirSync(dir, { recursive: true })
   // Written before the id, so the id is never briefly visible to `git add -A`.
   const ignore = join(dir, SELF_IGNORE)
@@ -90,7 +113,7 @@ export function writeProjectIdFile(root: string, id: string): string {
     try { writeFileSync(ignore, "*\n", { flag: "wx" }) } catch { /* raced; a `*` is a `*` */ }
   }
 
-  const path = projectIdPath(root)
+  const path = join(dir, ID_FILE)
   const temp = join(dir, `.${ID_FILE}.${process.pid}.${randomUUID()}.tmp`)
   let fd: number | undefined
   try {
@@ -125,13 +148,13 @@ export function projectRootLockName(root: string): string {
  * `git config`'s own lock used to provide, and the one a bare "write if missing" would lose.
  */
 export function ensureProjectIdFile(root: string, home = homedir(), seed?: string): string {
-  const existing = readProjectIdFile(root)
+  const existing = readProjectIdFile(root, home)
   if (existing) return existing
   const release = acquireNamedLaunchLockSync(home, projectRootLockName(root))
   try {
-    const raced = readProjectIdFile(root)
+    const raced = readProjectIdFile(root, home)
     if (raced) return raced
-    return writeProjectIdFile(root, seed ? validateProjectId(seed) : randomUUID())
+    return writeProjectIdFile(root, seed ? validateProjectId(seed) : randomUUID(), home)
   } finally {
     release()
   }
@@ -169,15 +192,19 @@ function hasAny(dir: string, names: readonly string[]): boolean {
  * home directory one project, with agents dispatched at it.
  */
 /**
- * THE HOME DIRECTORY IS NOT A PROJECT, and adopting it is not merely untidy.
+ * THE HOME DIRECTORY IS NEVER ADOPTED BY ACCIDENT, and is a project only when someone chooses it.
  *
- * Frizz's own global state lives in `~/.frizz` — the registry, every project's state dir, the launch
- * locks. Making $HOME a project writes `~/.frizz/.id` and `~/.frizz/.gitignore` INTO that state
- * root, and from then on the walk-up below finds that `.frizz/.id` from any unmarked directory under
- * $HOME, so every one of them resolves to the home "project". That happened (2026-08-06).
+ * Until 2026-11-20 it was never a project at all. Its Frizz folder would have been `~/.frizz`, which is
+ * Frizz's own legacy state root — the registry, every project's state dir, the launch locks — and on
+ * 2026-08-06 a home "project" wrote `~/.frizz/.id` INTO that root, after which the walk-up below found it
+ * from every unmarked directory under $HOME. The home project now keeps its folder elsewhere
+ * (projectFrizzDir), and the walk-up stops before it reaches $HOME, so the maintainer's ask could be met
+ * (2026-11-20: "a home project with the ability to start a Frizz thread just inside of my home
+ * directory"). What still holds: a launch never adopts $HOME (launch-routing.ts classifyLaunch), however
+ * many markers it carries, and only the dashboard's explicit add makes it one (router.ts addProjectAtPath).
  *
  * discoverProjectRoot still ANSWERS with the directory it was given — "where would the root be" has
- * an answer even in $HOME. Refusing to adopt it is the caller's job, and this is the predicate.
+ * an answer even in $HOME. Whether to adopt it is the caller's call, and this is the predicate.
  */
 export function isHomeDirectory(dir: string, home = homedir()): boolean {
   // REALPATH BOTH SIDES. `resolve` alone compares the paths as written, and on macOS the launch
@@ -210,8 +237,8 @@ export function isHomeDirectory(dir: string, home = homedir()): boolean {
  *
  * Pure: it never mints. resolveGitProjectIdentity would, which is exactly wrong for a question.
  */
-export function existingProjectId(dir: string): string | undefined {
-  const fromFile = readProjectIdFile(dir)
+export function existingProjectId(dir: string, home?: string): string | undefined {
+  const fromFile = readProjectIdFile(dir, home)
   if (fromFile) return fromFile
   try {
     return readGitProjectId(dir)
@@ -221,8 +248,8 @@ export function existingProjectId(dir: string): string | undefined {
 }
 
 /** Whether this directory has already been adopted, under either identity store. */
-export function isExistingProjectRoot(dir: string): boolean {
-  return existingProjectId(dir) !== undefined
+export function isExistingProjectRoot(dir: string, home?: string): boolean {
+  return existingProjectId(dir, home) !== undefined
 }
 
 /**
@@ -254,7 +281,7 @@ export function discoverProjectRoot(cwd = process.cwd(), home = homedir()): stri
     // adoptable is isHomeDirectory's question, asked by the launcher, not answered here.
     if (at === stop || at === filesystemRoot) break
     // An existing Frizz project wins over the VCS or manifest it happens to sit in.
-    if (existsSync(projectIdPath(at))) return at
+    if (existsSync(projectIdPath(at, home))) return at
     if (hasAny(at, REPO_MARKERS)) return at
     if (hasAny(at, PROJECT_MARKERS)) return at
     if (dirname(at) === at) break

@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, realpathSync } from "node:fs"
 import path from "node:path"
 import type { ScratchFiles } from "@frizz/shared"
+import { projectFrizzDir } from "./project-root.ts"
 
 // THE THREAD'S SCRATCH DIRECTORY AS A ROOT OF ITS OWN ON THE RAIL (maintainer 2026-11-14: "We should
 // automatically register the scratch directory as well as its own root").
@@ -28,7 +29,7 @@ const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/
 
 /** The thread's scratch directory under `projectDir`, whether or not it exists. */
 export function scratchRoot(projectDir: string, sessionId: string): string | undefined {
-  return SESSION_ID.test(sessionId) ? path.join(projectDir, ".frizz", "threads", sessionId) : undefined
+  return SESSION_ID.test(sessionId) ? path.join(projectFrizzDir(projectDir), "threads", sessionId) : undefined
 }
 
 /** Every file in the thread's scratch directory, or undefined when it holds none (or is not there). */

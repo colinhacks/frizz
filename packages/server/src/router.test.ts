@@ -30,7 +30,7 @@ import {
   validateGithubDispatchProfile,
 } from "./router.ts"
 import { projectTranscriptPageAgentLifecycles } from "./transcript.ts"
-import { readProjectIdFile, writeProjectIdFile } from "./project-root.ts"
+import { homeProjectFrizzDir, readProjectIdFile, writeProjectIdFile } from "./project-root.ts"
 import { listProjects, registerProject } from "./project-registry.ts"
 import { createStorage, type AdoptionClaimRow, type SessionRow } from "./storage.ts"
 import type { AdoptionPaneLookup, PaneIdentity, PaneIdentity as PaneSnapshot } from "./adoption-recovery.ts"
@@ -2121,13 +2121,22 @@ test("projectAdd: a picked folder under an adopted plain directory becomes its o
   }
 })
 
-// Minting an id in $HOME writes a project into ~/.frizz, Frizz's own state root, and every unmarked
-// directory under home then resolves to it. The launcher refuses this (2026-08-06); the grid must too.
-test("projectAdd: the home directory itself is refused, and nothing is written", () => {
+// The home directory is a project when it is added by name (2026-11-20), and its Frizz folder is NOT
+// `~/.frizz`: that path is Frizz's legacy state root, whose existence alone would move every Frizz
+// process on the machine onto it (project-root.ts projectFrizzDir).
+test("projectAdd: the home directory is the Home project, and ~/.frizz is never created", () => {
   const home = mkdtempSync(join(tmpdir(), "frizz-add-home-"))
   try {
-    assert.throws(() => addProjectAtPath(home, home), /home folder/u)
-    assert.equal(existsSync(join(home, ".frizz", ".id")), false)
+    const card = addProjectAtPath("~", home)
+    assert.equal(card.path, realpathSync(home))
+    assert.equal(card.name, "Home")
+    assert.equal(card.slug, "home")
+    assert.equal(existsSync(join(home, ".frizz")), false)
+    assert.equal(readFileSync(join(homeProjectFrizzDir(home), ".id"), "utf8").trim(), card.id)
+    // Adding it again finds the same project rather than minting a second.
+    assert.equal(addProjectAtPath(home, home).id, card.id)
+    assert.equal(listProjects(home).length, 1)
+    assert.equal(existsSync(join(home, ".frizz")), false)
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

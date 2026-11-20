@@ -10,6 +10,7 @@
 // A missed binding just means one helper isn't surfaced; a PostToolUse hook must never disturb the turn.
 import { readFileSync } from 'node:fs';
 import { recordBinding, threadFromPrompt } from '../scripts/frizz/agent-bindings.mjs';
+import { isHomeDirectory } from '../lib/project-frizz-dir.mjs';
 
 try {
   // WORKER GATE.
@@ -31,7 +32,8 @@ try {
   const thread = threadFromPrompt(prompt);
   const label = (typeof ti.description === 'string' && ti.description) || trInner.description || null;
 
-  if (agentId && thread) {
+  // Not in the home project, whose `.frizz` would be Frizz's own legacy state root (lib/project-frizz-dir.mjs).
+  if (agentId && thread && !isHomeDirectory(dir)) {
     recordBinding(dir, { agentId, thread, label, session: input.session_id ?? null });
   }
 } catch {

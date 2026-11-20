@@ -233,15 +233,16 @@ test("projectAdd through the app: a refused folder is recorded as refused, an ac
   const app = auditApp(sink, async () => ({ slug: "unused", sessionId: "unused" }))
   const stamp = encodeCallerStamp({ via: "loopback", remote: "127.0.0.1", session: null })
 
-  // The home folder is the one folder the add refuses.
-  const refused = await rpc(app, "projectAdd", { path: home }, { [CALLER_HEADER]: stamp })
+  // A folder that is not there is refused.
+  const missing = join(home, "missing")
+  const refused = await rpc(app, "projectAdd", { path: missing }, { [CALLER_HEADER]: stamp })
   assert.equal(refused.status, 500)
-  const message = "The home folder cannot be a project — choose a folder inside it."
+  const message = `No folder at ${missing}`
   assert.equal(((await refused.json()) as { error: string }).error, message)
   assert.equal(sink.records[0]!.action, "projectAdd")
   assert.equal(sink.records[0]!.outcome, "refused")
   assert.equal(sink.records[0]!.error, message)
-  assert.deepEqual(sink.records[0]!.project, { id: null, dir: home })
+  assert.deepEqual(sink.records[0]!.project, { id: null, dir: missing })
   assert.equal(sink.records[0]!.origin.via, "loopback")
 
   const added = await rpc(app, "projectAdd", { path: folder })
