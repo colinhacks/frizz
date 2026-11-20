@@ -2,6 +2,7 @@ import { chmodSync, lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { frizzTempDir } from "./frizz-paths.ts"
+import { projectFrizzDir } from "./project-root.ts"
 
 // Per-install. The filenames are UUIDs so content cannot collide, but on Linux the first OS user to
 // create this directory sets its mode and the second user's writeFileSync then fails EACCES — and
@@ -72,7 +73,7 @@ function unlinkDirectChild(parent: string, filename: string): boolean {
 
 export function cleanupAdoptionSessionFiles(projectDir: string, sessionId: string): boolean {
   if (!SESSION_ID_RE.test(sessionId)) return false
-  const frizzDir = join(projectDir, ".frizz")
+  const frizzDir = projectFrizzDir(projectDir)
   let clean = true
   if (isDirectDirectory(frizzDir)) {
     const threads = join(frizzDir, "threads")

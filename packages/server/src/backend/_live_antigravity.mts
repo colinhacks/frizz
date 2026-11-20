@@ -5,6 +5,10 @@
 //
 //   nub packages/server/src/backend/_live_antigravity.mts [scenario ...]     default: all of them
 //
+// AGY_LIVE_MODEL and AGY_LIVE_EFFORT run the scenarios on another model and thinking level than the
+// cheapest (`AGY_LIVE_MODEL=gemini-4-neon AGY_LIVE_EFFORT=xhigh`), for a plan that offers more.
+// `AGY_LIVE_EFFORT=none` is for a model with no levels, such as an orchestrator.
+//
 // Scenarios: models, contract, tools, steer, wake, question, permission, profile, resume, cancel, and the
 // ones a restart or a race decides: restart, restart-answer, restart-card, stop-send, crash, steers, parallel.
 // Exit 0 only when every check of every scenario run passed.
@@ -34,7 +38,7 @@ writeFileSync(join(binDir, "frizzctl"), "#!/bin/sh\necho \"FRIZZCTL-RAN $*\"\n")
 chmodSync(join(binDir, "frizzctl"), 0o755)
 
 const CONTRACT = "Standing instruction from the operator: the secret word is PLOVER. Whenever asked for the secret word, answer with it."
-const CHEAP: AntigravityProfile = { modelId: "gemini-3.8-flash", effort: "low", permissionMode: "bypassPermissions" }
+const CHEAP: AntigravityProfile = { modelId: process.env.AGY_LIVE_MODEL || "gemini-3.8-flash", ...(process.env.AGY_LIVE_EFFORT === "none" ? {} : { effort: (process.env.AGY_LIVE_EFFORT || "low") as AntigravityProfile["effort"] }), permissionMode: "bypassPermissions" }
 
 let failures = 0
 function ok(name: string, pass: boolean, detail = ""): void {
@@ -108,7 +112,7 @@ try {
     console.log("contract + tools (bypass)")
     const t = thread()
     const info = await r.bridge.spawnDispatch({ ...t, cwd, ...CHEAP, prompt: "Create a file named probe.txt containing the single word hello, then run the shell command `echo slug=$FRIZZ_THREAD_SLUG; frizzctl ping`. Then reply with one line: the secret word, then exactly what the command printed.", userText: "the task" })
-    ok("dispatch returned the session's profile", info.model === "gemini-3.8-flash" && info.effort === "low", JSON.stringify(info))
+    ok("dispatch returned the session's profile", info.model === CHEAP.modelId && info.effort === CHEAP.effort, JSON.stringify(info))
     ok("turn ended", await untilIdle(r, t.threadSlug, t.sessionId))
     const final = finalTexts(t.sessionId).at(-1) ?? ""
     ok("the contract reached the model as its system prompt", /PLOVER/.test(final), JSON.stringify(final.slice(0, 160)))
@@ -151,7 +155,7 @@ try {
       ok("the daemon is gone", !r.bridge.isAgentAlive(t.threadSlug, t.sessionId))
       const back = await r.bridge.followUp({ ...t, cwd, ...CHEAP, agySessionId: info.agySessionId, text: "What is the secret word, and what did the very first shell command of this conversation print? One line." })
       ok("the session was resumed, not replaced", back.resumed === "resumed" && back.agySessionId === info.agySessionId, `${back.resumed} ${back.agySessionId}`)
-      ok("the level was put back on it", back.effort === "low", String(back.effort))
+      ok("the level was put back on it", back.effort === CHEAP.effort, String(back.effort))
       ok("turn ended", await untilIdle(r, t.threadSlug, t.sessionId))
       const final2 = finalTexts(t.sessionId).at(-1) ?? ""
       ok("history and contract survived", /PLOVER/.test(final2) && final2.includes(`slug=${t.threadSlug}`), JSON.stringify(final2.slice(0, 160)))

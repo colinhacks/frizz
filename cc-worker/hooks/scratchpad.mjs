@@ -57,6 +57,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { currentSessionId } from '../scripts/frizz/config.mjs';
+import { projectFrizzDir, scratchDirLabel } from '../lib/project-frizz-dir.mjs';
 
 /** How many filenames a listing names before it summarizes the rest. A worker with 200 scratch files
  *  needs to know that, not to be handed 200 lines of them. */
@@ -131,8 +132,12 @@ try {
 // Without a session id there is no key, and an unkeyed pad would bleed between sessions.
 if (!sid) process.exit(0);
 
-const threadDir = join(projectDir, '.frizz', 'threads', sid);
-const relPath = '.frizz/threads/' + sid + '/';
+// The home project keeps its Frizz folder in Frizz's data root, never `~/.frizz` (lib/project-frizz-dir.mjs).
+// Where that cannot be told there is no scratch directory to name, and the hook says nothing.
+const frizzDir = projectFrizzDir(projectDir);
+if (!frizzDir) process.exit(0);
+const threadDir = join(frizzDir, 'threads', sid);
+const relPath = scratchDirLabel(projectDir, sid) ?? '';
 
 // ── mode: subagent-start (Codex child-only merge epilogue) ───────────────────────────────────────
 if (mode === 'subagent-start') {

@@ -17,6 +17,7 @@ import {
 } from "@frizz/shared"
 import { log as frizzLog } from "./logging.ts"
 import { PERM_DIR_ENV, permRequestDir, type Project } from "./project.ts"
+import { homeProjectFrizzDir, isHomeDirectory, projectFrizzDir } from "./project-root.ts"
 import type { SessionRow, Storage } from "./storage.ts"
 import type { BoardManager } from "./board.ts"
 import type { AgentBackend, BackendKind, BuiltCommand, FrizzCli, FrizzMcp } from "./backend/types.ts"
@@ -234,19 +235,33 @@ function ensureSafeDirectDirectory(parent: string, name: string): string {
 // (scheduler SOURCE 7). The worker links whatever doc it wrote here and frizz hands that link back the
 // moment the context is summarized away. Durable in SQLite, and visible to the operator — which the hook
 // injection never was.
-export function scratchDirRelPath(sessionId: string): string {
-  return `.frizz/threads/${sessionId}`
+//
+// Relative to the project, which is the worker's cwd, so the path reads the same in every checkout — except
+// in the home project, whose Frizz folder is not under the project at all (project-root.ts projectFrizzDir),
+// where it is the absolute path.
+export function scratchDirRelPath(sessionId: string, projectDir?: string): string {
+  return projectDir !== undefined && isHomeDirectory(projectDir)
+    ? join(homeProjectFrizzDir(), "threads", sessionId)
+    : `.frizz/threads/${sessionId}`
 }
 
-// Provision the thread's scratch directory. Creates the folder and NOTHING inside it, returning the
-// project-relative path. sessionId is a fresh UUID at both dispatch and adopt, so this never collides.
+// Provision the thread's scratch directory. Creates the folder and NOTHING inside it, returning its path
+// as scratchDirRelPath spells it. sessionId is a fresh UUID at both dispatch and adopt, so this never collides.
 export function writeScratchDir(projectDir: string, sessionId: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/.test(sessionId)) throw new Error("invalid session id")
   const projectRoot = realpathSync(projectDir)
-  const frizzDir = ensureSafeDirectDirectory(projectRoot, ".frizz")
+  // The home project's `.frizz` sits in Frizz's data root, one folder down, so that folder is made first.
+  const frizzParent = isHomeDirectory(projectRoot) ? homeProjectParent() : projectRoot
+  const frizzDir = ensureSafeDirectDirectory(frizzParent, ".frizz")
   const threadsDir = ensureSafeDirectDirectory(frizzDir, "threads")
   ensureSafeDirectDirectory(threadsDir, sessionId)
-  return scratchDirRelPath(sessionId)
+  return scratchDirRelPath(sessionId, projectRoot)
+}
+
+function homeProjectParent(): string {
+  const parent = dirname(homeProjectFrizzDir())
+  mkdirSync(parent, { recursive: true })
+  return realpathSync(parent)
 }
 
 // The FIXED worker system prompt for `kind`, compiled in via workerPrompt.ts (single source of truth).
@@ -368,7 +383,7 @@ export function scratchpadHookScript(): string | undefined {
 // travels at SYSTEM level, so it survives compaction and re-applies on resume; this composes the
 // visible-message half. It is the first of the places a worker is told its scratch directory's path,
 // and for Claude the only one at dispatch besides the SessionStart hooks (claudeWorkerSystemPrompt).
-export function composePrompt(sessionId: string, prompt: string, kind: BackendKind = "claude"): string {
+export function composePrompt(sessionId: string, prompt: string, kind: BackendKind = "claude", projectDir?: string): string {
   // The sub-agent clause is the ONE thing that differs between backends here: Claude's children are
   // dispatched with a prompt this worker writes, so it must be told to name the directory in it; codex's
   // native children inherit the conversation and already have it.
@@ -377,7 +392,7 @@ export function composePrompt(sessionId: string, prompt: string, kind: BackendKi
       ? "Native sub-agents share it — have each write its OWN file rather than all editing one."
       : "Name it in a sub-agent's prompt when you want its notes to land somewhere you can read; give each child its OWN file rather than having them all edit one."
   const scratch =
-    `Your scratch directory is \`.frizz/threads/${sessionId}/\` — yours to use however you like, for as many files as you like. It is EMPTY and nothing is expected in it: a single direct task usually needs nothing, and writing notes is never a substitute for doing the work. ${children} Nothing here is read automatically; if you ever want a note to come back after a compaction, \`frizzctl goal start --post-compaction\` re-sends a prompt of your choosing — one that can link a file here — into the emptied window.`
+    `Your scratch directory is \`${scratchDirRelPath(sessionId, projectDir)}/\` — yours to use however you like, for as many files as you like. It is EMPTY and nothing is expected in it: a single direct task usually needs nothing, and writing notes is never a substitute for doing the work. ${children} Nothing here is read automatically; if you ever want a note to come back after a compaction, \`frizzctl goal start --post-compaction\` re-sends a prompt of your choosing — one that can link a file here — into the emptied window.`
   // The banner makes the system→human handoff unmistakable to the worker, and NOTHING of frizz's is
   // allowed below it: the framing note goes here, ABOVE, so everything past the banner is the
   // operator's prompt byte for byte. That is also what the transcript projectors cut on
@@ -418,7 +433,7 @@ export function claudeWorkerSystemPrompt(projectDir: string, contract: WorkerCon
 // or app-server death (measured against a fake model: `instructions` read the file's text, before
 // and after a compaction).
 export function codexWorkerBaseInstructions(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
-  return [loadWorkerPrompt("codex", contract), scratchpadOrientation(sessionId, "codex"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+  return [loadWorkerPrompt("codex", contract), scratchpadOrientation(sessionId, "codex", projectDir), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
 // The block an ACP worker's contract is: the worker contract, the scratch line and the project's
@@ -428,14 +443,14 @@ export function codexWorkerBaseInstructions(sessionId: string, projectDir: strin
 // opencode 2.0.27 the request after `/compact` carried none of it), and on the first prompt into a FRESH
 // session that replaced one the agent could not load. The bridge asks for it through `contractFor`.
 export function acpWorkerContract(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
-  return [loadWorkerPrompt("acp", contract), scratchpadOrientation(sessionId, "acp"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+  return [loadWorkerPrompt("acp", contract), scratchpadOrientation(sessionId, "acp", projectDir), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
 // The block an OpenCode worker's contract is. It is the same three pieces as ACP's, but it rides an
 // instruction entry on the session (`frizz.contract`), which OpenCode keeps across a compaction, and the
 // bridge puts it again on every resume, so it does not need the re-sends an ACP contract does.
 export function opencodeWorkerContract(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
-  return [loadWorkerPrompt("opencode", contract), scratchpadOrientation(sessionId, "opencode"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+  return [loadWorkerPrompt("opencode", contract), scratchpadOrientation(sessionId, "opencode", projectDir), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
 // The block an Antigravity worker's contract is: the same three pieces, appended to the system prompt of
@@ -443,7 +458,7 @@ export function opencodeWorkerContract(sessionId: string, projectDir: string, co
 // it across a resume and a compaction (measured on agy 1.5.12, plans/antigravity-backend.md), so it is
 // sent once, when the session is created, and again only into a fresh session that replaced a lost one.
 export function antigravityWorkerContract(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
-  return [loadWorkerPrompt("antigravity", contract), scratchpadOrientation(sessionId, "antigravity"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+  return [loadWorkerPrompt("antigravity", contract), scratchpadOrientation(sessionId, "antigravity", projectDir), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
 // The SYSTEM-level scratch-directory orientation (survives compaction, rebuilds on every resume), for
@@ -453,12 +468,12 @@ export function antigravityWorkerContract(sessionId: string, projectDir: string,
 // It names the POST-COMPACTION trigger as an available capability, never a prescription (maintainer
 // 2026-08-28: say the directory is there if the worker wants it and that the goal hooks exist — do
 // not push arming as the thing to do).
-export function scratchpadOrientation(sessionId: string, kind: BackendKind = "claude"): string {
+export function scratchpadOrientation(sessionId: string, kind: BackendKind = "claude", projectDir?: string): string {
   const children =
     kind === "codex"
       ? "native sub-agents share it, so give each its own file"
       : "name it in a sub-agent's prompt when you want its notes back, and give each child its own file"
-  return `SCRATCH DIRECTORY: .frizz/threads/${sessionId}/ — yours, free-form, as many files as you like, and nothing is expected in it. A single direct task usually needs none; writing notes is never a substitute for doing the work (${children}). Nothing in this directory is read automatically; if you want a note back after a compaction, \`frizzctl goal start --post-compaction\` re-sends a prompt of your choosing.`
+  return `SCRATCH DIRECTORY: ${scratchDirRelPath(sessionId, projectDir)}/ — yours, free-form, as many files as you like, and nothing is expected in it. A single direct task usually needs none; writing notes is never a substitute for doing the work (${children}). Nothing in this directory is read automatically; if you want a note back after a compaction, \`frizzctl goal start --post-compaction\` re-sends a prompt of your choosing.`
 }
 
 // A project can ship a repo-committed `FRIZZ.md` at its root to steer frizz workers with its OWN
@@ -1082,7 +1097,7 @@ export interface DispatchDeps {
 
 export function createDispatcher(deps: DispatchDeps): Dispatcher {
   const readBoardSource = deps.readBoard ?? readBoard
-  const frizzDir = join(deps.project.dir, ".frizz")
+  const frizzDir = projectFrizzDir(deps.project.dir)
   const adoptionRuntime: AdoptionRecoveryRuntime = deps.adoptionRuntime ?? productionAdoptionRuntime
   // Slugs a dispatch has resolved but not yet written a row for (see dispatch()). One dispatcher per
   // project, and slugs are unique per project, so a per-dispatcher set is exactly the right scope.
@@ -1108,7 +1123,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       // `recursive` because this is a DIRECTORY now, not one file. A failed dispatch has produced no
       // agent and therefore nothing in it, but removing it whole is what keeps a rejected dispatch from
       // leaving a trace — and the path is session-id-keyed, so it can never name another worker.
-      rmSync(join(deps.project.dir, scratchRel), { force: true, recursive: true })
+      rmSync(resolve(deps.project.dir, scratchRel), { force: true, recursive: true })
     } catch {
       // The session-id-keyed scratch directory is inert and never identifies another worker.
     }
@@ -1185,7 +1200,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         // agent_session_id).
         const scratchRel = writeScratchDir(deps.project.dir, sessionId)
 
-        const prompt = composePrompt(sessionId, input.prompt, kind)
+        const prompt = composePrompt(sessionId, input.prompt, kind, deps.project.dir)
 
         // Codex app-server transport: a PERSISTED JSON-RPC session + the prompt as its first turn. No
         // terminal and no rollout discovery — the bridge returns the codex session id, which the tailer
@@ -1674,7 +1689,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         rollback()
         throw unavailable()
       }
-      const prompt = composePrompt(sessionId, task)
+      const prompt = composePrompt(sessionId, task, "claude", deps.project.dir)
       const permissionMode = workerDispatchPermission("claude", settings)
 
       // Adoption spawns through the broker, exactly like a fresh dispatch. It used to claim a terminal

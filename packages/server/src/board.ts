@@ -23,6 +23,7 @@ import type { Tailer, SessionTelemetry, FenceView } from "./tailer.ts"
 import { firstTextLine } from "./tailer.ts"
 import type { InteractionChange } from "./interaction-store.ts"
 import { frizzDirExists } from "./frizz.ts"
+import { isHomeDirectory } from "./project-root.ts"
 import { githubStatusKey, idlePrsOf, liveActivityOf, needsInputParkHolds, parseIssueRef, parsePrRef, readAwaitingPark, readGithubIssueStatusBook, readGithubStatusBook, GITHUB_ISSUE_STATUS_SETTING, GITHUB_STATUS_SETTING, type GithubIssueStatusBook, type GithubStatusBook } from "./awaiting.ts"
 import { findByPathCached } from "./project-registry.ts"
 import { jsonEqual } from "./json-value.ts"
@@ -3352,7 +3353,11 @@ export function createBoard(
         recent.prune()
         void rebuild().catch(() => {})
       }, RECONCILE_MS)
-      if (frizzDirExists(project.dir)) {
+      if (isHomeDirectory(project.dir)) {
+        // The home project has no legacy board to watch (frizz.ts directFrizzRoot), and a watch on the
+        // home folder would wake on every dotfile write in it. Its threads reach the board through the
+        // edges and the reconcile above, like every session-first thread.
+      } else if (frizzDirExists(project.dir)) {
         await watchFrizzDir()
       } else {
         // .frizz/ not created yet — watch the repo root (non-recursive) for its appearance,

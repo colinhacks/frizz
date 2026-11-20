@@ -82,6 +82,21 @@ test("the dial runs from E at the lower left, over the top, to F at the lower ri
   assert.ok(fx > GAUGE.cx && fy > GAUGE.cy, "full points lower right")
 })
 
+test("a provider with a 5h window per family of models has the gauge read the selected model's 5h window", () => {
+  // Antigravity on a paid plan: its windows are keyed by the limit's own id, and say their span.
+  const session: QuotaWindow = { key: "gemini-5h", label: "5h", usedPercent: 10, models: ["gemini-4-neon"], group: "Gemini", span: "5h" }
+  const weekly: QuotaWindow = { key: "gemini-weekly", label: "Weekly", usedPercent: 40, models: ["gemini-4-neon"], group: "Gemini", span: "weekly" }
+  const argon: QuotaWindow = { key: "gemini-argon-wtu-weekly", label: "Weekly", usedPercent: 95, models: ["gemini-4-argon"], group: "Gemini 4 Argon", span: "weekly" }
+  const all = [session, weekly, argon]
+  // The weekly has less left, but not little: the 5h window is the wall the next turn meets.
+  assert.equal(gaugeWindow(windowsMetering(all, "gemini-4-neon"), undefined), session)
+  // In the warn zone the weekly takes the gauge, as Claude's does.
+  const low = { ...weekly, usedPercent: 80 }
+  assert.equal(gaugeWindow(windowsMetering([session, low, argon], "gemini-4-neon"), undefined), low)
+  // Argon's nearly spent allowance is Argon's reading and nobody else's.
+  assert.equal(gaugeWindow(windowsMetering(all, "gemini-4-argon"), undefined), argon)
+})
+
 test("the lit arc grows with the reading and is empty at zero", () => {
   assert.equal(gaugeArc(GAUGE.start, gaugeAngle(0)), "")
   // Under 180° of sweep is the short way round; a full tank's 270° needs the large-arc flag.

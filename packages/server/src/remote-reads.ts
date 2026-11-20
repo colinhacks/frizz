@@ -4,6 +4,7 @@ import { frizzRoots, launchHostDir } from "./frizz-paths.ts"
 import { isUnderRoot } from "./local-file.ts"
 import { normalizeLocalPath } from "./local-path.ts"
 import { listProjects } from "./project-registry.ts"
+import { homeProjectFrizzDir, isHomeDirectory } from "./project-root.ts"
 
 // ── WHAT A READ-AND-ANSWER SESSION MAY READ OFF THE DISK ────────────────────────────────────────────
 // A file route is a session's whole way to `~/.ssh`: the readers' roots include all of home, on the reasoning
@@ -11,8 +12,10 @@ import { listProjects } from "./project-registry.ts"
 // a local tab reads. One the owner limited to read and answer cannot, so this is its boundary, and it is
 // narrower than the local one on purpose:
 //
-//   · registered project directories, which covers each thread's scratch under `.frizz/threads/`;
-//   · the state root's attachment folders, and nothing else under any state root (`session-key`,
+//   · registered project directories, which covers each thread's scratch under `.frizz/threads/` —
+//     except the home directory, whose threads' scratch is read through the state root instead;
+//   · the state root's attachment folders and the host and home folders' thread scratch, and nothing
+//     else under any state root (`session-key`,
 //     `identity.key` and `sessions.json` live there);
 //   · below any of those, no dot-segment but `.frizz`, and no name that looks like a key.
 //
@@ -61,13 +64,22 @@ function readableUnderStateRoots(real: string): string | undefined {
     const [id, kept] = relative(projects, real).split(sep)
     return id && kept === "attachments" ? join(projects, id, "attachments") : undefined
   }
-  const scratch = realOrNull(join(launchHostDir(), ".frizz", "threads"))
-  return scratch && isUnderRoot(real, scratch) ? scratch : undefined
+  for (const threads of [join(launchHostDir(), ".frizz", "threads"), join(homeProjectFrizzDir(), "threads")]) {
+    const scratch = realOrNull(threads)
+    if (scratch && isUnderRoot(real, scratch)) return scratch
+  }
+  return undefined
 }
 
-/** The directories a board's remote readers may reach: every registered project, and the one it serves. */
+/**
+ * The directories a board's remote readers may reach: every registered project, and the one it serves.
+ *
+ * NEVER THE HOME PROJECT'S. Its directory is the whole of home — every document, download and
+ * `~/Library` database — and a session limited to read and answer was never meant to reach that. Its
+ * threads' scratch stays readable, through the state root's rule above.
+ */
 export function remoteProjectDirs(current: string): string[] {
-  return [current, ...listProjects().map((project) => project.path)]
+  return [current, ...listProjects().map((project) => project.path)].filter((dir) => !isHomeDirectory(dir))
 }
 
 /**
