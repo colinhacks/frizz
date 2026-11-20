@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { editedFilesOf } from "./edited-files.ts"
+import { editedFilesOf, isClaudeMemoryPath } from "./edited-files.ts"
 
 // Every candidate exists unless a test says otherwise, so existence is not silently doing the work.
 const allPresent = () => true
@@ -88,7 +88,7 @@ test("a file no longer on disk is not a row, whether a shell write or an Edit na
     msg(
       "t",
       bash("echo x > gone.txt"),
-      { name: "Write", edit: { file: "/Users/me/.claude/projects/p/memory/removed.md", added: 13, removed: 0 } },
+      { name: "Write", edit: { file: "/Users/me/notes/removed.md", added: 13, removed: 0 } },
       { name: "apply_patch", detail: "src/removed.ts" },
       { name: "Edit", edit: { file: "/p/nub/kept.ts", added: 1, removed: 0 } },
     ),
@@ -99,6 +99,40 @@ test("a file no longer on disk is not a row, whether a shell write or an Edit na
   assert.deepEqual(editedFilesOf(messages, "/p/nub", onDisk).map((f) => f.path), ["/p/nub/kept.ts"])
   // A relative tool path is checked against the project, not the server's cwd.
   assert.ok(asked.includes("/p/nub/src/removed.ts"))
+})
+
+test("a Claude Code memory file is not a row, whichever memory directory holds it", () => {
+  const write = (file: string) => ({ name: "Write", edit: { file, added: 3, removed: 0 } })
+  const out = editedFilesOf(
+    [
+      msg(
+        "t",
+        write("/Users/me/.claude/projects/-p-nub/memory/MEMORY.md"),
+        write("/Users/me/.claude/projects/-p-nub/memory/user-role.md"),
+        write("/Users/me/.claude/agent-memory/reviewer/notes.md"),
+        write("/p/nub/.claude/agent-memory/reviewer/notes.md"),
+        bash("cat > .claude/agent-memory-local/reviewer/notes.md"),
+        // Neighbours that are NOT memory: the project's own settings, a transcript, a memory.md of the project's.
+        write("/p/nub/.claude/settings.json"),
+        write("/Users/me/.claude/projects/-p-nub/abc.jsonl"),
+        write("/p/nub/docs/memory/notes.md"),
+      ),
+    ],
+    "/p/nub",
+    allPresent,
+  )
+  assert.deepEqual(out.map((f) => f.path), ["/p/nub/docs/memory/notes.md", "/Users/me/.claude/projects/-p-nub/abc.jsonl", "/p/nub/.claude/settings.json"])
+})
+
+test("CLAUDE_CONFIG_DIR moves the user-level memory directories with it", () => {
+  const env = { CLAUDE_CONFIG_DIR: "/srv/claude-work" }
+  assert.equal(isClaudeMemoryPath("/srv/claude-work/projects/-p-nub/memory/MEMORY.md", env), true)
+  assert.equal(isClaudeMemoryPath("/srv/claude-work/agent-memory/reviewer/notes.md", env), true)
+  assert.equal(isClaudeMemoryPath("/srv/claude-work/settings.json", env), false)
+  // The memory directory itself is not a file in it.
+  assert.equal(isClaudeMemoryPath("/srv/claude-work/projects/-p-nub/memory", env), false)
+  // Unset, the same path is just a folder with no `.claude` in it.
+  assert.equal(isClaudeMemoryPath("/srv/claude-work/projects/-p-nub/memory/MEMORY.md", {}), false)
 })
 
 test("without a project dir the shell reading is off entirely", () => {
