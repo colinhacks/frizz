@@ -33,8 +33,9 @@ import type { CodexAppServerBridge } from "./backend/codex-app-server.ts"
 import type { AcpBridge } from "./backend/acp-bridge.ts"
 import type { OpencodeBridge } from "./backend/opencode-bridge.ts"
 import { opencodeModeOf } from "./backend/opencode-types.ts"
+import type { AntigravityBridge } from "./backend/antigravity-bridge.ts"
 import { acpAgentIdFromModel } from "./backend/acp-agents.ts"
-import { acpModelIdFromModel, opencodeModelRef } from "@frizz/shared"
+import { acpModelIdFromModel, antigravityModelId, opencodeModelRef } from "@frizz/shared"
 import { claudeBrokerBridgeEnabled, type ClaudeAgentBrokerBridge } from "./backend/claude-agent-broker-bridge.ts"
 import { claudeUltracodeFlags, resolveClaudeEffort } from "./backend/claude-effort.ts"
 import { ProviderAuthRequiredError } from "./backend/auth-status.ts"
@@ -437,6 +438,14 @@ export function opencodeWorkerContract(sessionId: string, projectDir: string, co
   return [loadWorkerPrompt("opencode", contract), scratchpadOrientation(sessionId, "opencode"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
 }
 
+// The block an Antigravity worker's contract is: the same three pieces, appended to the system prompt of
+// the session `agy` creates (`_meta.antigravity.systemPrompt.append` on `session/new`). The session keeps
+// it across a resume and a compaction (measured on agy 1.5.12, plans/antigravity-backend.md), so it is
+// sent once, when the session is created, and again only into a fresh session that replaced a lost one.
+export function antigravityWorkerContract(sessionId: string, projectDir: string, contract: WorkerContractOptions = {}): string {
+  return [loadWorkerPrompt("antigravity", contract), scratchpadOrientation(sessionId, "antigravity"), frizzConfigBlock(projectDir)].filter(Boolean).join("\n\n")
+}
+
 // The SYSTEM-level scratch-directory orientation (survives compaction, rebuilds on every resume), for
 // the backends with no SessionStart hook to carry the path: Codex, ACP and OpenCode. A Claude worker's
 // system prompt leaves it out, see claudeWorkerSystemPrompt.
@@ -530,6 +539,12 @@ export const WORKER_DISPATCH_PERMISSION: Record<BackendKind, PermissionMode> = {
   // whose saved default is Bypass gets Bypass (workerDispatchPermission), and no mode lifts a deny the
   // person configured (opencodeKeptRules).
   opencode: "auto",
+  // ANTIGRAVITY IS CODEX'S CASE. Its `auto` mode runs every command in a terminal sandbox with no
+  // loopback and no reach outside the workspace (measured on agy 1.5.12: `curl` to 127.0.0.1 exits 7 and
+  // nothing asks), which cuts the worker off from `frizzctl`, and its two asking modes stall a headless
+  // worker on a card per command. Only the bypass launch flag leaves a worker both unattended and able
+  // to reach Frizz, so a new thread starts there, and the thread's own control is how to lower it.
+  antigravity: "bypassPermissions",
 }
 
 // The permission mode a NEW worker of `kind` actually launches with, given the operator's Settings.
@@ -600,6 +615,8 @@ export function coldResumePermission(row: { permission_mode?: string | null }, s
 export function effectivePermissionMode(kind: BackendKind, mode: PermissionMode): PermissionMode {
   if (kind === "claude") return workerPermissionMode(mode)
   if (kind === "opencode") return mode === "acceptEdits" || mode === "default" || mode === "plan" || mode === "bypassPermissions" ? mode : "auto"
+  // Each of the five is a mode of Antigravity's own (antigravity-types.ts antigravitySessionMode).
+  if (kind === "antigravity") return mode
   if (mode === "plan" || mode === "bypassPermissions") return mode
   return "default"
 }
@@ -1035,6 +1052,8 @@ export interface DispatchDeps {
   // Absent ⇒ an acp dispatch fails loudly.
   acpBridge?: AcpBridge
   opencodeBridge?: OpencodeBridge
+  // The Antigravity bridge (context.ts): Google's `agy acp`. Absent ⇒ an antigravity dispatch fails loudly.
+  antigravityBridge?: AntigravityBridge
   // The Claude session-broker bridge (context.ts). Every claude dispatch runs over it — headless, in a
   // detached daemon, with no terminal and no PTY. Absent ⇒ a claude dispatch fails loudly.
   claudeBroker?: ClaudeAgentBrokerBridge
@@ -1110,7 +1129,8 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       // An ACP agent has no credential Frizz can read: its auth is probed by the agent itself on
       // session/new, and the bridge turns that refusal into an actionable dispatch error.
       // OpenCode is the same: its logins are its own CLI's, and a thread on a free model needs none.
-      if (kind !== "acp" && kind !== "opencode" && deps.preflightAuth && (await deps.preflightAuth(kind).catch((): ProviderAuth => "unknown")) === "signed-out") {
+      // Antigravity too: `agy` keeps its Google sign-in in the system keyring, and `session/new` says so.
+      if (kind !== "acp" && kind !== "opencode" && kind !== "antigravity" && deps.preflightAuth && (await deps.preflightAuth(kind).catch((): ProviderAuth => "unknown")) === "signed-out") {
         throw new ProviderAuthRequiredError(kind)
       }
       // A runtime that waited for its first thread comes down here, past the sign-in check and before
@@ -1335,6 +1355,55 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             try { bridge.releaseSession(slug, sessionId, "session-deleted") } catch { /* best-effort */ }
             cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
             throw new Error(`OpenCode could not start this thread: ${(err as Error).message}`)
+          }
+        }
+
+        // Google Antigravity (ARCHITECTURE.md § Antigravity backend): `agy acp` in a detached daemon. The
+        // model slug (`antigravity:<model id>`) names the model and the row's effort its thinking level,
+        // which only some models take, so nothing is inherited from the Claude default: with none chosen
+        // the model runs at its own. The contract is the session's system prompt, so the first prompt is
+        // the orientation and the task alone. The row pins `agy`'s session id in `agent_session_id`.
+        if (kind === "antigravity") {
+          const bridge = deps.antigravityBridge
+          if (!bridge) {
+            cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
+            throw new Error("The Antigravity bridge is unavailable; cannot start this thread.")
+          }
+          const level = input.effort ?? null
+          try {
+            const spawned = await bridge.spawnDispatch({ threadSlug: slug, sessionId, cwd: deps.project.dir, modelId: antigravityModelId(model) ?? null, effort: level, permissionMode, prompt, userText: input.prompt })
+            deps.storage.upsertSession({
+              slug,
+              session_id: sessionId,
+              thread_name: threadIdentityName(slug),
+              spawned_at: new Date().toISOString(),
+              last_read_at: null,
+              unread: 0,
+              exited: 0,
+              archived: 0,
+              rested_at: null,
+              title_auto: input.title?.trim() ? 0 : 1,
+              title_locked: 0,
+              title: registryTitle,
+              state: "open",
+              meta: null,
+              seen_at: null,
+              transcript_id: null,
+              model: model ?? null,
+              // What the session actually runs at: the level asked for, or the model's own default.
+              effort: spawned.effort ?? null,
+              permission_mode: permissionMode,
+            })
+            deps.storage.setBackend(slug, "antigravity")
+            deps.storage.setAgentSession(slug, spawned.agySessionId)
+            deps.storage.setWorkerSurface(slug, "cli")
+            if (opts?.parentSlug) deps.storage.setParentSlug(slug, opts.parentSlug)
+            void deps.board.rebuild().catch(() => {})
+            return { slug, sessionId }
+          } catch (err) {
+            try { bridge.releaseSession(slug, sessionId) } catch { /* best-effort */ }
+            cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
+            throw new Error(`Antigravity could not start this thread: ${(err as Error).message}`)
           }
         }
 

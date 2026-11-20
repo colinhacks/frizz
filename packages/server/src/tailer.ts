@@ -5269,7 +5269,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // now, and a broker thread's approvals arrive as typed permission requests over the control channel
     // anyway.
     // Codex and ACP approvals are typed interaction cards, never a marker file.
-    return turn === "in-flight" && row.backend !== "codex" && row.backend !== "acp" && row.backend !== "opencode" && permMarkerBlocks(state, row)
+    return turn === "in-flight" && row.backend !== "codex" && row.backend !== "acp" && row.backend !== "opencode" && row.backend !== "antigravity" && permMarkerBlocks(state, row)
   }
 
   // Write out the un-retirements the FOLD queued: an op the agent restarted under an id the operator
@@ -5953,7 +5953,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     const detail = isBrokerClaudeRow(row) && deps.project.stateDir
       ? `no worker terminal to capture (broker runtime). Daemon diagnostics: ${claudeBrokerDiagnosticLogPath(deps.project.stateDir, row.session_id)}`
       : isHeadlessRow(row)
-      ? `no worker terminal to capture (headless ${row.backend === "codex" ? "codex app-server" : row.backend === "acp" ? "ACP agent" : row.backend === "opencode" ? "OpenCode" : "claude broker"} runtime)`
+      ? `no worker terminal to capture (headless ${row.backend === "codex" ? "codex app-server" : row.backend === "acp" ? "ACP agent" : row.backend === "opencode" ? "OpenCode" : row.backend === "antigravity" ? "Antigravity" : "claude broker"} runtime)`
       // Neither runtime above, i.e. a pre-cutover row. Nothing in this build captures anything, so the
       // old "(pane empty / unavailable)" described output that SHOULD have existed and sent the reader
       // hunting for a screen that cannot exist. Say why there is nothing instead.
@@ -6322,7 +6322,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       // session/load), but the transcript is FRIZZ-written and keyed by the frizz session id
       // (acp-transcript.ts) — so its stem is always `session_id`.
       const backend = resolveBackend(row.backend)
-      const nativeId = row.backend === "acp" || row.backend === "opencode" ? row.session_id : row.agent_session_id ?? row.transcript_id ?? row.session_id
+      const nativeId = row.backend === "acp" || row.backend === "opencode" || row.backend === "antigravity" ? row.session_id : row.agent_session_id ?? row.transcript_id ?? row.session_id
       const known = states.get(row.slug)
       const runtimeGeneration = row.runtime_generation ?? 0
       // The state this row may KEEP: same session, same native transcript stem, same runtime
@@ -6406,7 +6406,7 @@ export function createTailer(deps: TailerDeps): Tailer {
       // would wrongly flag noTranscript (a codex discovery-miss is a separate follow-up). An ACP row's
       // file is deterministic too (frizz writes it), so it takes the same exemption.
       const prevNoTranscript = state.noTranscript
-      if (row.backend !== "codex" && row.backend !== "acp" && row.backend !== "opencode" && !resolveTranscript(state, row, nowMs)) {
+      if (row.backend !== "codex" && row.backend !== "acp" && row.backend !== "opencode" && row.backend !== "antigravity" && !resolveTranscript(state, row, nowMs)) {
         unsettled = true // a discovered transcript lost its claim; the next tick decides again
         continue
       }

@@ -138,6 +138,7 @@ export const REMOTE_ACCESS = {
   claudeModels: "full",
   acpAgentModels: "full",
   opencodeModels: "full",
+  antigravityModels: "full",
   stopThreadTurn: "full",
 
   // MCP, provider and GitHub sign-ins.

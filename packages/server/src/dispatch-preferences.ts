@@ -62,6 +62,7 @@ export function defaultDispatchPreferences(
     // the backend existed lacks the key.
     ...(backend === "acp" ? { acp: selected } : {}),
     ...(backend === "opencode" ? { opencode: selected } : {}),
+    ...(backend === "antigravity" ? { antigravity: selected } : {}),
   }
 }
 

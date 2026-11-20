@@ -243,7 +243,7 @@ function toolResultText(tc: AcpToolCallUpdate): string {
 export function buildAcpPermissionInteraction(
   params: AcpRequestPermissionParams,
   owner: { projectId: string; threadSlug: string; sessionId: string; cwd: string },
-  agent: { id: string; label: string },
+  agent: { id: string; label: string; provider?: "acp" | "antigravity" },
 ): { request: InteractionRequestType; optionByDecision: Map<string, string> } | null {
   const tc = params.toolCall
   const input = tc.rawInput && typeof tc.rawInput === "object" ? tc.rawInput as Record<string, unknown> : undefined
@@ -276,7 +276,7 @@ export function buildAcpPermissionInteraction(
   const base = {
     protocolVersion: INTERACTION_PROTOCOL_VERSION,
     contentFormat: "plain-text" as const,
-    provider: { kind: "acp" as const, name: agent.label },
+    provider: { kind: agent.provider ?? ("acp" as const), name: agent.label },
     source: { kind: "tool" as const, id: clip(tc.toolCallId, 500), label: clip(tc.title ?? tc.kind ?? "tool", 150) },
     owner: { projectId: owner.projectId, threadSlug: owner.threadSlug, sessionId: owner.sessionId, turnId: clip(tc.toolCallId, 500), itemId: clip(tc.toolCallId, 500), sessionEpoch: 0, capabilityRevision: 0 },
     providerRequestId: clip(tc.toolCallId, 500),

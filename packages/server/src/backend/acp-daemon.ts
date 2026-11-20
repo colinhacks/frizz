@@ -16,8 +16,9 @@
 //     mapped back onto whichever client id currently owns them;
 //   - the first `initialize` passes through and its response is CACHED — a reattaching client sends
 //     its own `initialize` and is answered from the cache, because ACP initializes a connection once;
-//   - the ACP session id is remembered from `session/new`'s result (or `session/load`'s params) and
-//     reported in the hello, so the reattaching client adopts the session instead of opening another;
+//   - the ACP session id is remembered from `session/new`'s result (or the params of `session/load`
+//     and `session/resume`) and reported in the hello, so the reattaching client adopts the session
+//     instead of opening another;
 //   - every request still OUTSTANDING (above all a `session/prompt` — the turn) is listed in the hello
 //     with its daemon id, and the client re-owns it with an `adopt` control frame naming its new id;
 //   - while nobody is attached (the restart window) every child→client line is QUEUED, so the turn's
@@ -219,7 +220,7 @@ function main(): void {
           const result = message.result as { sessionId?: unknown } | undefined
           if (typeof result?.sessionId === "string") acpSessionId = result.sessionId
         }
-        if (owner.method === "session/load" && message.error === undefined) {
+        if ((owner.method === "session/load" || owner.method === "session/resume") && message.error === undefined) {
           const params = owner.params as { sessionId?: unknown } | undefined
           if (typeof params?.sessionId === "string") acpSessionId = params.sessionId
         }

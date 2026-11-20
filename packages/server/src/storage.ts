@@ -256,7 +256,8 @@ export function isHeadlessRow(row: Pick<SessionRow, "backend" | "codex_runtime" 
   return (row.backend === "codex" && row.codex_runtime === "app-server") ||
     (row.backend === "claude" && row.claude_runtime === "broker") ||
     row.backend === "acp" ||
-    row.backend === "opencode"
+    row.backend === "opencode" ||
+    row.backend === "antigravity"
 }
 
 /** A Claude row whose session lives in the detached broker daemon, not in any terminal. Stamped

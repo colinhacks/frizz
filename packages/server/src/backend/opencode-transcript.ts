@@ -91,8 +91,9 @@ const clip = (text: string): string => (text.length > TOOL_TEXT_MAX ? `${text.sl
 
 /** How this file's tool records become cards: through the one block mapper Claude's calls go through
  *  (transcript.ts passes it, since that file imports this one), because the bridge wrote them in that
- *  vocabulary (`frizzToolShape`). */
-function dialectFor(buildCards: OpencodeToolCardBuilder): WrittenTranscriptDialect {
+ *  vocabulary (`frizzToolShape`). Antigravity's bridge writes the same vocabulary and reads it the same
+ *  way (antigravity-transcript.ts). */
+export function frizzToolDialect(buildCards: OpencodeToolCardBuilder): WrittenTranscriptDialect {
   return {
     toolCall: (rec) => {
       const call: TranscriptToolCall = buildCards({ id: rec.id, name: rec.name, input: rec.input })[0] ?? { name: rec.name }
@@ -115,7 +116,7 @@ function dialectFor(buildCards: OpencodeToolCardBuilder): WrittenTranscriptDiale
 }
 
 export function projectOpencodeTranscript(raw: string, identityPrefix: string, buildCards: OpencodeToolCardBuilder, userProjector?: AcpUserRecordProjector): TranscriptMessage[] {
-  return projectAcpTranscript(raw, identityPrefix, userProjector, dialectFor(buildCards))
+  return projectAcpTranscript(raw, identityPrefix, userProjector, frizzToolDialect(buildCards))
 }
 
 export function readOpencodeTranscriptFile(absPath: string, buildCards: OpencodeToolCardBuilder, nativeId = absPath, userProjector?: AcpUserRecordProjector): TranscriptMessage[] {

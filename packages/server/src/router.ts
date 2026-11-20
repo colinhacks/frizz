@@ -196,6 +196,11 @@ import {
   acpModelIdFromModel,
   OpencodeModels,
   opencodeModelRef,
+  backendUsesAcpTransport,
+  AntigravityModels,
+  AntigravityModelsInput,
+  antigravityModelId,
+  isAntigravityModel,
   backendFollowUps,
   AcpAgentModels,
   AcpAgentModelsInput,
@@ -215,6 +220,7 @@ import { runThreadUpdate } from "./frizz.ts"
 import { repairThreadFile } from "./repair.ts"
 import { reopenArchivedThreadForFollowUp, resumeThread, wakeParkedThreadForFollowUp } from "./resume.ts"
 import { opencodeModeOf } from "./backend/opencode-types.ts"
+import { antigravityProfileOf } from "./backend/antigravity-types.ts"
 import { opencodeNativeAvailable } from "./backend/opencode-service.ts"
 import { appendDelivery, beginDelivery, cancelDelivery, deliverOutstandingDeliveries, deliveryItem, dismissFailedDelivery, dropHeldDelivery, failHeldDeliveries, forgetDelivery, holdStrandedDeliveries, heldDeliveries, heldSendMustWait, holdDelivery, nextHeldRelease, noteHeldRelease, parseDeliveryLedger, recordDeliveryFailure, retireOutstandingDeliveries } from "./delivery-ledger.ts"
 import { noteSubAgentsEndedByInterrupt, runningSubAgentsOf } from "./interrupt-ended.ts"
@@ -305,7 +311,9 @@ export function validateGithubDispatchProfile(
 ): void {
   // An ACP profile carries no effort, and its "model" is an `acp:<agent>` slug the dispatcher resolves
   // itself (refusing an agent that is not on PATH) — there is no model/effort catalogue to check.
-  if (input.backend === "acp" || input.backend === "opencode") return
+  // An Antigravity profile's effort is optional and each model's own (the agent refuses one it does not
+  // take, and the thread says so), so there is nothing here to check it against either.
+  if (input.backend === "acp" || input.backend === "opencode" || input.backend === "antigravity") return
   if (input.effort === undefined) throw new Error(`Unsupported ${input.backend} model/effort pair: ${input.model} / (no effort)`)
   validateThreadProfile(input.backend, input.model, input.effort, codexModels)
 }
@@ -447,6 +455,21 @@ export function appServerCodexTurnLive(
 // termination that actually landed; an interrupt that could not be delivered THROWS rather than
 // degrading to "stopped", because the caller's next act is to record the worker as exited/done and that
 // record must not outrun the truth.
+/**
+ * The terminator for a row on ACP's transport, whichever backend it is. An ACP agent and an Antigravity
+ * agent live in the same kind of daemon under the same directory, keyed by session id, so each bridge can
+ * see (and would stop) the other's: the row's backend says whose it is.
+ */
+export function acpTransportTerminator(ctx: { storage: Pick<Storage, "getSession">; acpBridge?: AcpTurnTerminator; antigravityBridge?: AcpTurnTerminator }): AcpTurnTerminator | undefined {
+  if (!ctx.acpBridge && !ctx.antigravityBridge) return undefined
+  const of = (slug: string): AcpTurnTerminator | undefined => (ctx.storage.getSession(slug)?.backend === "antigravity" ? ctx.antigravityBridge : ctx.acpBridge)
+  return {
+    turnLiveness: (slug, sessionId) => of(slug)?.turnLiveness(slug, sessionId),
+    endSession: (slug, sessionId) => of(slug)?.endSession(slug, sessionId) ?? Promise.resolve(),
+    isAgentAlive: (slug, sessionId) => of(slug)?.isAgentAlive(slug, sessionId) ?? false,
+  }
+}
+
 export async function stopThreadRuntime(
   storage: Pick<Storage, "getAdoptionClaim"> & Partial<Pick<Storage, "getSession" | "getAdoptionRuntimeSnapshot">>,
   row: SessionRow,
@@ -465,10 +488,11 @@ export async function stopThreadRuntime(
     opencode.releaseSession(row.slug, row.session_id, "session-deleted")
     return alive ? "stopped" : "absent"
   }
-  if (row.backend === "acp") {
+  if (backendUsesAcpTransport(row.backend)) {
     // The bridge stops the turn (session/cancel, then wait for the prompt to return) and then ENDS the
     // agent: it lives in a detached daemon that would otherwise sit idle for hours after the thread is
-    // put away. A resting thread with no daemon costs nothing here.
+    // put away. A resting thread with no daemon costs nothing here. `acp` answers for an Antigravity row
+    // too (acpTransportTerminator, below): the same daemon, held by that backend's own bridge.
     if (!acp) return "absent"
     const alive = acp.isAgentAlive(row.slug, row.session_id)
     await acp.endSession(row.slug, row.session_id)
@@ -687,7 +711,7 @@ export async function completeRegisteredThread(
     // row is. Reading only the TURN here left Mark as done on an idle ACP thread skipping the stop, so
     // the daemon and its agent outlived the archived thread (found on the promoted-artifact run,
     // 2026-09-24: two `opencode acp` processes still up after both threads were marked done).
-    : row.backend === "acp"
+    : backendUsesAcpTransport(row.backend)
     ? (acp?.isAgentAlive(row.slug, row.session_id) ?? false)
     : row.backend === "opencode"
     ? (opencode?.isAgentAlive(row.slug, row.session_id) ?? false)
@@ -1328,6 +1352,25 @@ export function createRouter(ctx: AppContext) {
         ctx.board.refresh()
         return
       }
+      // An Antigravity follow-up is a prompt: it starts a turn, or joins the one running (a steer), and the
+      // bridge re-opens the session first when its agent is gone. It is written to the transcript as it is
+      // sent, so the ledger entry is `delivered` either way; a fresh session id is re-pinned.
+      if (row?.backend === "antigravity") {
+        const bridge = ctx.antigravityBridge
+        if (!bridge) throw new Error("The Antigravity bridge is unavailable; cannot deliver this follow-up")
+        const result = await bridge.followUp({
+          threadSlug: input.slug, sessionId: row.session_id, cwd: ctx.project.dir, agySessionId: row.agent_session_id ?? null,
+          ...antigravityProfileOf(row), text: messageForWorker, ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}),
+        })
+        if (result.agySessionId !== row.agent_session_id) ctx.storage.setAgentSession(input.slug, result.agySessionId)
+        if (row.exited === 1) ctx.storage.setExitedIfCurrent(input.slug, row.session_id, row.runtime_generation ?? 0, false)
+        if (input.deliveryId) {
+          appendDelivery(ctx.storage, input.slug, { id: input.deliveryId, text: input.message, state: "delivered" })
+          ctx.transcriptChange.emit([input.slug])
+        }
+        ctx.board.refresh()
+        return
+      }
       // An OpenCode follow-up goes into the session's own inbox: a steer is read at the next step, a queued
       // message at the next idle boundary. It is `enqueued` until the stream says `session.inbox.delivered`,
       // when the bridge writes it to the transcript and takes it off the ledger (onDelivered, context.ts).
@@ -1856,9 +1899,10 @@ export function createRouter(ctx: AppContext) {
     if (!row) { heldSlugs.delete(slug); return 0 }
     const items = parseDeliveryLedger(row.delivery_ledger)
     if (!items.some((item) => item.state === "held")) { heldSlugs.delete(slug); return 0 }
-    if (row.backend === "acp" || row.backend === "opencode") {
+    if (row.backend === "acp" || row.backend === "opencode" || row.backend === "antigravity") {
       // The session is going down, so its stop decides what this message waits for. The sweep comes back.
       if (row.backend === "acp" && ctx.acpBridge?.isEnding?.(row.session_id)) return 0
+      if (row.backend === "antigravity" && ctx.antigravityBridge?.isEnding?.(row.session_id)) return 0
       // Nobody is coming to read it: the operator ended this thread with the message still waiting.
       // Sending it would reopen what they just closed, so it stays on screen as a failed send instead.
       if (row.state === "archived" || row.archived === 1) {
@@ -3513,6 +3557,17 @@ export function createRouter(ctx: AppContext) {
           ctx.board.refresh()
           return
         }
+        if (row.backend === "antigravity") {
+          // `/compact` is one of Antigravity's own commands, taken as a prompt. The session keeps its
+          // system prompt (the contract) through it.
+          const bridge = ctx.antigravityBridge
+          if (!bridge) throw new Error("The Antigravity bridge is unavailable; cannot compact this thread")
+          const result = await bridge.followUp({ threadSlug: input.slug, sessionId: row.session_id, cwd: ctx.project.dir, agySessionId: row.agent_session_id ?? null, ...antigravityProfileOf(row), text: "/compact" })
+          if (result.agySessionId !== row.agent_session_id) ctx.storage.setAgentSession(input.slug, result.agySessionId)
+          if (row.exited === 1) ctx.storage.setExitedIfCurrent(input.slug, row.session_id, row.runtime_generation ?? 0, false)
+          ctx.board.refresh()
+          return
+        }
         if (row.backend !== "claude" || row.claude_runtime !== "broker") {
           throw new Error("This thread's runtime can't be compacted from Frizz")
         }
@@ -3569,6 +3624,18 @@ export function createRouter(ctx: AppContext) {
           ctx.storage.setPermissionMode(input.slug, input.permissionMode)
           ctx.board.refresh()
           return { effect: "applied" as const }
+        }
+        if (permRow?.backend === "antigravity") {
+          // Stored first: it is what the next open launches on, whatever becomes of the live agent. Four
+          // of the modes are a session option the agent takes at once. Bypass is a launch flag, so a move
+          // to or from it restarts the agent (now when it is idle, at the turn's end otherwise) and the
+          // session resumes on the new one, which is the "next turn" answer.
+          ctx.storage.setPermissionMode(input.slug, input.permissionMode)
+          ctx.board.refresh()
+          const live = ctx.antigravityBridge
+            ? await ctx.antigravityBridge.setProfile(input.slug, permRow.session_id, { ...antigravityProfileOf(permRow), permissionMode: input.permissionMode })
+            : { applied: false as const }
+          return { effect: !live.applied ? "next-resume" as const : "restarting" in live && live.restarting ? "next-turn" as const : "applied" as const }
         }
         if (permRow?.backend === "codex") {
           // Persist FIRST and unconditionally: the registry is the operator's stated intent, it is what
@@ -3665,6 +3732,9 @@ export function createRouter(ctx: AppContext) {
         let skills: ThreadSkill[]
         if (row.backend === "opencode") {
           skills = [] // OpenCode finds its own skills, and has no route that lists them for a session
+        } else if (row.backend === "antigravity") {
+          // Antigravity's slash commands (`/goal`, `/schedule`, `/plan`…), which it lists for a live session.
+          skills = ctx.antigravityBridge?.commands(input.slug, row.session_id) ?? []
         } else if (row.backend === "acp") {
           skills = [] // an ACP agent's skills are its own; the protocol lists commands, not skills
         } else if (row.backend === "codex") {
@@ -3780,6 +3850,19 @@ export function createRouter(ctx: AppContext) {
           ctx.board.refresh()
           return { effect: "applied" as const }
         }
+        if (profRow?.backend === "antigravity") {
+          // The slug names the model and the effort its thinking level, which only some models take. A
+          // live session takes both now (session/set_config_option); otherwise the next open applies
+          // them. The row records what the session runs at, so a level the model does not take is stored
+          // as none rather than as a promise.
+          if (!isAntigravityModel(input.model)) throw new Error("Pick a model Antigravity lists")
+          const live = ctx.antigravityBridge
+            ? await ctx.antigravityBridge.setProfile(input.slug, profRow.session_id, { ...antigravityProfileOf(profRow), modelId: antigravityModelId(input.model) ?? null, effort: input.effort || null })
+            : { applied: false as const }
+          ctx.storage.setProfile(input.slug, input.model, live.applied ? ("effort" in live && live.effort) || "" : input.effort ?? "")
+          ctx.board.refresh()
+          return { effect: live.applied ? "applied" as const : "next-resume" as const }
+        }
         if (!input.effort) throw new Error(`effort is required for a ${profRow?.backend ?? "claude"} thread`)
         if (profRow?.backend === "codex") {
           ctx.storage.setProfile(input.slug, input.model, input.effort)
@@ -3887,12 +3970,12 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         const row = currentOwnedSession(input.slug, input.sessionId)
         const result = await completeRegisteredThread(
-          ctx.storage, row, input.terminateLive, cachedLivenessTerminator, ctx.tailer.get(input.slug), ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge, ctx.opencodeBridge,
+          ctx.storage, row, input.terminateLive, cachedLivenessTerminator, ctx.tailer.get(input.slug), ctx.codexAppServer, ctx.claudeBroker, acpTransportTerminator(ctx), ctx.opencodeBridge,
         )
         if (!result.needsConfirmation) {
           ctx.board.refresh()
           // Whatever an ACP thread was still holding fails now, not at the next sweep.
-          if (row.backend === "acp") void releaseHeldFollowUps(input.slug)
+          if (backendUsesAcpTransport(row.backend)) void releaseHeldFollowUps(input.slug)
         }
         return result
       },
@@ -5110,7 +5193,7 @@ export function createRouter(ctx: AppContext) {
         if (t && t.runtime !== "exited") {
           throw new Error("only a stalled or exited session can be dismissed — archive a live one instead")
         }
-        await stopAndForgetRegisteredRuntime(ctx.storage, row, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge, ctx.opencodeBridge)
+        await stopAndForgetRegisteredRuntime(ctx.storage, row, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, acpTransportTerminator(ctx), ctx.opencodeBridge)
         ctx.tailer.forget(input.slug)
         ctx.board.refresh() // storage-only change — the removed row fans out as a delete delta on SSE
       },
@@ -5205,7 +5288,7 @@ export function createRouter(ctx: AppContext) {
       handler: async ({ input }) => {
         assertLegacyMutationAllowed(input.slug)
         if (input.status === "dismissed") {
-          const stopped = await stopRuntimeBySlug(ctx.storage, input.slug, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge, ctx.opencodeBridge)
+          const stopped = await stopRuntimeBySlug(ctx.storage, input.slug, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, acpTransportTerminator(ctx), ctx.opencodeBridge)
           if (stopped.row && !ctx.storage.setExitedIfCurrent(
             stopped.row.slug,
             stopped.row.session_id,
@@ -5328,7 +5411,7 @@ export function createRouter(ctx: AppContext) {
     }),
 
     // STOP THE TURN, and only the turn: the thread stays where it is, ready for the next message. OpenCode
-    // only so far, the one backend whose stop leaves nothing to reattach.
+    // and Antigravity, the backends whose stop leaves the session open and nothing to reattach.
     stopThreadTurn: mutation({
       input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1) }).strict(),
       output: z.object({ interrupted: z.boolean() }),
@@ -5338,6 +5421,13 @@ export function createRouter(ctx: AppContext) {
         async () => {
           const row = currentOwnedSession(input.slug, input.sessionId)
           if (!row) throw new Error("This thread is no longer the session this tab is looking at")
+          // Antigravity's `session/cancel` ends the turn and leaves the session and its agent in place.
+          if (row.backend === "antigravity") {
+            if (!ctx.antigravityBridge) throw new Error("The Antigravity bridge is unavailable; cannot stop this turn")
+            const result = await ctx.antigravityBridge.interruptTurn(input.slug, row.session_id)
+            ctx.board.refresh()
+            return result
+          }
           if (row.backend !== "opencode") throw new Error("This thread's runtime has no stop for a single turn")
           if (!ctx.opencodeBridge) throw new Error("The OpenCode bridge is unavailable; cannot stop this turn")
           const result = await ctx.opencodeBridge.interruptTurn(input.slug, row.session_id, row.agent_session_id, ctx.project.dir)
@@ -5354,7 +5444,7 @@ export function createRouter(ctx: AppContext) {
         // with turn/interrupt rather than a kill aimed at a registered runtime it never had. A stop that
         // could not be delivered throws out of here BEFORE setExitedIfCurrent, so the row is never
         // marked exited on the strength of a termination that did not happen.
-        const stopped = await stopRuntimeBySlug(ctx.storage, input.slug, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, ctx.acpBridge, ctx.opencodeBridge)
+        const stopped = await stopRuntimeBySlug(ctx.storage, input.slug, cachedLivenessTerminator, ctx.codexAppServer, ctx.claudeBroker, acpTransportTerminator(ctx), ctx.opencodeBridge)
         if (stopped.row && !ctx.storage.setExitedIfCurrent(
           stopped.row.slug,
           stopped.row.session_id,
@@ -5365,7 +5455,7 @@ export function createRouter(ctx: AppContext) {
         }
         ctx.board.refresh() // storage-only change — overlay is enough
         // An ACP turn stopped here may have had messages waiting behind it: they go out on a new agent.
-        if (stopped.row?.backend === "acp") void releaseHeldFollowUps(input.slug)
+        if (backendUsesAcpTransport(stopped.row?.backend)) void releaseHeldFollowUps(input.slug)
       },
     }),
 
@@ -5424,6 +5514,16 @@ export function createRouter(ctx: AppContext) {
       handler: async () => ctx.opencodeBridge
         ? ctx.opencodeBridge.models(ctx.project.dir)
         : { available: false, models: [], error: "The OpenCode bridge is unavailable" },
+    }),
+    // Antigravity's models, each with the thinking levels it takes, read from a throwaway `agy acp`
+    // session (cached in the bridge). A separate query for the same reason: answering it starts the CLI,
+    // so only a picker showing Antigravity asks.
+    antigravityModels: query({
+      input: AntigravityModelsInput.optional(),
+      output: AntigravityModels,
+      handler: async ({ input }) => ctx.antigravityBridge
+        ? ctx.antigravityBridge.models(ctx.project.dir, { refresh: input?.refresh === true })
+        : { available: false, models: [], error: "The Antigravity bridge is unavailable" },
     }),
     // The models one ACP agent advertises — read by opening a throwaway session in the project dir
     // (cached in the bridge), so it is a separate query the composer asks only once a model picker

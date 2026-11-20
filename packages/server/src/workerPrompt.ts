@@ -14,7 +14,7 @@
 //   - DO NOT re-add a paragraph explaining WHY a rule exists. Put the why in a comment here.
 //   - DO NOT restate a rule a hook, a command's `--help`, or agent profile already enforces.
 //   - A new rule earns its tokens only if a worker measurably gets it wrong without it.
-export type BackendKind = "claude" | "codex" | "acp" | "opencode"
+export type BackendKind = "claude" | "codex" | "acp" | "opencode" | "antigravity"
 
 // COMMAND WATCHES ARE CLAUDE-ONLY, so only Claude's contract teaches them (2026-10-11). The server runs a
 // watched command with no permission check, so `commandWatchRefusal` (command-watch.ts) refuses every
@@ -91,6 +91,11 @@ const INLINE: Record<BackendKind, Record<"SESSION_KIND" | "RESUME_CMD", string>>
   "opencode": {
     "SESSION_KIND": "opencode",
     "RESUME_CMD": "opencode --session",
+  },
+  // Frizz resumes an Antigravity session over the protocol (`session/resume`), not with a command.
+  "antigravity": {
+    "SESSION_KIND": "antigravity",
+    "RESUME_CMD": "(Frizz resumes the session over ACP)",
   },
 }
 
@@ -1435,7 +1440,7 @@ A human rename outranks yours, and frizz reports that rather than failing.`
 // LEGACY NAME, current behaviour. This block and `scratchpadOrientation` still say "scratchpad"; both
 // describe the scratch DIRECTORY. (`ThreadView.scratchpadPath` and the `threadScratchpad` RPC went with
 // the Doc tab on 2026-08-06 — nothing reads the directory back into the UI any more.)
-const SCRATCHPAD: Record<Exclude<BackendKind, "opencode">, string> = {
+const SCRATCHPAD: Record<Exclude<BackendKind, "opencode" | "antigravity">, string> = {
   claude: `## Your scratch directory
 
 \`.frizz/threads/<session-id>/\` (exact path in your session-start context) — a folder that is YOURS, for
@@ -1891,6 +1896,53 @@ own write-up, since the human reads you.
 A message the human sends while you are working reaches you at your next step, in the middle of your
 turn, and you should read it then and act on it. A message they queue instead arrives as a new turn
 after this one ends. Read the newest human message first.`,
+  // EVERY CLAIM HERE WAS MEASURED on agy 1.5.12 (plans/antigravity-backend.md): the sandbox that cuts
+  // `frizzctl` off in Auto mode, a sub-agent's report arriving as a turn of the agent's own, a second
+  // prompt joining the running turn. The Auto paragraph earns its tokens because the failure it names
+  // looks like a broken Frizz from inside the sandbox, and a worker that retries it never signs off.
+  antigravity: `## Your harness, and \`frizzctl\` inside it
+
+You are an Antigravity session (\`agy\`) that Frizz drives over the Agent Client Protocol. Your file,
+shell, search, question and sub-agent tools are Antigravity's. Frizz's own commands reach you as
+\`frizzctl\`, a program on your shell's PATH: wherever this contract writes \`frizzctl <command>\`, run it
+with \`run_command\`, exactly as written. The tools named elsewhere in this contract as \`Agent\`,
+\`SendMessage\` and \`Monitor\` are Claude Code's: use \`invoke_subagent\` for the first, and for the
+others the \`frizzctl\` commands this contract gives.
+
+Your permissions are Antigravity's, under a mode the human sets on this thread. In a mode that asks,
+Frizz shows each ask to the human as a card and relays the answer, and a plain \`frizzctl\` call is
+approved for you. A denied call comes back failed: adapt, or say what is blocked in your final message.
+
+**IN AUTO MODE YOUR SHELL IS SANDBOXED AND CANNOT REACH FRIZZ.** Every \`frizzctl\` call fails there
+("connection refused", "Operation not permitted"), and nothing is wrong with Frizz. Do not retry it and
+do not work around the sandbox: sign off with the fences this contract gives, which need no command,
+and say in your final message that \`frizzctl\` is out of reach in this mode.
+
+Ask the human with a \` \`\`\`question \` fence, as this contract says. \`ask_question\` reaches them
+too, as a card, but it holds your turn open until they answer, so nothing else you owe gets done
+meanwhile.
+
+## Sub-agents and background commands
+
+Use \`invoke_subagent\`. A sub-agent runs in the BACKGROUND: the call returns at once, and its report
+reaches you later as a new turn of your own. A command that outlives its wait does the same. Frizz
+cannot see inside either, so the human sees only what you write: collect every child's report before
+you call the work finished, and fold it into your own write-up.
+
+Neither has an id Frizz can look up, so never write one on an \`agents:\` or \`shells:\` line. When
+you rest while one runs, set a \`frizzctl timer\` long enough for it and name that in your
+\` \`\`\`awaiting \` fence. Its report wakes you sooner; cancel the timer then.
+
+## Follow-ups arrive inside your turn
+
+A message the human sends while you are working joins the turn you are in. Read it at your next step
+and act on it, and read the newest human message first.
+
+## Turns you start yourself
+
+A background command that finishes, a sub-agent that reports and a schedule that fires each wake you
+with no message from the human. That is a turn like any other: do what it calls for, and end it with
+the sign-off this contract asks of every rest.`,
 }
 
 // A TOOL CALL CUT OFF BY "SEND NOW". Claude only: the SDK interrupt is the one transport that ends a turn
@@ -2014,7 +2066,7 @@ every project, Done included: a slug comes from the thread's first prompt and ra
 A message wrapped in \`<thread-message>\` came from another thread, which it names: a colleague's
 message, not the human's. Act on it within your mandate, and answer it with \`frizzctl steer\` when it asks.`
 
-const THREAD_EXECUTION: Record<Exclude<BackendKind, "opencode">, string> = {
+const THREAD_EXECUTION: Record<Exclude<BackendKind, "opencode" | "antigravity">, string> = {
   claude: `## Thread types
 
 Recognize which KIND of effort you own and match the deliverable to it:
@@ -2121,8 +2173,9 @@ export function buildWorkerPrompt(kind: BackendKind = "claude", opts: { monitors
   // good engineering. Codex keeps its own THREAD_EXECUTION (its bounded-delegation policy lives there)
   // and TRIVIAL_PROMPTS. See the SIZING note at the top of this file.
   const lean = kind === "claude"
-  // OpenCode has its own harness section, and its scratch directory and thread types read as ACP's do.
-  const prose = kind === "opencode" ? "acp" : kind
+  // OpenCode and Antigravity each have their own harness section, and their scratch directory and thread
+  // types read as ACP's do.
+  const prose = kind === "opencode" || kind === "antigravity" ? "acp" : kind
   const sections: (string | null)[] = [
     INTRO,
     DEFER,

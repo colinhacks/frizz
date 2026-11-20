@@ -357,7 +357,7 @@ export function commandWatchRefusal(
   const backend = row.backend ?? "claude"
   if (backend !== "claude") {
     return refuse(
-      `monitors are for Claude threads only, and this one runs on ${backend === "codex" ? "Codex" : backend === "opencode" ? "OpenCode" : "an ACP agent"}: ` +
+      `monitors are for Claude threads only, and this one runs on ${backend === "codex" ? "Codex" : backend === "opencode" ? "OpenCode" : backend === "antigravity" ? "Antigravity" : "an ACP agent"}: ` +
         "Frizz cannot tell whether your thread's own sandbox would have let the command run",
     )
   }

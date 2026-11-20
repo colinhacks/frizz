@@ -29,7 +29,7 @@ import { createBoard, resolveSessionTitle, type BoardManager } from "./board.ts"
 import { createSessionPeerResolver, type SessionPeerThread } from "./session-peer.ts"
 import { auditLogPathForStateDir, fileAuditLog, type AuditLog } from "./audit.ts"
 import { createTailer, defaultLogDir, hookFailureLine, type Tailer } from "./tailer.ts"
-import { createDispatcher, acpWorkerContract, opencodeWorkerContract, claudeContractOptions, claudeWorkerSystemPrompt, claudeCliConfig, codexWorkerThreadConfig, codexWorkerBaseInstructions, resolveFrizzCli, resolveFrizzMcp, workerPluginDir, coldResumePermission, type Dispatcher, type FrizzMcpTarget } from "./dispatch.ts"
+import { createDispatcher, acpWorkerContract, antigravityWorkerContract, opencodeWorkerContract, claudeContractOptions, claudeWorkerSystemPrompt, claudeCliConfig, codexWorkerThreadConfig, codexWorkerBaseInstructions, resolveFrizzCli, resolveFrizzMcp, workerPluginDir, coldResumePermission, type Dispatcher, type FrizzMcpTarget } from "./dispatch.ts"
 import { createScheduler, type Scheduler, probeIssueReadable, probePrReadable, type PrRef, type PrProbe } from "./scheduler.ts"
 import {
 resumeThread,
@@ -39,6 +39,9 @@ import { createCodexBackend, codexSandbox } from "./backend/codex.ts"
 import { readCodexModels } from "./backend/codex-models.ts"
 import { createAcpBackend } from "./backend/acp-transcript.ts"
 import { createOpencodeBackend } from "./backend/opencode-transcript.ts"
+import { createAntigravityBackend } from "./backend/antigravity-transcript.ts"
+import { createAntigravityBridge, type AntigravityBridge } from "./backend/antigravity-bridge.ts"
+import { antigravityProfileOf } from "./backend/antigravity-types.ts"
 import { createOpencodeBridge, type OpencodeBridge } from "./backend/opencode-bridge.ts"
 import { opencodeModeOf } from "./backend/opencode-types.ts"
 import { readLastAssistantText } from "./transcript.ts"
@@ -190,6 +193,9 @@ export interface AppContext {
   // an actionable message when the chosen agent is not installed.
   acpBridge?: AcpBridge
   opencodeBridge?: OpencodeBridge
+  // Google Antigravity's `agy acp`, on ACP's transport with its own bridge (backend/antigravity-bridge.ts,
+  // plans/antigravity-backend.md). Always constructed; a dispatch says so when `agy` is not installed.
+  antigravityBridge?: AntigravityBridge
   // Session-broker bridge for Claude: the detached daemon that owns every claude thread's SDK session.
   // Undefined only under the FRIZZ_CLAUDE_BROKER_BRIDGE="0" kill switch, which leaves claude no transport.
   claudeBroker?: ClaudeAgentBrokerBridge
@@ -421,6 +427,7 @@ interface PartialContextResources {
   codexAppServer?: CodexAppServerBridge
   acpBridge?: AcpBridge
   opencodeBridge?: OpencodeBridge
+  antigravityBridge?: AntigravityBridge
   claudeBroker?: ClaudeAgentBrokerBridge
   claudeRuntimeIngest?: ClaudeRuntimeIngest
   board?: BoardManager
@@ -436,6 +443,7 @@ interface PartialContextCleanup {
   codexAppServer(): Promise<void>
   acpBridge(): Promise<void>
   opencodeBridge(): Promise<void>
+  antigravityBridge(): Promise<void>
   claudeBroker(): Promise<void>
   storage(): Promise<void>
 }
@@ -449,6 +457,7 @@ function partialContextCleanup(resources: PartialContextResources): PartialConte
     codexAppServer: createRetryableCleanup(async () => { await resources.codexAppServer?.shutdown() }),
     acpBridge: createRetryableCleanup(async () => { await resources.acpBridge?.shutdown() }),
     opencodeBridge: createRetryableCleanup(async () => { await resources.opencodeBridge?.shutdown() }),
+    antigravityBridge: createRetryableCleanup(async () => { await resources.antigravityBridge?.shutdown() }),
     claudeBroker: createRetryableCleanup(async () => { resources.claudeBroker?.close(); resources.claudeRuntimeIngest?.close() }),
     storage: createRetryableCleanup(() => resources.storage?.close()),
   }
@@ -776,7 +785,8 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
   const codexBackend = createCodexBackend({})
   const acpBackend = createAcpBackend({ stateDir: project.stateDir })
   const opencodeBackend = createOpencodeBackend({ stateDir: project.stateDir })
-  const backendFor = (kind?: string): AgentBackend => (kind === "codex" ? codexBackend : kind === "acp" ? acpBackend : kind === "opencode" ? opencodeBackend : claudeBackend)
+  const antigravityBackend = createAntigravityBackend({ stateDir: project.stateDir })
+  const backendFor = (kind?: string): AgentBackend => (kind === "codex" ? codexBackend : kind === "acp" ? acpBackend : kind === "opencode" ? opencodeBackend : kind === "antigravity" ? antigravityBackend : claudeBackend)
   const codexAppServer = codexAppServerBridgeEnabled()
     ? createCodexAppServerBridge({
         projectId: project.id,
@@ -908,6 +918,28 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     storage.allSessions()
       .filter((row) => row.backend === "opencode" && row.state !== "archived" && row.archived !== 1 && row.agent_session_id)
       .map((row) => ({ threadSlug: row.slug, sessionId: row.session_id, cwd: project.dir, opencodeSessionId: row.agent_session_id as string, mode: opencodeModeOf(row.permission_mode), ...(opencodeModelRef(row.model) ? { model: opencodeModelRef(row.model)! } : {}) })),
+  )
+
+  // The Antigravity bridge (ARCHITECTURE.md § Antigravity backend). Its agents live in the same detached
+  // daemons an ACP agent's do, so it warms up the same way: every open thread whose daemon survived the
+  // restart is reattached now. The contract is the session's system prompt, read when one is created.
+  const antigravityBridge = createAntigravityBridge({
+    projectId: project.id,
+    stateDir: project.stateDir,
+    frizzCli: resolveFrizzCli(frizzMcpTarget),
+    interactions: storage.interactions,
+    env: process.env,
+    contractFor: (_slug, sessionId) => antigravityWorkerContract(sessionId, project.dir, { childThreads: getSettings(storage, home).childThreads }),
+    onStatusChange: () => board?.refresh(),
+  })
+  resources.antigravityBridge = antigravityBridge
+  contextUnsubscribers.push(storage.subscribeSessionLifecycle((event) => {
+    antigravityBridge.releaseSession(event.previous.slug, event.previous.session_id)
+  }))
+  void antigravityBridge.warmUp(
+    storage.allSessions()
+      .filter((row) => row.backend === "antigravity" && row.state !== "archived" && row.archived !== 1)
+      .map((row) => ({ threadSlug: row.slug, sessionId: row.session_id, cwd: project.dir, agySessionId: row.agent_session_id ?? null, ...antigravityProfileOf(row) })),
   )
 
   // The consumer for the broker's structured event stream. Until this existed the bridge forwarded
@@ -1173,6 +1205,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     codexAppServer,
     acpBridge,
     opencodeBridge,
+    antigravityBridge,
     claudeBroker,
     // Auth preflight (claude-auth plan, Slice A): Claude reads its local credential and confirms only
     // a positive signed-out against its CLI (readClaudePreflightAuth — the comment there records why
@@ -1280,6 +1313,17 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
           threadSlug: slug, sessionId: row.session_id, cwd: project.dir, opencodeSessionId: row.agent_session_id,
           ...(opencodeModelRef(row.model) ? { model: opencodeModelRef(row.model)! } : {}), mode: opencodeModeOf(row.permission_mode), text: deliveryMessage, deliveryId, delivery: "steer",
         }).then(() => {
+          if (row.exited === 1) storage.setExitedIfCurrent(slug, row.session_id, row.runtime_generation ?? 0, false)
+        })
+      }
+      // Antigravity wake: a prompt, which joins a running turn or starts one. A fresh session id (the
+      // agent could not resume the old one) is re-pinned so the next resume asks for the right one.
+      if (row?.backend === "antigravity") {
+        return antigravityBridge.followUp({
+          threadSlug: slug, sessionId: row.session_id, cwd: project.dir, agySessionId: row.agent_session_id ?? null,
+          ...antigravityProfileOf(row), text: deliveryMessage, deliveryId,
+        }).then((r) => {
+          if (r.agySessionId !== row.agent_session_id) storage.setAgentSession(slug, r.agySessionId)
           if (row.exited === 1) storage.setExitedIfCurrent(slug, row.session_id, row.runtime_generation ?? 0, false)
         })
       }
@@ -1400,6 +1444,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     codexAppServer,
     acpBridge,
     opencodeBridge,
+    antigravityBridge,
     claudeBroker,
     mcp,
     board,

@@ -105,8 +105,9 @@ export type RuntimeState = z.infer<typeof RuntimeState>
 // server/backend/types.ts (the wire can't import it — it lives behind the server boundary). A model
 // selection drives this: a Claude model ⇒ "claude", an OpenAI/GPT model ⇒ "codex", an `acp:<agent>`
 // slug ⇒ "acp" (any Agent Client Protocol agent; plans/acp-backend.md), an `opencode:` slug ⇒ "opencode"
-// (OpenCode 2's own server API, ARCHITECTURE.md § OpenCode backend).
-export const Backend = z.enum(["claude", "codex", "acp", "opencode"])
+// (OpenCode 2's own server API, ARCHITECTURE.md § OpenCode backend), an `antigravity:` slug ⇒
+// "antigravity" (Google's `agy acp`, ARCHITECTURE.md § Antigravity backend).
+export const Backend = z.enum(["claude", "codex", "acp", "opencode", "antigravity"])
 export type Backend = z.infer<typeof Backend>
 
 // WHAT A BACKEND CAN DO WITH A MESSAGE SENT WHILE ITS TURN RUNS. One table, so a new backend states what
@@ -128,10 +129,22 @@ export const BACKEND_FOLLOW_UPS: Record<Backend, BackendFollowUps> = {
   // interrupting with `resume` (the turn goes on with the message in it). Interrupting would cancel a
   // foreground sub-agent, so while one runs the bridge leaves the steer to its boundary instead.
   opencode: { steer: true, interrupt: true },
+  // `agy acp` reads a second `session/prompt` sent during a turn as a steer of that turn. It has no
+  // preempt apart from `session/cancel`, which ends the turn's sub-agents and background tasks with it.
+  antigravity: { steer: true, interrupt: false },
 }
 /** A row or a board snapshot with no backend (legacy, or an older server) is a Claude thread. */
 export function backendFollowUps(backend: string | null | undefined): BackendFollowUps {
-  return backend === "codex" || backend === "acp" || backend === "opencode" ? BACKEND_FOLLOW_UPS[backend] : BACKEND_FOLLOW_UPS.claude
+  return backend === "codex" || backend === "acp" || backend === "opencode" || backend === "antigravity" ? BACKEND_FOLLOW_UPS[backend] : BACKEND_FOLLOW_UPS.claude
+}
+
+/** The backends whose agent Frizz drives over the Agent Client Protocol, in a detached daemon per thread,
+ *  writing the transcript itself: generic `acp`, and `antigravity`, which is ACP with Antigravity's own
+ *  extensions. What they share is transport and storage (where the transcript is, how a session is
+ *  resumed, that no provider file exists to tail). What a thread can DO is each backend's own answer
+ *  (`BACKEND_FOLLOW_UPS`, the profile and permission controls), never this predicate's. */
+export function backendUsesAcpTransport(backend: string | null | undefined): backend is "acp" | "antigravity" {
+  return backend === "acp" || backend === "antigravity"
 }
 
 // One selectable Codex model, derived server-side from the AUTHORITATIVE ~/.codex/models_cache.json
@@ -265,6 +278,49 @@ export function opencodeModelRef(model: string | null | undefined): { providerID
   const variant = hash === -1 ? "" : rest.slice(hash + 1)
   return { providerID: ref.slice(0, slash), id: ref.slice(slash + 1), ...(variant ? { variant } : {}) }
 }
+
+/** The model slug of an Antigravity thread: `antigravity:` runs on whatever model `agy` itself is set to,
+ *  and `antigravity:<model id>` names one of the models it offers (`gemini-4-neon`). The prefix is what
+ *  names the backend, as `acp:` and `opencode:` do, because `agy` also serves other vendors' models and a
+ *  bare id could not say which CLI runs it. The thinking level is NOT in the slug: Antigravity's levels
+ *  (`low`, `medium`, `high`, `xhigh`, `max`) are Frizz's own effort words, so it rides the thread's effort. */
+export const ANTIGRAVITY_MODEL_PREFIX = "antigravity:"
+export function isAntigravityModel(model: string | null | undefined): boolean {
+  return typeof model === "string" && model.startsWith(ANTIGRAVITY_MODEL_PREFIX)
+}
+export function antigravityModelSlug(modelId?: string | null): string {
+  return `${ANTIGRAVITY_MODEL_PREFIX}${modelId ?? ""}`
+}
+/** The model id inside an Antigravity slug, or nothing for the bare `antigravity:` and for any other slug. */
+export function antigravityModelId(model: string | null | undefined): string | undefined {
+  if (!isAntigravityModel(model)) return undefined
+  return (model as string).slice(ANTIGRAVITY_MODEL_PREFIX.length) || undefined
+}
+
+/** One model Antigravity offers, as the composer reads it. `efforts` is the thinking levels THAT model
+ *  takes, in the agent's order, and is empty for a model with none (the third-party ones `agy` serves),
+ *  whose row is then a single cell. `defaultEffort` is the level a session on it starts at. */
+export const AntigravityModel = z.object({
+  id: z.string(),
+  name: z.string(),
+  efforts: z.array(z.string()),
+  defaultEffort: z.string().optional(),
+})
+export type AntigravityModel = z.infer<typeof AntigravityModel>
+/** What the composer learns about Antigravity on this machine: whether `agy` is installed, what the
+ *  signed-in account's plan offers, and why the list is empty when it is. */
+export const AntigravityModels = z.object({
+  available: z.boolean(),
+  version: z.string().optional(),
+  defaultModel: z.string().optional(),
+  /** The plan the account is on, in Antigravity's words ("Google AI Pro"). */
+  tier: z.string().optional(),
+  models: z.array(AntigravityModel),
+  error: z.string().optional(),
+})
+export type AntigravityModels = z.infer<typeof AntigravityModels>
+export const AntigravityModelsInput = z.object({ refresh: z.boolean().optional() }).strict()
+export type AntigravityModelsInput = z.infer<typeof AntigravityModelsInput>
 
 /** One model OpenCode offers (`GET /api/model`), as the composer's picker reads it. `variants` is the
  *  effort axis, empty for a model with only its default. */
@@ -5375,6 +5431,7 @@ export const DispatchPreferences = z.object({
   // key would fail those records' parse and silently reset the operator's saved profile.
   acp: DispatchProviderPreferences.optional(),
   opencode: DispatchProviderPreferences.optional(),
+  antigravity: DispatchProviderPreferences.optional(),
 })
 export type DispatchPreferences = z.infer<typeof DispatchPreferences>
 
@@ -5414,8 +5471,10 @@ export const SetDispatchPreferenceInput = z.discriminatedUnion("field", [
 ]).superRefine((update, ctx) => { if (update.field === "profile") requireEffortOutsideAcp(update, ctx) })
 export type SetDispatchPreferenceInput = z.infer<typeof SetDispatchPreferenceInput>
 
+// Antigravity's effort is its thinking level, which only some of its models take, so a profile on one of
+// the others has none.
 function requireEffortOutsideAcp(profile: { backend: Backend; effort?: string }, ctx: z.RefinementCtx): void {
-  if (profile.backend !== "acp" && profile.backend !== "opencode" && profile.effort === undefined) {
+  if (profile.backend !== "acp" && profile.backend !== "opencode" && profile.backend !== "antigravity" && profile.effort === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["effort"], message: `effort is required for a ${profile.backend} profile` })
   }
 }
@@ -5665,7 +5724,7 @@ export function threadCanCompact(thread: { backend?: string; claudeRuntime?: str
   if (thread.foreign) return false
   // `claudeRuntime` is set only on a Claude row, whose `backend` may itself be absent (Claude is the
   // unmarked default), so the broker marker alone identifies one.
-  return thread.backend === "codex" || thread.backend === "opencode" || thread.claudeRuntime === "broker"
+  return thread.backend === "codex" || thread.backend === "opencode" || thread.backend === "antigravity" || thread.claudeRuntime === "broker"
 }
 
 export const SetThreadSnoozeInput = z.object({

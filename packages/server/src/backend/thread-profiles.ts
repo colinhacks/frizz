@@ -92,6 +92,9 @@ export function threadProfileOptions(
   if (backend === "acp") return { backend, options: [] }
   // OpenCode's picker reads the service's own list (the `opencodeModels` RPC), and a slug is not a profile.
   if (backend === "opencode") return { backend, options: [] }
+  // Antigravity's models and the levels each takes are the signed-in account's, read from the agent
+  // itself (the `antigravityModels` RPC), so there is no static list to answer with here either.
+  if (backend === "antigravity") return { backend, options: [] }
   throw new Error("This thread has an unknown backend; its runtime profile cannot be changed")
 }
 

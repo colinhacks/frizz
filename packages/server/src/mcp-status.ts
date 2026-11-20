@@ -142,7 +142,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if ("slug" in target) {
       const row = deps.getSession(target.slug)
       if (!row) throw new Error(`thread ${target.slug} has no session to read MCP servers from`)
-      const backend: Backend = row.backend === "codex" || row.backend === "acp" || row.backend === "opencode" ? row.backend : "claude"
+      const backend: Backend = row.backend === "codex" || row.backend === "acp" || row.backend === "opencode" || row.backend === "antigravity" ? row.backend : "claude"
       return {
         backend,
         agent: agentLabel(backend, row.model ?? undefined),
@@ -156,6 +156,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (backend === "codex") return "Codex"
     if (backend === "claude") return "Claude Code"
     if (backend === "opencode") return "OpenCode"
+    if (backend === "antigravity") return "Antigravity"
     const id = acpAgentIdFromModel(model)
     return (id && deps.acpAgentLabel(id)) || "This agent"
   }
@@ -207,7 +208,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   const statusOf = async (target: McpTarget): Promise<McpStatusResult> => {
     const resolved = resolve(target)
-    if (resolved.backend === "acp" || resolved.backend === "opencode") return { backend: resolved.backend, agent: resolved.agent, supported: false, servers: [] }
+    if (resolved.backend === "acp" || resolved.backend === "opencode" || resolved.backend === "antigravity") return { backend: resolved.backend, agent: resolved.agent, supported: false, servers: [] }
     if (resolved.backend === "codex") {
       if (!deps.codexAppServer) return { backend: "codex", agent: resolved.agent, supported: true, servers: [], note: CODEX_UNAVAILABLE }
       // Every prompt box on Codex asks this on load, and answering would fetch a runtime still waiting
@@ -234,7 +235,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     // read off its server list before and after.
     async reload(target) {
       const resolved = resolve(target)
-      if (resolved.backend === "acp" || resolved.backend === "opencode") return { backend: resolved.backend, agent: resolved.agent, supported: false, servers: [] }
+      if (resolved.backend === "acp" || resolved.backend === "opencode" || resolved.backend === "antigravity") return { backend: resolved.backend, agent: resolved.agent, supported: false, servers: [] }
       if (resolved.backend === "codex") {
         if (!deps.codexAppServer) return { backend: "codex", agent: resolved.agent, supported: true, servers: [], note: CODEX_UNAVAILABLE }
         // Nothing has run Codex yet, so there is no thread to reload and nothing to read the list from.
@@ -282,7 +283,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     async signIn(target, server) {
       sweep()
       const resolved = resolve(target)
-      if (resolved.backend === "acp" || resolved.backend === "opencode") throw new Error(`${resolved.agent} doesn't support MCP sign-in from Frizz`)
+      if (resolved.backend === "acp" || resolved.backend === "opencode" || resolved.backend === "antigravity") throw new Error(`${resolved.agent} doesn't support MCP sign-in from Frizz`)
       // One live attempt per server: a second click reuses it rather than racing two listeners.
       for (const attempt of attempts.values()) {
         if (attempt.state === "waiting" && attempt.server === server && attempt.backend === resolved.backend) {
