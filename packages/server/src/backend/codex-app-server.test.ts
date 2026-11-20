@@ -648,9 +648,9 @@ test("bridge is the sole codex transport (always enabled) and negotiates exact i
   // be retyped by hand, so a bump that moves the version and forgets the source tag or the commit
   // fails here instead of shipping a revision that names a build nobody audited.
   assert.deepEqual(CODEX_APP_SERVER_PROTOCOL_REVISION, {
-    packageVersion: "0.170.0",
-    sourceTag: "rust-v0.170.0",
-    sourceCommit: "29eb79e9866b3262a777fdf8195c1b9e63684c91",
+    packageVersion: "0.171.0",
+    sourceTag: "rust-v0.171.0",
+    sourceCommit: "ccf9be8cc458bd6b8336fe84d68d8893f2691a5e",
   })
   assert.notEqual(h.calls[0]!.env, process.env, "the child receives a point-in-time environment snapshot")
   // Looked up the way the OS does, because the snapshot is a PLAIN object: `process.env` is a
@@ -1029,6 +1029,55 @@ test("an item/completed carrying 0.169.0's contentTokenCount still retires the f
     process.notify("item/completed", { threadId: binding.codexThreadId, turnId, completedAtMs: Date.now(), contentTokenCount, item: item(id, "completed") })
     await waitFor(() => h.interactions.listPending(scope).length === 0, `a completion with contentTokenCount ${contentTokenCount} retires the card`)
   }
+  h.close()
+})
+
+// Codex 0.171.0 adds `environmentId` (the MCP server's registration scope, string or null) to the
+// `mcpServer/elicitation/request` params, serialized on every request. Each mode's schema is strict,
+// so until the key was named every MCP form and authorization request was answered -32602 and drew no
+// card. The `openai/form` request still parses, and is then refused by name (-32601), not as invalid.
+test("an MCP elicitation carrying 0.171.0's environmentId still draws its card", async () => {
+  const h = harness()
+  const binding = await h.bridge.startDisposableSession({ threadSlug: "scoped-mcp", sessionId: "scoped-mcp-session", cwd: h.dir })
+  const { turnId } = await h.bridge.startTurn({ threadSlug: binding.threadSlug, sessionId: binding.sessionId, text: "Ask through MCP" })
+  const process = h.processes[0]!
+  const scope = { projectId: "project-1", threadSlug: binding.threadSlug, sessionId: binding.sessionId }
+  const base = { threadId: binding.codexThreadId, turnId, serverName: "github", _meta: null }
+  const rejected = () => process.clientResponses.filter((message) => "error" in message && message.id !== "scoped-openai-form")
+  process.request("scoped-form", "mcpServer/elicitation/request", {
+    ...base,
+    environmentId: null,
+    mode: "form",
+    message: "Choose a repository",
+    requestedSchema: { type: "object", properties: { repo: { type: "string", title: "Repository" } }, required: ["repo"] },
+  })
+  process.request("scoped-url", "mcpServer/elicitation/request", {
+    ...base,
+    environmentId: "env-remote",
+    mode: "url",
+    message: "Authorize access",
+    url: "https://example.test/authorize?state=scoped",
+    elicitationId: "elicit-scoped",
+  })
+  process.request("scoped-openai-form", "mcpServer/elicitation/request", {
+    ...base,
+    environmentId: "env-remote",
+    mode: "openai/form",
+    message: "Vendor form",
+    requestedSchema: { type: "object", properties: {} },
+  })
+  await waitFor(
+    () => h.interactions.listPending(scope).length === 2 || rejected().length > 0,
+    "both elicitation cards, or a rejection",
+  )
+  assert.deepEqual(rejected(), [], "no elicitation is refused for carrying environmentId")
+  assert.deepEqual(
+    h.interactions.listPending(scope).map((record) => record.payload.kind).sort(),
+    ["mcp-elicitation-form", "mcp-elicitation-url"],
+  )
+  await waitFor(() => process.clientResponses.some((message) => message.id === "scoped-openai-form"), "the openai/form answer")
+  const vendor = process.clientResponses.find((message) => message.id === "scoped-openai-form") as { error?: { code: number } }
+  assert.equal(vendor.error?.code, -32601, "openai/form parses and is refused by name, not as invalid params")
   h.close()
 })
 
