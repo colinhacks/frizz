@@ -94,11 +94,17 @@ export function antigravityCommandLine(toolName: string | undefined, rawInput: u
  * bridge answers these itself. Anything a shell would expand, chain or redirect is not plain, and asks.
  */
 export function isPlainFrizzctlCommand(commandLine: string): boolean {
-  const text = commandLine.trim()
+  // A shell's blanks are the space and the tab, and nothing else. `\s` and `trim()` also take a form
+  // feed, a carriage return, a no-break space and a dozen more, and each of those is an ordinary
+  // character to a shell: one beside a heredoc's delimiter becomes PART of the delimiter, so the shell
+  // closes the heredoc on a line this check never looks at and runs what follows (reproduced in bash,
+  // zsh and sh, 2026-11-20). So every blank here is spelled out, and a control character asks.
+  const text = commandLine.replace(/^[ \t\n]+|[ \t\n]+$/g, "")
   const newline = text.indexOf("\n")
   const head = newline === -1 ? text : text.slice(0, newline)
   const rest = newline === -1 ? undefined : text.slice(newline + 1)
-  const match = /^frizzctl((?:\s+(?:[A-Za-z0-9_@%+=:,.\/-]+|'[^']*'|"[^"$`\\]*"))*)(?:\s+<<\s*'([A-Za-z_][A-Za-z0-9_]*)')?\s*$/.exec(head)
+  if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(head) || text.includes("\u0000")) return false
+  const match = /^frizzctl((?:[ \t]+(?:[A-Za-z0-9_@%+=:,.\/-]+|'[^']*'|"[^"$`\\]*"))*)(?:[ \t]+<<[ \t]*'([A-Za-z_][A-Za-z0-9_]*)')?[ \t]*$/.exec(head)
   if (!match) return false
   const delimiter = match[2]
   if (!delimiter) return rest === undefined
@@ -106,7 +112,7 @@ export function isPlainFrizzctlCommand(commandLine: string): boolean {
   // A heredoc with a QUOTED delimiter is literal text up to the delimiter's own line; nothing follows it.
   const lines = rest.split("\n")
   const end = lines.indexOf(delimiter)
-  return end !== -1 && lines.slice(end + 1).every((line) => line.trim() === "")
+  return end !== -1 && lines.slice(end + 1).every((line) => /^[ \t]*$/.test(line))
 }
 
 /** A permission request with its tool input renamed to the keys the shared ACP card builder reads

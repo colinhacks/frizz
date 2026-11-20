@@ -1,5 +1,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   antigravityCommandLine, antigravityLaunchArgs, antigravityOption, antigravityPermissionParams, antigravityProfileOf, antigravityQuotaFromUsage, antigravitySessionMode,
   antigravityTier, antigravityToolShape, AntigravityUsage, isPlainFrizzctlCommand,
@@ -81,6 +85,60 @@ test("antigravity: only one plain frizzctl call is approved without asking", () 
     "",
   ]
   for (const command of asks) assert.equal(isPlainFrizzctlCommand(command), false, command)
+  // A shell's blanks are the space and the tab. Anything else JavaScript calls whitespace is an ordinary
+  // character to a shell, and one beside the delimiter becomes part of it: the heredoc then closes on
+  // the line carrying the same character, and `echo BREACH` runs.
+  for (const [name, c] of Object.entries({ FF: "\f", VT: "\v", CR: "\r", NBSP: " ", EMSP: " ", LSEP: " ", BOM: "﻿" })) {
+    assert.equal(isPlainFrizzctlCommand(`frizzctl done --body-file - <<${c}'EOF'\n${c}EOF\necho BREACH\nEOF`), false, `${name} before the delimiter`)
+    assert.equal(isPlainFrizzctlCommand(`frizzctl done --body-file - <<'EOF'${c}\nEOF${c}\necho BREACH\nEOF`), false, `${name} after the delimiter`)
+    assert.equal(isPlainFrizzctlCommand(`frizzctl done${c}--body-file - <<'EOF'\nbody\nEOF`), false, `${name} between words`)
+    assert.equal(isPlainFrizzctlCommand(`${c}frizzctl done`), false, `${name} before the command`)
+    assert.equal(isPlainFrizzctlCommand(`frizzctl done --body-file - <<'EOF'\nbody\nEOF\n${c}`), false, `${name} after the heredoc`)
+  }
+  assert.equal(isPlainFrizzctlCommand("frizzctl done --body-file - <<'EOF'\r\nbody\r\nEOF\r\n"), false, "CRLF line endings")
+  assert.equal(isPlainFrizzctlCommand("frizzctl title 'a\u0000b'"), false, "a NUL cuts the command short")
+  assert.equal(isPlainFrizzctlCommand("\n\t frizzctl done --body-file -\t<<\t'EOF' \nbody\nEOF\n \t\n"), true, "spaces, tabs and blank lines are a shell's own blanks")
+})
+
+test("antigravity: what the frizzctl check approves, a real shell runs as one frizzctl call and nothing else", () => {
+  const shells = ["/bin/sh", "/bin/bash", "/bin/zsh"].filter((sh) => existsSync(sh))
+  if (!shells.length) return
+  // A seeded generator, so a failure names a command that fails again.
+  let seed = 0x5eed1e55
+  const random = (): number => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+  const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)]!
+  const blanks = [" ", " ", " ", "\t", "  ", "", "\f", "\v", "\r", " ", " "]
+  const words = ["done", "title", "--body-file", "-", "a=b", "x/y.z", "--for", "2h", "'two words'", "'a; echo BREACH'", "'$(echo BREACH)'", "'`echo BREACH`'", '"plain words"', '"a; echo BREACH"', '"a | b > c"', '"$(echo BREACH)"', '"`echo BREACH`"', "$(echo BREACH)", "`echo BREACH`", "a;echo", "*", "~", "{a,b}", "'unclosed", '"unclosed', "2"]
+  const heredocs = ["<<'EOF'", "<<'EOF'", "<<'EOF'", "<< 'EOF'", "<<\t'EOF'", "<<EOF", '<<"EOF"', "<<-'EOF'", "<<<'EOF'", "<<'E O F'", "<<''"]
+  const bodyLines = ["body", "body", "", "EOF", "EOF ", " EOF", "\fEOF", "EOF\f", "\rEOF", "EOF\r", " EOF", "echo BREACH", "$(echo BREACH)", "`echo BREACH`", "E O F"]
+  const tails = ["", "", "", "", ";echo BREACH", "\necho BREACH", "|echo BREACH", "&&echo BREACH", "&echo BREACH", ">out", "\n", " \n\t\n", "\n\f", "\n "]
+  const build = (): string => {
+    let command = `${pick(["", "", "", " ", "\n", "\f", "\t"])}frizzctl`
+    for (let i = Math.floor(random() * 4); i > 0; i--) command += pick(blanks) + pick(words)
+    if (random() < 0.6) {
+      command += pick(blanks) + pick(heredocs) + pick(["", "", " ", "\t", "\f", "\r", " "])
+      for (let i = Math.floor(random() * 5); i > 0; i--) command += `\n${pick(bodyLines)}`
+      if (random() < 0.85) command += "\nEOF"
+    }
+    return command + pick(tails)
+  }
+  const approved = new Set<string>()
+  for (let i = 0; i < 20_000 && approved.size < 60; i++) { const command = build(); if (isPlainFrizzctlCommand(command)) approved.add(command) }
+  assert.ok(approved.size >= 40, `the generator reaches the approved shapes (${approved.size})`)
+  // `frizzctl` is a function made of builtins, and nothing else resolves: a second command either prints
+  // (a builtin) or complains that it was not found, and either one fails the comparison.
+  const prelude = 'frizzctl() { while IFS= read -r _line; do :; done; echo "CALLED $#"; }\nPATH=/nonexistent\n'
+  const cwd = mkdtempSync(join(tmpdir(), "agy-frizzctl-"))
+  try {
+    for (const command of approved) {
+      for (const shell of shells) {
+        const ran = spawnSync(shell, ["-c", prelude + command], { cwd, encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] })
+        assert.match(ran.stdout, /^CALLED \d+\n$/, `${shell} ran exactly one frizzctl for ${JSON.stringify(command)} (stderr: ${ran.stderr})`)
+        assert.equal(ran.stderr, "", `${shell} had nothing to say about ${JSON.stringify(command)}`)
+      }
+    }
+    assert.deepEqual(readdirSync(cwd), [], "nothing was written")
+  } finally { rmSync(cwd, { recursive: true, force: true }) }
 })
 
 test("antigravity: a command line is read off run_command alone", () => {
