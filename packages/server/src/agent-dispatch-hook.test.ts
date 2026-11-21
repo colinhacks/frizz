@@ -10,18 +10,20 @@ import { readTranscriptFile } from "./transcript.ts"
 const here = dirname(fileURLToPath(import.meta.url))
 const hook = join(here, "../../../cc-worker/hooks/agent-dispatch.mjs")
 
-function decision(toolInput: Record<string, unknown>, worker = true): Record<string, any> {
+// CLAUDE_CODE_WEB_FETCH_AGENT is pinned per call: the suite itself often runs inside a Frizz worker,
+// whose own value would otherwise decide the web-fetch tests below.
+function decision(toolInput: Record<string, unknown>, worker = true, webFetchAgent = "0"): Record<string, any> {
   const result = spawnSync(process.execPath, [hook], {
     input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_input: toolInput }),
     encoding: "utf8",
-    env: { ...process.env, FRIZZ_THREAD: worker ? "thread-under-test" : "" },
+    env: { ...process.env, FRIZZ_THREAD: worker ? "thread-under-test" : "", CLAUDE_CODE_WEB_FETCH_AGENT: webFetchAgent },
   })
   assert.equal(result.status, 0, result.stderr)
   return JSON.parse(result.stdout || "{}")
 }
 
-function output(toolInput: Record<string, unknown>, worker = true): Record<string, any> {
-  return decision(toolInput, worker).hookSpecificOutput ?? {}
+function output(toolInput: Record<string, unknown>, worker = true, webFetchAgent = "0"): Record<string, any> {
+  return decision(toolInput, worker, webFetchAgent).hookSpecificOutput ?? {}
 }
 
 const dispatch = { prompt: "Survey the dev server readouts.", run_in_background: true }
@@ -36,6 +38,28 @@ test("Agent dispatch hook denies foreground sub-agents", () => {
     assert.equal(denied.permissionDecision, "deny", JSON.stringify(input))
     assert.match(denied.permissionDecisionReason, /run_in_background:true/)
   }
+})
+
+// Claude Code's built-in `web-fetch` agent stands in for the WebFetch tool where its rollout took that
+// tool away, and is meant to run in the foreground. It can exist only while CLAUDE_CODE_WEB_FETCH_AGENT
+// is not false (Frizz sets it to "0" in every worker it forks), so the exemption keys on that switch:
+// with it false, `web-fetch` can only name a project or user agent, which the background rule holds.
+test("Agent dispatch hook lets the built-in web-fetch agent run in the foreground only where it can exist", () => {
+  const read = { subagent_type: "web-fetch", description: "Read the page", prompt: "What does https://example.com say?" }
+  for (const webFetchAgent of ["", "1", "true"]) {
+    const allowed = output({ ...read, name: "reader" }, true, webFetchAgent)
+    assert.equal(allowed.permissionDecision, "allow", `switch ${JSON.stringify(webFetchAgent)}`)
+    assert.equal(allowed.updatedInput.prompt, read.prompt, "no epilogue on a page read")
+    assert.equal(allowed.updatedInput.run_in_background, undefined, "left in the foreground")
+    assert.equal(allowed.updatedInput.name, undefined, "name is still stripped")
+  }
+  for (const webFetchAgent of ["0", "false", "no", " OFF "]) {
+    const denied = output(read, true, webFetchAgent)
+    assert.equal(denied.permissionDecision, "deny", `switch ${JSON.stringify(webFetchAgent)}`)
+    assert.match(denied.permissionDecisionReason, /run_in_background:true/)
+    assert.match(output({ ...read, run_in_background: true }, true, webFetchAgent).updatedInput.prompt, /ORCHESTRATION EPILOGUE/)
+  }
+  assert.equal(output({ ...read, subagent_type: "general-purpose" }, true, "").permissionDecision, "deny", "only that one name")
 })
 
 test("Agent dispatch hook strips name and team_name, which strand a nested dispatch", () => {

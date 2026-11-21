@@ -3,7 +3,8 @@
 // PreToolUse hook on the `Agent` tool (frizz-worker). A worker MAY spin up its own helper
 // sub-agents; this hook holds them to the same rules cc enforces for the orchestrator:
 //   1) ENFORCE background dispatch — deny any Agent call lacking run_in_background:true (a
-//      foreground agent blocks the worker's turn; a human interjection orphans it).
+//      foreground agent blocks the worker's turn; a human interjection orphans it). Claude Code's
+//      built-in `web-fetch` agent is the one exemption, see below.
 //   2) STRIP `name`/`team_name` — setting either strands a nested dispatch (its result routes
 //      wrong and never returns cleanly), so scrub both silently.
 //   3) AUTO-APPEND a short ORCHESTRATION EPILOGUE carrying only what a helper cannot discover on
@@ -55,6 +56,19 @@
 // dispatcher discarded it and redid the work itself. This paragraph is the only place that reaches
 // a nested dispatcher without depending on its parent remembering to restate the norm.
 //
+// THE ONE EXEMPTION, Claude Code's built-in `web-fetch` agent (2026-11-20). Where Claude Code's
+// `tengu_clever_orbit` rollout is on, it takes WebFetch away from the session and registers that agent
+// as its only way to read a page, described as running "in the foreground" with its report as the
+// tool result. Held to rule 1, every page read became a background helper and a lost turn. Frizz
+// switches the mode off in every worker it forks (CLAUDE_CODE_WEB_FETCH_AGENT=0 in CLAUDE_WORKER_ENV),
+// so the agent can only exist where that switch is NOT false: a daemon forked before the switch
+// shipped, or an operator who turned the mode on. The exemption keys on the same variable, which this
+// hook inherits from the Claude Code process, because the name alone is not proof: a project or user
+// agent called `web-fetch` passes a name match with whatever tools it declares. With the switch false
+// the built-in cannot be registered, so the name can only be such an agent and rule 1 holds. The
+// exempted call gets no epilogue either: the agent has WebFetch and nothing else, and every rule in the
+// epilogue is about tools it does not hold.
+//
 // GATE: inert unless FRIZZ_THREAD is set (not a frizz worker → allow every dispatch unmodified).
 //
 // DROPPED vs cc's agent-dispatch.mjs (see DECISIONS.md): the `.dispatch-count` bump (it only gates
@@ -87,6 +101,16 @@ try {
 
   const input = JSON.parse(readFileSync(0, 'utf8'));
   const ti = input.tool_input ?? {};
+  const { name: _droppedName, team_name: _droppedTeam, ...tiStripped } = ti;
+
+  // Claude Code's own tri-state reading of the switch: these four spellings are false, anything else
+  // (unset included) leaves the decision to its feature flag.
+  const webFetchAgentOff = ['0', 'false', 'no', 'off'].includes(
+    (process.env.CLAUDE_CODE_WEB_FETCH_AGENT ?? '').trim().toLowerCase(),
+  );
+  if (ti.subagent_type === 'web-fetch' && !webFetchAgentOff) {
+    emit({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: tiStripped } });
+  }
 
   if (ti.run_in_background !== true) {
     emit({
@@ -99,8 +123,7 @@ try {
     });
   }
 
-  // Strip name/team_name (they strand nested dispatches), then append the epilogue once.
-  const { name: _droppedName, team_name: _droppedTeam, ...tiStripped } = ti;
+  // Strip name/team_name (they strand nested dispatches; done above), then append the epilogue once.
   // Idempotence is "this prompt ALREADY ENDS WITH the epilogue", not "this prompt mentions the
   // marker anywhere". A substring test silently ate the epilogue for any prompt that merely QUOTED
   // the marker — e.g. a worker asking a helper to report whether the epilogue reached it, which is

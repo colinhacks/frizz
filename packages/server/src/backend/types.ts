@@ -675,6 +675,14 @@ export const CLAUDE_WORKER_ENV = {
   // contract. Measured on 2.1.302 through the real SDK path: the Agent tool's description named fork
   // six times with this unset and not at all with it set to "0", exactly as on 2.1.301.
   CLAUDE_CODE_FORK_SUBAGENT: "0",
+  // Claude Code can take WebFetch away from the main session and leave a built-in `web-fetch` agent in
+  // its place, a server-gated rollout (`tengu_clever_orbit`) that reached workers on 2.1.330. A worker
+  // then reads a page only by dispatching that agent, and the worker plugin's dispatch hook holds every
+  // Agent call to run_in_background, so one page became a background helper and a lost turn. The
+  // variable is read before the flag (`CLAUDE_CODE_WEB_FETCH_AGENT ?? (… "tengu_clever_orbit")`,
+  // parsed as a tri-state where "0", "false", "no" and "off" are false), and false keeps WebFetch in
+  // the tool list and the `web-fetch` agent out of it. Checked on 2.1.330 through the real SDK path.
+  CLAUDE_CODE_WEB_FETCH_AGENT: "0",
 } as const
 
 // EVERY Claude worker's environment, on EVERY transport — the static entries in CLAUDE_WORKER_ENV plus

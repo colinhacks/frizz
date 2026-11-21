@@ -549,6 +549,7 @@ test("the lifted worker caps reach the process the broker actually forks", { tim
     assert.equal(env.maxWebSearches, String(WORKER_MAX_WEB_SEARCHES), "the web-search lift reaches the worker")
     assert.equal(env.maxSubagents, String(WORKER_MAX_SUBAGENTS), "the sub-agent spawn lift reaches the worker")
     assert.equal(env.forkSubagent, "0", "the fork switch reaches the worker, so its Agent tool offers no fork")
+    assert.equal(env.webFetchAgent, "0", "the web-fetch-agent switch reaches the worker, so it keeps a direct WebFetch")
     assert.equal(env.maxConcurrentSubagents, String(WORKER_MAX_CONCURRENT_SUBAGENTS), "the concurrency lift reaches the worker")
     assert.equal(env.autoCompactWindow, "123456", "Settings.autoCompactWindow reaches the worker as CLAUDE_CODE_AUTO_COMPACT_WINDOW")
     // …and comes back OUT again, which is how the board's context dial learns the room this session

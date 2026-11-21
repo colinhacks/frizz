@@ -88,6 +88,9 @@ record({
     // The fork switch (CLAUDE_WORKER_ENV): unset, Claude Code 2.1.302+ offers a worker the fork
     // sub-agent its contract says does not exist. Silent when dropped, like the caps.
     forkSubagent: process.env.CLAUDE_CODE_FORK_SUBAGENT,
+    // The web-fetch-agent switch (CLAUDE_WORKER_ENV): unset, Claude Code 2.1.330+ can take WebFetch
+    // away from the worker and leave only a `web-fetch` sub-agent. Silent when dropped, like the caps.
+    webFetchAgent: process.env.CLAUDE_CODE_WEB_FETCH_AGENT,
     // Settings.autoCompactWindow, the ceiling that stops a `[1m]` worker growing to 1M before it
     // compacts. Same reason as the caps: only the forked process can prove it arrived.
     autoCompactWindow: process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW,

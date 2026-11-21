@@ -8,12 +8,13 @@
 // is missing): bypassPermissions on haiku, then acceptEdits on sonnet, each asked to run Bash and Read
 // on a note and answer. For each it prints what the init frame reports (build, model, permission mode,
 // loaded plugins), the result and the context windows, and the transcript path. It fails when the init
-// frame names a different build, a different permission mode, or no `frizz` plugin.
+// frame names a different build, a different permission mode, no `frizz` plugin, or no `WebFetch` tool
+// (2.1.330 could swap it for a `web-fetch` agent; CLAUDE_CODE_WEB_FETCH_AGENT=0 is the switch).
 //
-// The environment is a worker's: `claudeWorkerEnv()` (so CLAUDE_CODE_FORK_SUBAGENT=0 and the lifted
-// caps), plus FRIZZ_THREAD and FRIZZ_PERM_DIR, without which the worker plugin's PermissionRequest hook
-// stays inert and the probe sees asks a real worker never does (2.1.317's email check reached the
-// permission callback only with the hook off). Extra ENV=VALUE pairs are merged on top, e.g.
+// The environment is a worker's: `claudeWorkerEnv()` (so CLAUDE_CODE_FORK_SUBAGENT=0,
+// CLAUDE_CODE_WEB_FETCH_AGENT=0 and the lifted caps), plus FRIZZ_THREAD and FRIZZ_PERM_DIR, without
+// which the worker plugin's PermissionRequest hook stays inert and the probe sees asks a real worker
+// never does (2.1.317's email check reached the permission callback only with the hook off). Extra ENV=VALUE pairs are merged on top, e.g.
 // CLAUDE_CODE_FORK_SUBAGENT=1 to see what a switch does.
 //
 // Run it twice per bump, from `main` and then from the bump worktree: the two runs give the old and
@@ -84,6 +85,7 @@ for (const run of runs) {
   if (init.claudeCodeVersion !== runtimes.CLAUDE_CODE_VERSION) { failures++; console.log(`VERSION MISMATCH: init says ${init.claudeCodeVersion}`) }
   if (init.permissionMode !== run.permissionMode) { failures++; console.log(`PERMISSION MODE MISMATCH: init says ${init.permissionMode}`) }
   if (!plugins.includes("frizz")) { failures++; console.log("THE frizz PLUGIN DID NOT LOAD") }
+  if (!init.tools.includes("WebFetch")) { failures++; console.log("NO WebFetch TOOL: the worker can read a page only through an agent") }
   for await (const event of handle) {
     if (event.kind !== "result") continue
     console.log("result:", event.subtype, JSON.stringify(event.result), "windows:", JSON.stringify(event.modelContextWindows))
