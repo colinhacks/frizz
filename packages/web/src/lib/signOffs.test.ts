@@ -1,9 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { SIGNOFF_NUDGE_MARKER } from "@frizz/shared"
-
-// The retired sign-off reminder (scheduler SOURCE 9) as transcripts written while it ran still carry it.
-const SIGNOFF_NUDGE_MESSAGE = `${SIGNOFF_NUDGE_MARKER} Nothing about your task has changed, and no new work is being asked of you.\n\nYou rested without a fence, so this thread cannot be triaged.`
+import { SIGNOFF_NUDGE_MESSAGE } from "@frizz/shared"
 import { latestSignOffs, restingDoneIndex, stretchSignOffs, type SignOffMsgLike } from "./signOffs.ts"
 
 const human = (text: string): SignOffMsgLike => ({ role: "user", text })

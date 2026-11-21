@@ -2,10 +2,7 @@
 // Claude projection so the `rest` dividers, wake flags and coalesced tool calls are the ones a page carries.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { BURIED_ANSWERS_HEADER, SIGNOFF_NUDGE_MARKER, wakeDeliveryToken, type TranscriptMessage } from "@frizz/shared"
-
-// The retired sign-off reminder (scheduler SOURCE 9) as transcripts written while it ran still carry it.
-const SIGNOFF_NUDGE_MESSAGE = `${SIGNOFF_NUDGE_MARKER} Nothing about your task has changed, and no new work is being asked of you.\n\nYou rested without a fence, so this thread cannot be triaged.`
+import { BURIED_ANSWERS_HEADER, SIGNOFF_NUDGE_MESSAGE, wakeDeliveryToken, type TranscriptMessage } from "@frizz/shared"
 import { parseTranscript } from "./transcript.ts"
 import { projectSignOffs, readRestMessage, signOffIndices } from "./sign-offs.ts"
 

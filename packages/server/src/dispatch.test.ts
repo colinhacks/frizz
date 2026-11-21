@@ -554,7 +554,7 @@ test("awaiting re-entry: every worker-contract surface requires a fresh fence af
   }
 })
 
-test("end-state contract: a fenceless reply is a sign-off, done checks, awaiting parks on checked items", () => {
+test("end-state contract: a fenceless rest is a DEFECT, done checks, awaiting parks on checked items", () => {
   // Whitespace-normalized throughout: these pin the RULES, not the line-wrap.
   for (const raw of [loadWorkerPrompt("claude"), loadWorkerPrompt("codex")]) {
     const c = raw.replace(/\s+/g, " ")
@@ -572,17 +572,14 @@ test("end-state contract: a fenceless reply is a sign-off, done checks, awaiting
     //
     // `watch` LEFT THAT LIST ON 2026-10-01. A registration says when the worker wakes; where the thread
     // sits meanwhile is the fence's `status:` answer (`needs_input:` until 2026-10-05), so a rest on
-    // running work always takes the fence (board.needsInputQueues).
+    // running work always takes the fence (board.needsInputQueues, scheduler evalSignoffNudges).
     //
-    // REVERSED AGAIN 2026-11-19, when the maintainer retired the reminder (scheduler SOURCE 9): a rest on
-    // the worker's own reply, with nothing running and nothing to decide, is a sign-off with no fence, so
-    // the contract names it and no longer threatens a bump Frizz does not send.
-    assert.match(c, /A REPLY NEEDS NO FENCE\./)
+    // A rest with no sign-off was accepted as the worker's reply from 2026-11-19 to 2026-11-20, when the
+    // maintainer took it back ("a huge mistake"): the contract again says always sign off.
+    assert.match(c, /ALWAYS SIGN OFF/)
+    assert.doesNotMatch(c, /ALWAYS SIGN OFF WITH A FENCE/, "a fence is no longer the only way to sign off")
+    assert.doesNotMatch(c, /A REPLY NEEDS NO FENCE/)
     assert.match(c, /A done you recorded with `frizzctl done` stands through every wake until the human types/)
-    assert.match(c, /That rest is a sign-off: the thread goes into their queue with your message on it/)
-    assert.match(c, /What it must never be is a stop with the task half-done/)
-    assert.doesNotMatch(c, /ALWAYS SIGN OFF/, "a fenceless reply is a sign-off now")
-    assert.doesNotMatch(c, /bumps you for one|ask you twice for a fence|not bump you for a missing fence/, "Frizz sends no reminder to threaten")
     assert.match(c, /`frizzctl done` records a ROW, and so does a question: Frizz registers a ` ```question ` fence the moment the message carrying it lands\. Frizz reads both as a sign-off/)
     assert.doesNotMatch(c, /frizz reads all three as a sign-off/, "a watch alone is no longer a sign-off")
     assert.match(c, /A WAIT IS THE ONE EXCEPTION, and it always takes the fence/)
@@ -596,9 +593,10 @@ test("end-state contract: a fenceless reply is a sign-off, done checks, awaiting
     // A rest the human is not queued to read owes them nothing to read (maintainer 2026-10-01).
     assert.match(c, /A QUIET PARK NEEDS NO WRITE-UP/)
     assert.doesNotMatch(c, /parks you on its own/, "a live sub-agent no longer parks the thread by itself")
-    // Says WHERE a fenceless rest lands, and that it is not a way to stop half-way.
-    assert.match(c, /the thread goes into their queue with your message on it, waiting on their reply/)
-    assert.doesNotMatch(c, /item nobody can triage|sits in the queue meaning nothing/i, "a fenceless reply is triaged like any sign-off")
+    assert.match(c, /bare rest[\s\S]{0,90}item nobody can triage/i) // the window widened when "no fence" became "nothing said about where you stand"
+    assert.doesNotMatch(c, /bare rest[^.]*ordinary handoff/i)
+    // Still says WHERE a fenceless rest lands — the worker has to know the cost of not signing off.
+    assert.match(c, /sits in the queue meaning nothing/i)
     assert.match(c, /(?:question|permission)[\s\S]{0,100}higher.priority/i)
     assert.match(c, /checked success card[^.]*queue/)
     assert.match(c, /until the human (?:explicitly )?(?:A|a)rchives? it/)
@@ -667,7 +665,7 @@ test("end-state contract: a fenceless reply is a sign-off, done checks, awaiting
     assert.match(c, /### When the work is finished but the thread found more/)
     assert.match(c, /HAND IT OFF TO ITS OWN CARD[\s\S]{0,120}`frizzctl spawn-thread`/)
     assert.match(c, /stretching `done` is not how you break it/)
-    assert.match(c, /A reply with no fence keeps the thread in the human's queue, so nothing in it is filed away, but it is not a fifth exit/)
+    assert.match(c, /A bare rest is the residual, not a plan/)
     // The fourth exit is DROP, and it is the one the maintainer asked for by name (2026-08-16): a
     // finished handoff that still trails "one thing to carry forward…" is clutter — too weak to act on,
     // too present to ignore, archived unread. What is not worth a card is not worth a sentence.

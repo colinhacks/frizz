@@ -62,12 +62,6 @@ export interface AwaitingPark {
    *  awaitingQuestions). Like steps, a wait on the HUMAN: their answer is the wake. Whether every open
    *  question is named is checked against the question rows, which only the scheduler has (2026-10-05). */
   questions: string[]
-  /** `status: needs_input` naming nothing (2026-11-19): the worker's reply, waiting on the human's next
-   *  message. Like steps, a wait on the HUMAN that needs no item and no `for:`. It was refused as a park
-   *  naming nothing until the maintainer accepted a rest with no sign-off as exactly this state (scheduler
-   *  SOURCE 9's retirement note): the refusal left the thread in the queue where the fence put it, and only
-   *  bought a turn. Optional so a park built by hand reads as false. */
-  reply?: boolean
 }
 
 /** Read the structural fence. Unknown keys are already dropped by the tailer's parse, so everything
@@ -87,7 +81,7 @@ export function readAwaitingPark(hints: readonly AwaitingHint[]): AwaitingPark {
       forMs = parseAwaitingDurationRaw(value)
     }
   }
-  return { items, forMs, steps: awaitingSteps(hints), questions: awaitingQuestions(hints), reply: items.length === 0 && awaitingNeedsInput(hints) === true }
+  return { items, forMs, steps: awaitingSteps(hints), questions: awaitingQuestions(hints) }
 }
 
 /** What frizz can see running for one thread, in the shape the check needs. Every id a fence may name
@@ -234,11 +228,10 @@ export function parkWaitsOnThisSide(park: AwaitingPark, live: LiveActivity): boo
   return park.items.length > 0 && park.items.every((i) => i.kind === "pr" && live.idlePrs?.has(liveKey(i)) === true)
 }
 
-/** Does the park wait on the HUMAN — steps to perform, questions to answer, or a reply to read
- *  (`status: needs_input` naming nothing)? None needs an item or a `for:`, because the human's reply is
- *  the wake and the thread sits in their queue meanwhile. */
+/** Does the park wait on the HUMAN — steps to perform, or questions to answer? Either needs no item and
+ *  no `for:`, because the human's reply is the wake and the thread sits in their queue meanwhile. */
 export function parkOnHuman(park: AwaitingPark): boolean {
-  return park.steps.length > 0 || park.questions.length > 0 || park.reply === true
+  return park.steps.length > 0 || park.questions.length > 0
 }
 
 /** Does this fence keep a NEW-CONTRACT thread out of the queue (see `needsInputRequired` in

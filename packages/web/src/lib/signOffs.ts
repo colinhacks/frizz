@@ -41,8 +41,8 @@ export interface SignOffMsgLike {
 // The user turn that opened a run: anything delivered to the agent, not a send still waiting in its queue.
 const delivered = (m: SignOffMsgLike) => m.role === "user" && !m.queued
 
-// Frizz's retired reminder to sign off (scheduler SOURCE 9, 2026-08-12 → 2026-11-19), still in older
-// transcripts, read by its opening marker as parseRecurringPrompt reads it.
+// Frizz's own reminder to sign off (scheduler SOURCE 9), read by its opening marker as parseRecurringPrompt
+// reads it.
 const isSignOffNudge = (m: SignOffMsgLike) => m.wake === true && m.text.trimStart().startsWith(SIGNOFF_NUDGE_MARKER)
 
 /** The NEWEST sign-off after `from` (the human's last turn), oldest first, as the messages it spans: the

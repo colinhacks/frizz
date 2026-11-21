@@ -227,6 +227,7 @@ test("own background work does both — it cards AND it leaves the queue", () =>
 function parkHarness(hints: FenceView["hints"], opts: { shells?: any[]; agents?: any[]; restedAt?: string; body?: string; retired?: any[]; retiredAgents?: any[]; prWatch?: { owner: string; repo: string; number: number }; spawnedAt?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "frizz-park-"))
   const storage = createStorage(join(dir, "ui.db"), "p")
+  storage.setSetting("signoffNudge", "off") // isolate SOURCE 12 from the nudge
   const slug = "parked"
   const restedAt = opts.restedAt ?? new Date(Date.now() - 60_000).toISOString()
   // WHAT ACTUALLY REACHED THE WORKER. Every test in this file used to stop at the outbox row, which is
@@ -349,10 +350,10 @@ test("a park whose `for:` runs out bumps with the status of every item, and re-p
     assert.equal(h.queued().length, 1, "one rest, one expiry bump")
   } finally { h.close() }
 })
-// A fence with ITEMS but no `for:` is MALFORMED rather than wrong, and SOURCE 12 leaves it as it stands:
-// the thread queues, and the human reads the message under it. (A fence with no items AT ALL is the
-// opposite case and is bumped here; see the nameless tests below.)
-test("a fence with items but no `for:` draws no park correction", async () => {
+// A fence with ITEMS but no `for:` is MALFORMED rather than wrong, and the sign-off nudge teaches the
+// whole grammar in one message — a better teacher than a correction aimed at one missing line. (A fence
+// with no items AT ALL is the opposite case and is bumped here; see the nameless tests below.)
+test("a fence with items but no `for:` is left to the sign-off nudge", async () => {
   const h = parkHarness([{ kind: "shell", value: "bzvtnt3ig" }], { shells: [LIVE_SHELL] })
   try {
     await h.s.tick()
@@ -380,26 +381,9 @@ test("an awaiting fence naming NOTHING is bumped, with how to register a real wa
     assert.match(rows[0].message, /`frizzctl watch-pr add`/, "the PR case, which is the one it had")
     assert.match(rows[0].message, /`frizzctl timer set`/)
     assert.match(rows[0].message, /`frizzctl activity`/, "…and where to get the ids")
-    // …and the honest exits when it is not waiting: done, a question, or a reply with no fence.
-    assert.match(rows[0].message, /Finished work ends with ```done/)
-    assert.match(rows[0].message, /needs no fence at all/)
+    // …and the other honest exit: if it is not waiting, it is done.
+    assert.match(rows[0].message, /you are not awaiting — you are done/)
   } finally { h.close() }
-})
-
-// A REPLY WAITING ON THE HUMAN IS NOT A NAMELESS PARK (2026-11-19). `status: needs_input` naming nothing is
-// the worker saying its message waits on the human's next one, the same rest as one with no fence at all,
-// and the thread queues on it either way. Refusing it only bought a turn: a fact-check answered in chat,
-// in a project that forbids `done` for one, was refused, then reminded twice, for three one-line turns.
-test("an awaiting fence with `status: needs_input` naming nothing is a reply, and draws no correction", async () => {
-  for (const [status, corrected] of [["needs_input", false], ["working", true], ["watching", true]] as const) {
-    const h = parkHarness([{ kind: "status", value: status }, { kind: "for", value: "1d" }], { body: "The fact-check above is the whole answer." })
-    try {
-      await h.s.tick()
-      const rows = h.queued()
-      assert.equal(rows.length, corrected ? 1 : 0, `status: ${status}`)
-      if (corrected) assert.match(rows[0].fence_id, /^park:nameless:/, "a quiet park on nothing still waits on nothing")
-    } finally { h.close() }
-  }
 })
 
 // One bump per rest per CAUSE. A fence that names nothing is a different piece of news from one whose
@@ -491,6 +475,7 @@ test("a nameless fence with nothing running is told it is not awaiting at all", 
 function loopHarness(body: string) {
   const dir = mkdtempSync(join(tmpdir(), "frizz-parkloop-"))
   const storage = createStorage(join(dir, "ui.db"), "p")
+  storage.setSetting("signoffNudge", "off")
   const slug = "looping"
   storage.upsertSession({
     slug, session_id: "sid", thread_name: `frizz-${slug}`, spawned_at: "2026-08-17T11:00:00.000Z",

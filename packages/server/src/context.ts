@@ -1252,6 +1252,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
   const scheduler = createScheduler({
     storage,
     tailer,
+    stampSignoffNudgeFrom: true,
     questionFaults,
     commandWatches,
     // CHILD THREADS (scheduler SOURCE 17): the board's verdict on each child's rest, the child's own words,

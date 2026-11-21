@@ -121,7 +121,8 @@ export interface SessionRow {
   // window is summarized away. It replaced a hook that spliced a canonical scratchpad's head into the
   // context — the durable row is visible and editable in the thread's Goal panel, where a hook was neither.
   recurring_on_compact?: number
-  // The retired sign-off reminder's counter and its last delivery id. Read by nothing; kept for old rows.
+  // The built-in sign-off nudge's consecutive counter, and the last delivery id it counted (diagnosis
+  // only). See the ALTER list for what clears the count.
   signoff_nudges?: number
   signoff_nudge_anchor?: string | null
   // SOURCE 12's CORRECTIVE bumps (a fence naming nothing, a retired kind, a dead id), capped the same
@@ -1006,6 +1007,17 @@ export interface Storage {
   /** Persist only AFTER the broker accepts delivery. Idempotent by delivery id. */
   recordSubAgentSteer(row: { slug: string; subAgentId: string; deliveryId: string; message: string; sentAtMs: number }): void
   listSubAgentSteers(slug: string, subAgentId: string): SubAgentSteerRow[]
+  // ---- THE BUILT-IN SIGN-OFF NUDGE ----------------------------------------------------------------
+  // Count one delivered nudge against this thread. It only ever INCREMENTS — the count is cleared by
+  // `resetSignoffNudges` when the thread signs off, and by nothing else. It used to reset whenever a
+  // supplied anchor changed, which was wrong twice over: anchored on the human's last word, frizz's own
+  // delivery (a user record) reset it; anchored on the rest, every new rest reset it. Either way the cap
+  // never bit. `anchor` is the delivery id being counted, and counting the SAME one twice is a no-op —
+  // one rest yields one delivery id, so a repeat is always a double count rather than a second rest.
+  countSignoffNudge(slug: string, anchor: string | null): void
+  // Give the allowance back. Called when the thread SIGNS OFF — the only event that proves the nudge
+  // worked, and the only one frizz cannot cause by nudging.
+  resetSignoffNudges(slug: string): void
   // The same pair for the fence corrections' bumps (scheduler SOURCES 12, 14 and 15). `anchor` is the REST
   // being corrected, and counting the same one twice is a no-op: one rest spends one bump. The allowance
   // comes back when the thread rests on a park Frizz can honour, when a ```question fence registers, or
@@ -1253,8 +1265,8 @@ export const STORAGE_SCHEMA = `
       recurring_rest_fired_at TEXT,
       recurring_schedule_fired_at TEXT,
       recurring_compact_fired_at TEXT,
-      -- THE RETIRED SIGN-OFF REMINDER (scheduler SOURCE 9, 2026-08-12 → 2026-11-19) counted its deliveries
-      -- here. Nothing reads or writes these two any more; they stay so an existing database still matches.
+      -- THE BUILT-IN SIGN-OFF NUDGE (scheduler SOURCE 9): how many times in a row frizz has told this
+      -- thread how to sign off without a fence appearing, and the last-nudged delivery id.
       signoff_nudges INTEGER NOT NULL DEFAULT 0,
       signoff_nudge_anchor TEXT,
       -- Cleared by resetParkBumps when a park is actually HONOURED.
@@ -2152,7 +2164,21 @@ export function createStorage(source: string | Database, projectId: string): Sto
     WHERE project_id = @project_id AND id = ? AND state = 'armed'
   `)
   const delThreadTimers = scope.prepare("DELETE FROM thread_timer WHERE project_id = @project_id AND thread_slug = ?")
-  // IDEMPOTENT PER ANCHOR, and the anchor is the REST being corrected
+  // IDEMPOTENT PER ANCHOR, which is what `settleSignoffNudge` has always claimed ("a retry of the same
+  // delivery cannot count twice while a genuinely new fenceless rest does") and what the statement did
+  // not do — it incremented unconditionally. That gap was harmless only while exactly one call site
+  // counted; a nudge is now counted when it is SENT, and the confirm path that runs later for the same
+  // item would otherwise count it a second time. `IS NOT` rather than `<>` so a NULL anchor (a fresh row,
+  // or one just cleared by `resetSignoffNudges`) still counts.
+  const countNudgeStmt = scope.prepare(`
+    UPDATE session SET signoff_nudges = signoff_nudges + 1, signoff_nudge_anchor = ?
+    WHERE project_id = @project_id AND slug = ? AND signoff_nudge_anchor IS NOT ?
+  `)
+  const resetNudgesStmt = scope.prepare(`
+    UPDATE session SET signoff_nudges = 0, signoff_nudge_anchor = NULL
+    WHERE project_id = @project_id AND slug = ? AND signoff_nudges > 0
+  `)
+  // IDEMPOTENT PER ANCHOR, like the nudge's count above, and the anchor is the REST being corrected
   // (2026-10-13). It incremented unconditionally while each correction passed its own delivery id, so a
   // rest with two things wrong spent two of the three bumps (scheduler parkCapSpent).
   const countParkBumpStmt = scope.prepare(`
@@ -3101,6 +3127,8 @@ export function createStorage(source: string | Database, projectId: string): Sto
       recurringStmt.run(...recurringArgs(write), slug, sessionId, generation).changes === 1,
     setRecurringPromptBySlug: (slug, write) =>
       recurringBySlugStmt.run(...recurringArgs(write), slug).changes === 1,
+    countSignoffNudge: (slug, anchor) => void countNudgeStmt.run(anchor, slug, anchor),
+    resetSignoffNudges: (slug) => void resetNudgesStmt.run(slug),
     countParkBump: (slug, anchor) => void countParkBumpStmt.run(anchor, slug, anchor),
     resetParkBumps: (slug) => void resetParkBumpsStmt.run(slug),
     armPrWatch: (watch) => void armPrWatchStmt.run({ ...watch, kind: watch.kind ?? "pull" }),

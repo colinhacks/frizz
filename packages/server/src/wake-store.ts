@@ -31,12 +31,13 @@ export const WAKE_QUIET_WINDOW_MS = 5 * 60_000
  *  resume (`limit:`) is the thread coming back from a wall it did not choose, and holding it would
  *  only lengthen the outage. Both still merge with anything already pending for the thread.
  *
- *  THE FENCE CORRECTIONS answer the worker's OWN rest, and that rest is the card the human is reading in
- *  the queue right now: a park frizz refused. Holding the fix for five minutes leaves that card on the
- *  board for five minutes — observed 2026-09-25 with the since-retired sign-off reminder (`signoff:`, kept
- *  here for rows an older server queued), held until 4m51s after a Codex thread's bare rest, by which point
- *  the maintainer had opened it and asked how it stopped without a sign-off. None can burst, which is what
- *  the window rations: each is capped per consecutive rest (scheduler PARK_BUMP_MAX).
+ *  THE SIGN-OFF NUDGE AND THE FENCE CORRECTIONS answer the worker's OWN rest, and that rest is the card
+ *  the human is reading in the queue right now: a bare rest nobody can triage, or a park frizz refused.
+ *  Holding the fix for five minutes leaves that card on the board for five minutes, which is the whole
+ *  failure the nudge exists to prevent — observed 2026-09-25, a Codex thread's bare rest landing 9s after
+ *  its PR-merged wake, its nudge queued 2s later and held until 4m51s after that, by which point the
+ *  maintainer had opened it and asked how it stopped without a sign-off. Neither can burst, which is what
+ *  the window rations: both are capped per consecutive rest (scheduler SIGNOFF_NUDGE_MAX, PARK_BUMP_MAX).
  *  An EXPIRED park stays held — it is a scheduled re-check, uncapped, and a `for: 30s` re-park would
  *  otherwise wake every 30 seconds.
  *

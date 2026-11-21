@@ -240,7 +240,7 @@ test("a question the human typed past blocks the done fence too, and its referen
     assert.deepEqual(w.deliveries(), [DONE_OVER(4)], "the reference makes it stand again: no nudge")
     assert.deepEqual(w.view().questions.map((q) => q.standing), [true])
   } finally { w.close() }
-  // The negative control for that last step: the same rest without the reference leaves it faded.
+  // The negative control for that last step: the same rest without the reference is a bare one.
   const bare = world()
   try {
     bare.user(0, "move the settings into a real store")
@@ -252,8 +252,7 @@ test("a question the human typed past blocks the done fence too, and its referen
     bare.user(5.5, bare.sent[0])
     bare.say(6, "Migration finished; the store is still an open call.")
     await bare.tick(7)
-    assert.deepEqual(bare.view().questions.map((q) => q.standing), [false])
-    assert.deepEqual(bare.deliveries(), [DONE_OVER(4)], "a bare rest is a reply, and draws nothing")
+    assert.deepEqual(bare.deliveries(), [DONE_OVER(4), `signoff:${at(6)}`])
   } finally { bare.close() }
 })
 
@@ -333,11 +332,10 @@ test("the correction is not held behind the quiet window of the wake before it",
   const w = world({}, { quietWindowMs: 5 * 60_000 })
   try {
     w.user(0, "move the settings into a real store")
-    // A timer comes due at the worker's rest, so the scheduler hands the thread a wake of its own.
+    // A bare rest, so the scheduler hands the thread a wake of its own (the sign-off reminder).
     w.say(1, "Reading the settings layer.")
-    w.storage.armThreadTimer({ id: "tmr_open", slug: "t", prompt: "check the store", fireAtMs: Date.parse(at(1.1)), createdAtMs: Date.parse(at(0.5)) })
     await w.tick(1.25)
-    assert.deepEqual(w.deliveries(), ["timer:tmr_open"])
+    assert.deepEqual(w.deliveries(), [`signoff:${at(1)}`])
     assert.equal(w.sent.length, 1)
     w.user(1.5, w.sent[0])
     w.say(2, `All in, bar one call.\n\n${choice("store")}\n\n${done}`)
@@ -361,9 +359,8 @@ test("no fence correction waits behind the quiet window, and a wake that is not 
       w.extra.bgShells = [{ label: "the suite", startedAt: at(0), state: "running", id: "toolu_x", taskId: "bzvt" }] as never
       w.user(0, "publish the packages")
       w.say(1, "Reading the publish script.")
-      w.storage.armThreadTimer({ id: "tmr_open", slug: "t", prompt: "check the registry", fireAtMs: Date.parse(at(1.1)), createdAtMs: Date.parse(at(0.5)) })
       await w.tick(1.25)
-      assert.equal(w.sent.length, 1, `${name}: the timer is the wake that opens the window`)
+      assert.equal(w.sent.length, 1, `${name}: the sign-off reminder is the wake that opens the window`)
       w.user(1.5, w.sent[0])
       w.say(2, message)
       await w.tick(2.25)
@@ -375,7 +372,6 @@ test("no fence correction waits behind the quiet window, and a wake that is not 
   try {
     held.user(0, "publish the packages")
     held.say(1, "Reading the publish script.")
-    held.storage.armThreadTimer({ id: "tmr_open", slug: "t", prompt: "check the registry", fireAtMs: Date.parse(at(1.1)), createdAtMs: Date.parse(at(0.5)) })
     await held.tick(1.25)
     held.user(1.5, held.sent[0])
     held.say(2, `Published.\n\n${done}`)
@@ -404,6 +400,7 @@ test("a new valid question beside the same broken fence at every rest does not r
     assert.equal(w.deliveries().length, 3, `three since the human last typed — got ${w.deliveries().length} over eight rests`)
     assert.ok(w.deliveries().every((id) => id.startsWith("park:question-fence:")))
     assert.equal(w.storage.listThreadQuestions("t").filter((q) => q.state === "open").length, 8, "every valid question still registered")
+    assert.deepEqual(w.deliveries().filter((id) => id.startsWith("signoff:")), [], "and the silenced rests are not nudged instead")
     // The human typing is what hands it back.
     w.user(20, "what is going on with the scope question?")
     w.say(21, `Still one call.\n\n${broken("scope")}`)
@@ -625,7 +622,7 @@ test("a done fence beside a question that was answered draws nothing", async () 
     w.say(5, `Using SQLite, as answered.\n\n${fence("question", "id: store")}\n\n${done}`)
     await w.tick(6)
     await w.tick(7)
-    assert.deepEqual(w.deliveries().filter((id) => id.startsWith("park:")), [])
+    assert.deepEqual(w.deliveries().filter((id) => id.startsWith("park:") || id.startsWith("signoff:")), [])
     assert.equal(w.sent.length, 1, "the answer's own wake and nothing after it")
   } finally { w.close() }
 })
@@ -700,9 +697,9 @@ test("a correction still in the outbox dies when the human closes the question f
 // ── What a rest costs once the cap is in play ───────────────────────────────────────────────────────
 
 // A worker that keeps writing the same broken ```question fence, alone. Three corrections spend the cap;
-// until 2026-10-13 the sign-off reminder then took the rest the cap had silenced and told the worker,
-// twice, "You rested without a fence" — of a message that was a fence. Five wakes for three.
-test("once the cap is spent, a rest whose question fence failed draws nothing more", async () => {
+// the sign-off reminder then took the rest the cap had silenced and told the worker, twice, "You rested
+// without a fence" — of a message that was a fence. Five wakes for three, the last two false.
+test("once the cap is spent, a rest whose question fence failed is not nudged for resting without a fence", async () => {
   const w = world()
   try {
     w.user(0, "publish the packages")
@@ -712,11 +709,12 @@ test("once the cap is spent, a rest whose question fence failed draws nothing mo
       w.user(minute + 0.5, w.sent[w.sent.length - 1] ?? "steer")
     }
     assert.deepEqual(w.deliveries().map((id) => id.split(":").slice(0, 2).join(":")), ["park:question-fence", "park:question-fence", "park:question-fence"], "three corrections and then silence")
-    // …and a bare rest after the human types is a reply, which draws nothing either.
+    assert.equal(w.storage.getSession("t")?.signoff_nudges ?? 0, 0)
+    // The reminder is not switched off for the thread: a rest that really is bare still draws it.
     w.user(20, "forget the scope question")
     w.say(21, "Dropped it.")
     await w.tick(22)
-    assert.equal(w.deliveries().length, 3)
+    assert.deepEqual(w.deliveries().slice(3), [`signoff:${at(21)}`])
   } finally { w.close() }
 })
 
@@ -761,6 +759,7 @@ test("control: the Goal thread harness does deliver a rest prompt when nothing e
   const w = world()
   try {
     w.storage.setRecurringPromptBySlug("t", { prompt: "Keep going until the release is out.", stopHook: true, heartbeat: false, postCompaction: false, intervalMs: null, armedAt: at(0) })
+    w.storage.setSetting("signoffNudge", "off")
     w.user(0, "go")
     w.say(1, "Carrying on.")
     await w.tick(2)
@@ -850,4 +849,24 @@ test("an anchor written by the older code hands the allowance back too; one that
       assert.deepEqual(w.logs.filter((line) => /pass failed/.test(line)), [], `${anchor}: no pass threw`)
     } finally { w.close() }
   }
+})
+
+// THE SIGN-OFF REMINDER'S OWN CAP IS A DIFFERENT COUNT WITH A RECORDED DECISION BEHIND IT (scheduler
+// SOURCE 9, "ONLY A FENCE GIVES THE ALLOWANCE BACK"), and the change above deliberately leaves it alone.
+// Pinned here beside the corrective cap so the two are not made to match by accident.
+test("the sign-off reminder's cap still comes back only on a sign-off, not when the human types", async () => {
+  const w = world()
+  try {
+    w.user(0, "publish the packages")
+    assert.equal(await restOn(w, 1, "Reading the publish script."), true)
+    assert.equal(await restOn(w, 2, "Still reading."), true)
+    assert.equal(await restOn(w, 3, "Nearly there."), false, "two reminders, then none")
+    w.user(10, "any progress on this?")
+    assert.equal(await restOn(w, 11, "Some."), false, "the human typing does not hand the reminder back")
+    assert.equal(w.storage.getSession("t")?.signoff_nudges, 2)
+    // A sign-off does.
+    w.user(12, "go on")
+    assert.equal(await restOn(w, 13, `Published.\n\n${done}`), false)
+    assert.equal(w.storage.getSession("t")?.signoff_nudges, 0)
+  } finally { w.close() }
 })

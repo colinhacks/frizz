@@ -212,7 +212,7 @@ test("the contract teaches steps: as the wait on a human's act, and routes to it
     assert.match(c, /it always puts the thread in their queue/)
     assert.match(c, /anything else they need to tell you — a step that failed, the account they used — comes as that note or a message of their own/)
     assert.doesNotMatch(c, /Couldn't do it/)
-    assert.match(c, /\(`steps:` counts: it names the human, and so does `status: needs_input` naming nothing\.\)/)
+    assert.match(c, /\(`steps:` counts: it names the human\.\)/)
     // Every step is clickable and complete (maintainer 2026-10-08): links to the pages it names, taught
     // by a bad/good pair, and the example fence itself carries a link.
     assert.match(c, /EVERY STEP IS CLICKABLE AND COMPLETE — A STEP THAT MAKES THE HUMAN GO LOOKING IS A BROKEN STEP/)

@@ -1680,7 +1680,7 @@ const RECURRING_TRAILER =
   /\n\n\((?:Goal|Recurring prompt|Stop hook|Heartbeat) — (?:sent (?:(each time you come to rest)|every ([^.)]+))|(your context was just compacted))\. [^)]*\)$/
 export function parseRecurringPrompt(text: string | undefined): RecurringPrompt | undefined {
   if (typeof text !== "string") return undefined
-  // Frizz's retired sign-off reminder (scheduler SOURCE 9), still in older transcripts. It carries no trailer — it is not the
+  // Frizz's built-in sign-off reminder (scheduler SOURCE 9). It carries no trailer — it is not the
   // operator's text with a note attached, it IS frizz's text — so it is matched on its own opening
   // marker and collapsed like any other repeating frizz delivery. Left as a card it dominated the queue
   // item it was complaining about (maintainer 2026-08-12, with a screenshot of exactly that).
@@ -2034,18 +2034,44 @@ export function parseInterruptEndedWake(text: string): { agents: InterruptEndedS
   return agents.length ? { agents } : null
 }
 
-// ---- THE RETIRED SIGN-OFF REMINDER (scheduler SOURCE 9) -------------------------------------------
-// From 2026-08-12 to 2026-11-19 Frizz told a worker that rested with no fence how to sign off. It is
-// retired (the scheduler's SOURCE 9 note has the measurement): a rest with no sign-off is the worker's
-// reply, waiting on the human. What stays here is what older transcripts still need read, and the live-
-// work lookup the fence corrections print.
-/** The retired reminder's opening line. Transcripts written while it ran still carry it, and the chat
- *  matches on it to fold the delivery to one hairline rather than render Frizz's boilerplate as a card.
- *  A text match is honest here: Frizz wrote this string and Frizz reads it. */
+// ---- THE BUILT-IN SIGN-OFF NUDGE (scheduler SOURCE 9) --------------------------------------------
+// The rules arrive when they are ABOUT TO BE USED, rather than 200k tokens earlier in a system prompt
+// the agent has long since stopped attending to. Maintainer 2026-08-11: "the agent seems to often
+// forget about this stuff when it's added to the additional system prompt anyway."
+//
+// Delivered ONLY to a rest that carried NO fence at all — a thread that signed off correctly never sees
+// it, so the whole cost of the mechanism is paid by exactly the rests that were about to produce an
+// untriageable queue item. That is the invariant it exists to buy: every item in the queue is a
+// question you can answer or a checkmark you can archive.
+//
+// IT REACHES EVERY THREAD, including one driving itself on an armed Goal. That case was carved out for a
+// day (2026-08-13 → 2026-08-14, when the Goal still carried a question-hold switch) on the reading that
+// the invariant is about a queue a HUMAN triages, so a thread nobody is waiting on does not need it. Two
+// things sank that: this text now opens by sending a half-finished thread back to the WORK rather than
+// offering a menu of ways to stop, so it no longer pulls against the Goal arriving beside it; and it is
+// the only delivery that names the ```awaiting park at all (the Goal's own trailer deliberately does not
+// — see restPromptMessage), so silencing it left the longest-running threads — the self-driving ones, the
+// ones most likely to hold background work — with no way to learn how to park on it.
+//
+// SHORT, because it competes with the agent's own conclusion for attention, and because a long one
+// invites the agent to treat "how do I sign off?" as the task. Three facts and a shape.
+//
+// IT LEADS WITH "GO BACK TO THE WORK", not with the fence menu (2026-08-14, the same change that made
+// `DEFAULT_RECURRING_PROMPT` lopsided — see the comment there). The two deliveries land on the SAME rest
+// and must not pull against each other: a nudge whose first instruction is "pick one of these three ways
+// to stop" hands a half-finished thread a menu with no correct entry on it, and the agent picks the
+// closest — usually `done`, which is a dismissal. So the fence menu is now the OTHERWISE branch, and the
+// first branch says the fence is not what a thread with parts left owes. Nothing is lost from the
+// invariant: a thread that goes back to work leaves the queue by SPINNING, which is the outcome the
+// reminder wanted anyway.
+/** The nudge's opening line, exported because it does DOUBLE DUTY: it tells the agent whose message
+ *  this is, and it is what the transcript matches on to collapse the delivery to one hairline rather
+ *  than rendering frizz's boilerplate as a card over the agent's own words. A text match is honest here
+ *  — frizz writes this string and frizz reads it, both from this file. */
 export const SIGNOFF_NUDGE_MARKER = "**This message is from frizz, not from the human.**"
 
-/** The live things a thread could legitimately park on, appended to a fence correction so the agent does
- *  not have to go looking for ids it cannot see. Maintainer 2026-08-14: "the handoff lists out all of the
+/** The live things a thread could legitimately park on, appended to the reminder so the agent does not
+ *  have to go looking for ids it cannot see. Maintainer 2026-08-14: "the handoff lists out all of the
  *  background shells and sub-agents with their identifiers so that it's really easy for the agent to
  *  produce an awaiting fence that lists out the IDs properly."
  *
@@ -2072,7 +2098,7 @@ export interface SignoffLiveOps {
 // THE NUDGE PRINTS THE IDS, and that is not a convenience — it is what makes the fence writable at all.
 // The awaiting grammar references live things BY ID, so a worker that has lost them (a compaction, a long
 // turn) cannot write a correct fence and will be bumped for naming something wrong. Giving it the exact
-// lines here closes that loop at the one moment it is provably needed: its fence was just refused.
+// lines here closes that loop at the one moment it is provably needed: it just rested without a fence.
 // `frizzctl activity` returns the same list on demand, from the same source.
 /** The registries as one `kinds: [id, …]` line per kind a fence can copy verbatim, each above the ids it
  *  holds and what they are, or `[]` when nothing is running.
@@ -2105,6 +2131,169 @@ export function liveOpsLines(ops?: SignoffLiveOps, needsInput = false): string[]
   return lines
 }
 
+/** The reminder for a fenceless rest. `needsInput` is the worker's contract (`needsInputRequired`): a
+ *  worker dispatched under the answer-required cut is taught `status:` — the 2026-10-05 spelling, which
+ *  a worker that learned `needs_input:` can write just as well, since the fence reads both — and one
+ *  dispatched before the cut is taught the grammar it can actually satisfy. */
+export function signoffNudgeMessage(ops?: SignoffLiveOps, needsInput = false, strayFence = false): string {
+  const plain = needsInput ? SIGNOFF_NUDGE_MESSAGE_NEEDS_INPUT : SIGNOFF_NUDGE_MESSAGE
+  const base = strayFence ? plain.replace(SIGNOFF_NUDGE_BARE_LINE, SIGNOFF_NUDGE_STRAY_LINE) : plain
+  const lines = liveOpsLines(ops, needsInput)
+  if (lines.length) {
+    lines.push("", "An ```awaiting fence names only what you are ACTUALLY waiting on, one such list per kind, plus")
+    if (needsInput) {
+      lines.push("a required `for:` duration (`30s`/`15m`/`2h`/`3d`) and a required `status:` (`working`, `watching`")
+      lines.push("or `needs_input`), then a `---` line and whatever prose the human needs. Frizz checks every id:")
+      lines.push("name something that is not running and you are bumped rather than parked.")
+    } else {
+      lines.push("a required `for:` duration (`30s`/`15m`/`2h`/`3d`), then a `---` line and whatever prose you want")
+      lines.push("(optional). Frizz checks every id: name something that is not running and you are bumped")
+      lines.push("rather than parked.")
+    }
+  }
+  return lines.length === 0 ? base : `${base}\n${lines.join("\n")}`
+}
+
+/** The ```awaiting bullet of the reminder, per contract. The rest of the reminder is identical for both. */
+function signoffNudgeAwaitingLines(needsInput: boolean): string[] {
+  if (!needsInput) {
+    return [
+      "- `` ```awaiting `` — you are WAITING on work that is actually running. FRONTMATTER, THEN MARKDOWN:",
+      "  one YAML list per kind of thing you are waiting on, a REQUIRED `for:` duration, then a `---` line and",
+      "  as much prose as you want. The prose is OPTIONAL; the lines above it are not.",
+      "",
+      "  ```awaiting",
+      "  shells: [<the id your runtime gave you>]",
+      "  prs: [owner/repo#123]",
+      "  for: 2h",
+      "  ---",
+      "  What you are waiting for, in your own words — this is what the human reads on your card.",
+      "  ```",
+    ]
+  }
+  return [
+    "- `` ```awaiting `` — you are WAITING on work that is actually running: a background shell, a",
+    "  sub-agent, a timer or a registered PR. FRONTMATTER, THEN MARKDOWN: one YAML list per kind of thing",
+    "  you are waiting on, a REQUIRED `for:` duration, a REQUIRED `status:`, then optionally a `---` line",
+    "  and prose.",
+    "",
+    "  ```awaiting",
+    "  agents: [<the id your runtime gave you>]",
+    "  status: working",
+    "  for: 2h",
+    "  ```",
+    "",
+    "  `status:` says where the thread sits while you wait, in one of three words:",
+    "  - `working` — what you named finishes by itself: a test, a build, a benchmark, CI, a sub-agent doing",
+    "    a task. The thread shows as running until the work wakes you.",
+    "  - `watching` — something has to HAPPEN outside the thread: a release, a review, another agent's",
+    "    merge, the next daily cycle. The thread is snoozed, and nothing on its row moves, until a named",
+    "    item reports or `for:` runs out.",
+    "  - `needs_input` — the human can read, try or act on something NOW while the work runs (a partial",
+    "    result, a file you wrote, a server to try), even if you need nothing back from them. The thread",
+    "    goes into their queue, and the prose under `---` says what to look at.",
+    "  `working` and `watching` owe NO write-up: the fence alone is the whole message. If you wrote ANY",
+    "  words for the human at this rest, it is `needs_input` — nothing else is put in front of them. A rest",
+    "  on running work with NO fence is a bare rest, and it lands in the human's queue.",
+  ]
+}
+
+const SIGNOFF_NUDGE_BARE_LINE = "You rested without a fence, so this thread cannot be triaged."
+/** …for a rest whose message DID write a fence, just not as its end (@frizz/shared signalFenceOf). "You
+ *  rested without a fence" was false there, and the worker's fix is different: move the fence, or lengthen
+ *  it, rather than write one (2026-11-11: a handoff whose email-to-paste code block closed its fence early,
+ *  and a ```done with a closing question in prose under it). */
+const SIGNOFF_NUDGE_STRAY_LINE = [
+  "Your last message wrote a ```done or ```awaiting fence, but not as its END, so it signals nothing and this",
+  "thread cannot be triaged. Only whitespace and ```question fences may follow the signal fence. Prose after it",
+  "turns it into a plain code block, and so does a code block inside it whose own closing ``` line closes a",
+  "three-backtick fence early: open a fence that holds code blocks with four backticks.",
+].join("\n")
+
+function signoffNudgeText(needsInput: boolean): string {
+  return [
+  `${SIGNOFF_NUDGE_MARKER} Nothing about your task has changed, and no new work is being asked of you.`,
+  "",
+  SIGNOFF_NUDGE_BARE_LINE,
+  "",
+  "**IF THE TASK STILL HAS PARTS LEFT, THE FENCE IS NOT WHAT YOU OWE — THE WORK IS.** If ANY part of the",
+  "original task is unfinished, unverified, or deferred, resume it NOW, in THIS turn, and sign off once it",
+  "is genuinely finished. A milestone, a green test run and a long turn are none of them endings, and",
+  "neither is naming the next step or writing it into a scratch file.",
+  "",
+  "**AND THAT TASK IS ALSO THE CEILING — finish it, and nothing else.** Work you notice on the way is a",
+  "FINDING TO REPORT in your sign-off, never work to take on: the bug beside the one you were sent for,",
+  "the refactor the code obviously wants, the second issue the first one touches. Widening the job is not",
+  "thoroughness — it is a different job nobody asked for, and it buries the answer they did ask for under",
+  "changes they now have to review. If it should be done, name it in one line and let the human dispatch",
+  "it.",
+  "",
+  "**IF WHAT YOU WERE ASKED FOR IS A DOCUMENT, THE DOCUMENT IS THE ENDING.** A triage, a review, an",
+  "investigation, a recommendation, a plan — when that is the deliverable, the finished write-up IS the",
+  "work. Implementing what it proposes is the NEXT job, and not yours unless you were asked. Sign off with",
+  "the write-up.",
+  "",
+  "**DECIDE RATHER THAN ASK.** Stop only for a decision that is genuinely the human's AND that blocks you",
+  "right now: ask that one in a ```question fence. Every other open choice INSIDE the task — a name, a",
+  "default, a reversible design call — is yours to make: decide it, say in one line which way you went and",
+  "what would reverse it, and carry on. A choice that would ENLARGE the task is not one of those: an",
+  "unanswered question is not permission to go build the answer.",
+  "",
+  "Otherwise, sign off — a question in your prose, or a fence at the END of your next message:",
+  "",
+  "- `` ```question `` — you need the human's decision. Write each fence right under the paragraph it",
+  "  decides, never stacked at the bottom: `id:` (a slug of your choosing), `kind:` (`choice`, `multi`,",
+  "  `text` or `secret`), a one-line `question:`, and `options:` with one-line trade-offs, the recommended",
+  "  one first. Frizz registers it when the message lands, and a question asked at this rest is its",
+  "  sign-off: rest normally.",
+  "- `` ```done `` — genuinely FINISHED. A DISMISSAL: the card is filed away and nobody looks again, so",
+  "  if anything is still owed, it is not done. Body: 1-3 sentences, then bullets, each opening with a",
+  "  **bolded verb phrase**.",
+  ...signoffNudgeAwaitingLines(needsInput),
+  "",
+  "  Frizz CHECKS every line: name something that is not running and you are bumped rather than parked.",
+  "  A fence that names NOTHING is not a park at all — if you are not waiting on anything, you are not",
+  "  awaiting, you are done. Register a PR with `frizzctl watch-pr add` and a timer with",
+  "  `frizzctl timer set`; `frizzctl activity` reads back everything you have running, with its id.",
+  "- `` ```awaiting `` with `steps:` — the human must PERFORM something you cannot: sign in, approve,",
+  "  merge, press a button you may not. List each step as a `- ` line under `steps:`, written to be",
+  "  followed cold: a real Markdown link to every page and file it names, every command in a code span,",
+  "  every value the act needs written in. Frizz reads them verbatim. Detail the line cannot hold goes in",
+  "  a Markdown body indented under it after a blank line. Steps name the HUMAN as the wait,",
+  "  so the fence needs no other name and no `for:`, and the thread goes into their queue. Their Done",
+  "  comes back to you as their reply; anything else they need to say comes as a message of their own.",
+  "- A question you asked at an EARLIER rest and have not had answered: its card is still on screen",
+  "  where you asked it, so leave it there. Only if the human has typed past it since, name it again",
+  "  with a ```question fence carrying its `id:` alone under the paragraph it belongs to, which draws its",
+  "  card in this message and puts it back in their queue. One you no longer need, withdraw with",
+  "  `frizzctl unask <id>` first.",
+  "",
+  "**STILL OWED counts things you are not going to do yourself.** A decision you are RECOMMENDING, a",
+  "draft you wrote but did not send, follow-up work you discovered — all of it dies with the card, even",
+  "the part that is someone else's to do. Each ends on a question with your recommendation as option A,",
+  "or you DO it first — a sub-agent's result comes BACK to you, so it lands on your card; a new card via",
+  "`frizzctl spawn-thread` is the LAST resort, since nothing it learns returns to you or its siblings.",
+  "None of them is a `done`. And what is not",
+  "worth a card is not worth a SENTENCE: delete the dangling \"one thing to carry forward\", never park it",
+  "in the handoff.",
+  "",
+  "**DO NOT REPEAT YOURSELF.** If the message you just wrote already stands on its own, reply with the",
+  "fence ALONE — the human reads both together, so restating it costs them the second read for nothing.",
+  "The same holds inside one message: the card is the ledger of what shipped, the prose is only what a",
+  "ledger cannot hold, and a sentence that reads the same in either belongs in exactly one of them.",
+  "",
+  "Only if it does NOT stand alone, fix that first, briefly. It has to be readable cold: the human has",
+  "seen nothing since their own last message — the Goal, this reminder, a watcher wake all came from",
+  "frizz — so anything you assumed they had followed, they have not.",
+  ].join("\n")
+}
+
+export const SIGNOFF_NUDGE_MESSAGE = signoffNudgeText(false)
+
+/** The same reminder for a worker dispatched under the answer-required contract (NEEDS_INPUT_REQUIRED_AT),
+ *  which it teaches as `status:` since 2026-10-05. */
+export const SIGNOFF_NUDGE_MESSAGE_NEEDS_INPUT = signoffNudgeText(true)
+
 // ---- THE FENCE CORRECTIONS (scheduler SOURCE 12) -------------------------------------------------
 // Frizz refusing a park and telling the worker why: a fence naming something that is not running, a
 // fence naming nothing at all, a fence written in a line kind that no longer exists.
@@ -2114,7 +2303,7 @@ export function liveOpsLines(ops?: SignoffLiveOps, needsInput = false): string[]
 // for the human to do — and left as a first-party card it dominated the very handoff it was complaining
 // about, then sat above the worker's re-fence as a second, louder copy of a conversation the human was
 // never part of (maintainer 2026-08-19, with a screenshot of exactly that). It is the same verdict the
-// retired sign-off reminder got on 2026-08-12, one step further: that one collapses to a hairline, this one is
+// sign-off nudge got on 2026-08-12, one step further: that one collapses to a hairline, this one is
 // dropped from the transcript entirely.
 //
 // The LEADS are matched rather than a marker being minted, so the corrections already sitting in every
@@ -2348,8 +2537,8 @@ export function parkExpiredWakeMessage(status: readonly string[]): string {
     ...status,
     "",
     "Re-park if they are genuinely still going — there is no limit on that, and a long job is not a",
-    "failure. If something is finished, read its result. If nothing is left, end in ```done, ask the",
-    "human in a ```question fence, or rest on your reply with no fence.",
+    "failure. If something is finished, read its result. If nothing is left, end in ```done, or ask",
+    "the human in a ```question fence.",
   ].join("\n")
 }
 
@@ -2363,7 +2552,7 @@ export function parkFinishedWakeMessage(status: readonly string[], several: bool
     "READ ITS OUTPUT AND CARRY ON. This is not a broken fence and there is nothing to fix: the wait",
     "you declared simply ended. Do NOT relaunch the same work — its result is already on disk.",
     "",
-    "Then park on whatever comes next. If nothing is left, end in ```done, a ```question, or your reply with no fence.",
+    "Then park on whatever comes next, or end in ```done or a ```question if nothing is left.",
   ].join("\n")
 }
 
@@ -3418,7 +3607,7 @@ export function questionFencesLive(spawnedAt: string | number | undefined | null
 // the thread in the queue while the work runs, `needs_input: false` keeps it out. The answer is REQUIRED
 // on every such rest ("we should make it required so the agent always needs to provide an answer here"),
 // and only on such rests — `done` and a registered question already are the answer "yes". A rest on
-// running work with no fence is a bare rest: queued, as the worker's reply.
+// running work with no fence is a bare rest: queued, and the sign-off nudge teaches the fence.
 //
 // The safety rules are the fence's own and nothing new: a `false` parks only while every item it names
 // is live and its `for:` has not run out (awaiting.parkIsHonoured), so a wrong `false` cannot hide a
@@ -5923,7 +6112,7 @@ export type OwnThreadTimersResult = z.infer<typeof OwnThreadTimersResult>
 // EVERY kind of background work a thread has out, with the id the awaiting fence names it by, in ONE
 // call. The fence is structural — it references things by id — so a worker that has lost its ids (a
 // compaction, a long turn, a wake it did not expect) cannot write a correct fence at all. This is how it
-// gets them back, and it is the same list the fence corrections print, so the two can never disagree.
+// gets them back, and it is the same list the sign-off nudge prints, so the two can never disagree.
 export const ThreadActivityItem = z.object({
   kind: z.enum(["shell", "agent", "timer", "pr", "issue", "command", "thread"]),
   /** The string a `<kind>:` fence line must carry. For a shell that is the runtime task id the worker

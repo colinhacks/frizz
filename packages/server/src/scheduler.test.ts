@@ -2624,7 +2624,7 @@ test("question: an armed Goal with NO TEXT does not make a dismissal wake — th
 // minted one per poll and the outbox held them all — eleven were handed to one thread within two
 // seconds the moment it rested (`yeah-we-definitely-don-t-do-enough`, 2026-08-27 00:53), three of them
 // "CI FAILED" with job lists the later ones had already replaced. The same stale-second-wake shape as
-// the Goal after the retired sign-off reminder. Now a poll that finds a report still waiting mints nothing and
+// the Goal after the sign-off nudge. Now a poll that finds a report still waiting mints nothing and
 // holds the cursor, so the report after delivery carries everything since.
 const reportsOf = (h: Harness, slug: string) => h.storage.db
   .prepare("SELECT fence_id, state, sent_at FROM wake_delivery WHERE thread_slug = ? AND fence_id LIKE 'prwatch:%' ORDER BY created_at")
@@ -3033,6 +3033,8 @@ test("shell: a thread that signed off done is not woken when a shell it walked a
   assert.deepEqual(h.resumes, [], "a registered done is done")
 
   // CONTROL: the same rest with no sign-off at all is woken — the guard is the sign-off, not the shape.
+  // (A bare rest draws the sign-off nudge as well, its own news; since 2026-09-03 the two ride in ONE
+  // delivery, so the shell's wake is counted by its text being there at all.)
   h.storage.clearThreadDone("d")
   await s.tick()
   const shellWakes = (h.resumes as { message: string }[]).filter((r) => /dev server|bzvtnt3ig/.test(r.message))
@@ -3066,6 +3068,7 @@ test("shell: …unless the worker REGISTERED a wait on that shell — a registra
 
 function coalesceHarness(): Harness {
   const h = harness()
+  h.storage.setSetting("signoffNudge", "off") // a bare rest would otherwise draw the nudge into every frame
   return h
 }
 
@@ -3180,6 +3183,30 @@ test("coalesce: a wake older than the window is delivered at once", async () => 
   armTimer(h, "b", h.clock.ms, "later")
   await s.tick()
   assert.deepEqual(h.resumes.map((r) => r.message.split("\n")[0]), ["first", "later"], "the window had already elapsed, so nothing waits")
+  h.storage.close()
+})
+
+// THE NUDGE ANSWERS THE WORKER'S OWN REST, which is the card on the board right now — so the window that
+// rations news must not hold it. The shape of the thread that surfaced it (2026-09-25): a wake goes out,
+// the worker rests bare seconds later, and the nudge sat for the rest of the window while the maintainer
+// opened a card that said nothing about where it stood.
+test("coalesce: the sign-off nudge for a bare rest right after a wake is not held by the window", async () => {
+  const h = harness() // the nudge ON — coalesceHarness turns it off
+  h.storage.upsertSession(row("n"))
+  h.tele.set("n", tele())
+  const s = h.make({ wakeQuietWindowMs: WAKE_QUIET_WINDOW_MS })
+  const t0 = h.clock.ms
+  armTimer(h, "n", t0, "first")
+  await s.tick()
+  assert.equal(h.resumes.length, 1, "the wake that starts the window")
+
+  h.clock.ms = t0 + 9_000
+  h.tele.set("n", { ...tele(), lastUserAt: iso(t0), lastAssistantAt: iso(h.clock.ms) })
+  h.clock.ms += 2_000
+  await s.tick()
+  assert.equal(h.resumes.length, 2, "delivered on the tick that minted it, not when the window ends")
+  assert.match(h.resumes[1].message, /You rested without a fence/)
+  assert.match(h.resumes[1].message, /you last spoke 2s ago\.$/)
   h.storage.close()
 })
 

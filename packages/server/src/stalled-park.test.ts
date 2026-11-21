@@ -164,6 +164,7 @@ function schedulerWorld(github: GithubWatchStatus, hints: FenceView["hints"] = Q
   const slug = "parked"
   const dir = mkdtempSync(join(tmpdir(), "frizz-stalled-park-sched-"))
   const storage = createStorage(join(dir, "ui.db"), "p")
+  storage.setSetting("signoffNudge", "off")
   const restedAt = new Date(Date.now() - 60_000).toISOString()
   storage.upsertSession({
     slug, session_id: "sid", thread_name: `frizz-${slug}`, spawned_at: spawnedAt,

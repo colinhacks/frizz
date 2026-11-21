@@ -73,8 +73,7 @@ test("the two shapes render their own label", () => {
   assert.match(stalled, />Stalled</)
   const rested = renderToStaticMarkup(createElement(RestedCard, { thread: { crashed: false } }))
   assert.match(rested, /data-rested-card="bare"/)
-  assert.match(rested, />Waiting on your reply</)
-  assert.doesNotMatch(rested, /nudge/i, "the reminder it described is retired")
+  assert.match(rested, />Rested without a sign-off</)
 })
 
 // THE QUESTION FENCE (2026-10-13). A fence that tried the grammar and failed registers nothing and draws as

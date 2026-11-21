@@ -8,7 +8,7 @@ import assert from "node:assert/strict"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { boardAskThread, withAnswersNote, DONE_FENCE_CORRECTION_LEAD, formatThreadMessage, humanGapNote, limitResumeSteer, mergedWakeMessage, needsAction, PARK_CORRECTION_NAMES_LEAD, parkExpiredWakeMessage, prWatchWakeMessage, questionAnswerMessage, restPromptMessage, RETRY_FOLLOW_UP, sectionOf, shellDoneMessage, SIGNOFF_NUDGE_MARKER, timerPromptMessage, wakeDeliveryToken } from "@frizz/shared"
+import { boardAskThread, withAnswersNote, DONE_FENCE_CORRECTION_LEAD, formatThreadMessage, humanGapNote, limitResumeSteer, mergedWakeMessage, needsAction, PARK_CORRECTION_NAMES_LEAD, parkExpiredWakeMessage, prWatchWakeMessage, questionAnswerMessage, restPromptMessage, RETRY_FOLLOW_UP, sectionOf, shellDoneMessage, signoffNudgeMessage, timerPromptMessage, wakeDeliveryToken } from "@frizz/shared"
 import { Bus } from "./bus.ts"
 import { createBoard } from "./board.ts"
 import type { Project } from "./project.ts"
@@ -123,12 +123,16 @@ test("an honoured park still gives the allowance back on a rest whose question f
 
 // A thread with a Goal armed at rest runs AUTONOMOUSLY: a non-secret question there is refused with
 // "decide it yourself" (SOURCE 14). The Goal's own rest prompt fired on the same rest as well, and the
-// outbox handed the worker both under "Frizz held 2 wakes" — the two-deliveries-for-one-rest shape an
+// outbox handed the worker both under "Frizz held 2 wakes" — the two-deliveries-for-one-rest shape the
+// sign-off nudge already stands down for (SOURCE 9 reads the same correction), and the one an
 // ```awaiting fence's own correction (SOURCE 12) holds the Goal for.
 test("on a Goal thread, a question is cancelled on the record and that wake has the rest to itself", async () => {
   const w = world()
   try {
     w.storage.setRecurringPromptBySlug("t", { prompt: "Keep going until the suite is green.", stopHook: true, heartbeat: false, postCompaction: false, intervalMs: null, armedAt: at(0) })
+    // The sign-off reminder off, so the bare rest below is the Goal's alone (it stands down for the
+    // reminder, by design — see evalRestPrompts).
+    w.storage.setSetting("signoffNudge", "off")
     w.user(0, "go")
     w.say(1, `One call to make first.\n\n${choice("store")}`)
     await w.tick(2)
@@ -199,7 +203,7 @@ test("a faded question beside a ```done fence or a bare rest queues the thread a
     bare.say(4, "Migration finished.")
     await bare.tick(5)
     assert.equal(needsAction(bare.view()), false)
-    assert.deepEqual(bare.deliveries(), [], "a bare rest is a reply, and draws nothing")
+    assert.deepEqual(bare.deliveries(), [`signoff:${at(4)}`], "a bare rest, nudged as one")
   } finally { bare.close() }
 })
 
@@ -351,7 +355,7 @@ test("a question beside a `status: working` park survives every machine wake: st
     ["a timer", wake(timerPromptMessage("check whether the release went out", at(2)))],
     ["a PR watch", wake(prWatchWakeMessage({ target: "acme/app#12", checks: { verdict: "passing", summary: "3 of 3 passed" } } as never))],
     ["a Goal prompt", wake(restPromptMessage("Keep going until the suite is green."))],
-    ["the retired sign-off reminder, in an older transcript", wake(`${SIGNOFF_NUDGE_MARKER} Nothing about your task has changed, and no new work is being asked of you.\n\nYou rested without a fence, so this thread cannot be triaged.`)],
+    ["the sign-off reminder", wake(signoffNudgeMessage())],
     ["a fence correction", wake(`${PARK_CORRECTION_NAMES_LEAD}something that is not running, so it is not a park and your thread stayed in the queue.`)],
     ["a park expiring", wake(parkExpiredWakeMessage(["- `shells: [bzvt]` — still running"]))],
     ["a limit resume", wake(limitResumeSteer("session"))],
@@ -462,12 +466,14 @@ test("a question asked mid-turn outranks a ```done fence many machine wakes late
     assert.equal(t.needsYou, true)
     assert.equal(needsAction(t), true, "the row is the question's, not the done's")
     assert.equal(boardAskThread(t), true)
+    // And the bare rests on the way never drew the sign-off reminder: a standing question signs a rest off.
+    assert.deepEqual(w.deliveries().filter((id) => id.startsWith("signoff:")), [], "SOURCE 9 stayed quiet at every bare rest behind the question")
     // The done fence itself is another matter: it signed off over an open question (SOURCE 15).
     assert.deepEqual(w.deliveries(), [`park:done-open-question:${at(9)}`])
   } finally { w.close() }
 })
 
-test("a bare rest once the human has typed past the question is a reply: the question fades, and nothing is sent", async () => {
+test("SOURCE 9 still nudges a bare rest once the human has typed past the question", async () => {
   const w = world()
   try {
     w.user(0, "move the settings into a real store")
@@ -476,8 +482,7 @@ test("a bare rest once the human has typed past the question is a reply: the que
     w.user(3, "leave that for now")
     w.say(4, "Carrying on.")
     await w.tick(5)
-    assert.deepEqual(w.view().questions.map((q) => q.standing), [false], "a faded question signs nothing off")
-    assert.deepEqual(w.deliveries(), [])
+    assert.deepEqual(w.deliveries(), [`signoff:${at(4)}`], "the negative control: a faded question signs nothing off")
   } finally { w.close() }
 })
 
