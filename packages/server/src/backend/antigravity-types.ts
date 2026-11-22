@@ -101,20 +101,21 @@ export function isPlainFrizzctlCommand(commandLine: string): boolean {
   // character to a shell: one beside a heredoc's delimiter becomes PART of the delimiter, so the shell
   // closes the heredoc on a line this check never looks at and runs what follows (reproduced in bash,
   // zsh and sh, 2026-11-20). So every blank here is spelled out, and a control character asks.
-  const text = commandLine.replace(/^[ \t\n]+|[ \t\n]+$/g, "")
-  const newline = text.indexOf("\n")
-  const head = newline === -1 ? text : text.slice(0, newline)
-  const rest = newline === -1 ? undefined : text.slice(newline + 1)
-  if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(head) || text.includes("\u0000")) return false
+  // Only the LEADING blanks are trimmed. A trailing one can sit on the heredoc's closing line, and
+  // `EOF ` does not close a heredoc on `EOF`: the shell reads to the end of the input instead (bash 5
+  // warns that it did, 2026-11-22).
+  const text = commandLine.replace(/^[ \t\n]+/, "")
+  if (text.includes("\u0000")) return false
+  const [head = "", ...rest] = text.split("\n")
+  if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(head)) return false
   const match = /^frizzctl((?:[ \t]+(?:[A-Za-z0-9_@%+=:,.\/-]+|'[^']*'|"[^"$`\\]*"))*)(?:[ \t]+<<[ \t]*'([A-Za-z_][A-Za-z0-9_]*)')?[ \t]*$/.exec(head)
   if (!match) return false
+  const blank = (line: string): boolean => /^[ \t]*$/.test(line)
   const delimiter = match[2]
-  if (!delimiter) return rest === undefined
-  if (rest === undefined) return false
+  if (!delimiter) return rest.every(blank)
   // A heredoc with a QUOTED delimiter is literal text up to the delimiter's own line; nothing follows it.
-  const lines = rest.split("\n")
-  const end = lines.indexOf(delimiter)
-  return end !== -1 && lines.slice(end + 1).every((line) => /^[ \t]*$/.test(line))
+  const end = rest.indexOf(delimiter)
+  return end !== -1 && rest.slice(end + 1).every(blank)
 }
 
 /** A permission request with its tool input renamed to the keys the shared ACP card builder reads

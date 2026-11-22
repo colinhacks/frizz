@@ -78,6 +78,9 @@ test("antigravity: only one plain frizzctl call is approved without asking", () 
     "frizzctl done --body-file - <<EOF\n$(rm -rf build)\nEOF",
     "frizzctl done --body-file - <<'EOF'\nbody\nEOF\nrm -rf build",
     "frizzctl done --body-file - <<'EOF'\nnever closed",
+    // A blank after the closing word makes it a body line, so the heredoc never closes.
+    "frizzctl done --body-file - <<'EOF'\nbody\nEOF ",
+    "frizzctl done --body-file - <<'EOF'\nbody\nEOF\t\n",
     "env X=1 frizzctl done",
     "/tmp/frizzctl done",
     "frizzctlx done",
