@@ -10,7 +10,7 @@ import { useBoardThreads, useChildThreads, warmTranscript } from "../hooks.ts"
 import { prefs } from "../lib/prefs.ts"
 import { toggleBandFold, useBandFolds } from "../lib/sidebarBands.ts"
 import { subAgentProfileCell } from "../lib/subAgentProfile.ts"
-import { useShownTitle } from "../lib/pendingRename.ts"
+import { useThreadRename, type ThreadRename } from "../hooks/useThreadRename.ts"
 import type { PinShelf } from "../groups.ts"
 import { sectionThreads, externalThreads, orderByInteraction, partitionActive, needsAction, titleIsProvisional, SPINNING_UP_TITLE, pinnedOn, isSnoozed, parkedAwaitingHint, sessionIndicatorKind, offersRetry, futureSnoozedUntil, lastActiveLabelAt, waitNamesPr, awaitingMonitor, prChecksRunning, restingOnSubAgents, restIsWorking, workingWithOpenQuestion, isActivelyRunning, unreadRest } from "../groups.ts"
 import { ageSpan, relativeAge, limitResumeClock } from "../lib/activityTime.ts"
@@ -42,7 +42,7 @@ import { clampToSlots, edgeScrollVelocity, heldStep, moveItem, nearestSlot, shif
 import { SIDEBAR_WIDTH_CLASS } from "../lib/boardColumns.ts"
 import { RailViewChips } from "./RailViewChips.tsx"
 import { queuedOnShelf } from "../lib/consoleBoard.ts"
-import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactElement, ReactNode, RefObject } from "react"
+import type { ButtonHTMLAttributes, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactElement, ReactNode, RefObject } from "react"
 
 // THE LEFT SIDEBAR — the thread list as a FLOATING column (no border, no fill: it floats in the
 // page's whitespace the way the old ToC nav did). App centers the sidebar + workpane as a PAIR with
@@ -795,6 +795,52 @@ function TitleWithTrailers({ title, children }: { title: string; children: React
   )
 }
 
+// The row's clickable body: the button that opens its thread, or the same box as a plain div while the
+// row's title editor is open (ThreadRow).
+function RowBox({ editing, children, ...button }: { editing: boolean; children: ReactNode } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  if (editing) return <div className={button.className}>{children}</div>
+  return <button {...button}>{children}</button>
+}
+
+// THE RAIL ROW'S TITLE EDITOR. The text box stands exactly where the title was drawn and wraps where
+// it wrapped, so the row keeps its height and nothing below it moves: a textarea, because a rail title
+// wraps and an input is one line, sized by an invisible copy of its own text in the same grid cell. The
+// copy carries the row's trailers too (the provider mark, glued to the last word), so it wraps where the
+// row at rest did: without them a title whose mark had pushed its last word onto a line of its own fit
+// one line shorter, and the row shrank by a line on the double-click and grew back on the commit. The
+// text in the box may then wrap a line shorter than the box, never longer.
+//
+// The box grows OUT from the text, so no letter moves and the row keeps its height: each negative margin
+// cancels that side's border and padding. Sideways that is 1px of border and 3px of padding. Below, the
+// box takes one pixel more than above (`pb-px`): the sans title's cap band rides 0.38px low in its 19px
+// line, so a box flush with the line read the text low, and the extra pixel brings it to 0.13px high.
+// MEASURED 2026-11-22 in sans at dsf 4, dark and light: status mark's ink → border 4.0px, border → first
+// letter 3.6px. RE-MEASURE rather than re-guess if the type scale or the row's gap moves.
+//
+// It stands over the row's hover wash (the row's `after:` pseudo, painted above the row's content), which
+// would otherwise tint the box.
+//
+// What Enter, Escape and blur do is hooks/useThreadRename.ts, shared with the thread header's editor.
+function RowTitleEditor({ rename, trailers }: { rename: ThreadRename<HTMLTextAreaElement>; trailers: ReactNode }) {
+  return (
+    <span className="relative z-[1] -mx-1 -mt-px -mb-[2px] grid grid-cols-[minmax(0,1fr)] rounded-[5px] border border-border bg-elevated pb-px text-fg focus-within:border-accent">
+      <span aria-hidden="true" className="invisible col-start-1 row-start-1 whitespace-pre-wrap break-words px-[3px]">
+        <TitleWithTrailers title={`${rename.draft} `}>{trailers}</TitleWithTrailers>
+      </span>
+      <textarea
+        {...rename.editorProps}
+        rows={1}
+        spellCheck={false}
+        // A title is never a credential; 1Password reads a bare textarea as a place for an SSH key.
+        data-1p-ignore
+        // The pinned band starts a drag on a press anywhere in its row; a press here selects text.
+        onPointerDown={(e) => e.stopPropagation()}
+        className="col-start-1 row-start-1 w-full min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent px-[3px] py-0 outline-none"
+      />
+    </span>
+  )
+}
+
 // One THREAD row. Session rows (the default): the derived session indicator, the title, a foreign
 // read-only tag, an awaiting hint gloss, and the activity + live-sub-agent suffix. NO Mark-as verb —
 // session threads use Archive in the persistent thread footer. A LEGACY row
@@ -830,7 +876,9 @@ export const ThreadRow = memo(function ThreadRow({
   // Through the context, not useQueryClient, which throws where no provider is mounted: the rail's render
   // tests and fixture pages draw a row alone (ExpandThreadLink reads it the same way).
   const queryClient = useContext(QueryClientContext)
-  const title = useShownTitle(t)
+  const rename = useThreadRename<HTMLTextAreaElement>(t)
+  const title = rename.shown
+  const editing = rename.editing
   const foreign = !legacy && t.foreign === true
   // Snoozed rows are uniformly grayed as a whole; provisional titles retain their local dim treatment.
   // A thread awaiting its OWN live sub-agent/Monitor is not Snoozed and stays fully active — unless its
@@ -908,9 +956,20 @@ export const ThreadRow = memo(function ThreadRow({
             0.25px above the title's cap band, and its ink stands 6.5px clear of the box. */}
         {showsQueueDot && <span data-sidebar-queue-dot className="absolute left-[8px] top-[10.5px] size-1.5 rounded-full bg-accent" />}
       </span>
-      <button
+      {/* DOUBLE-CLICK THE ROW TO RENAME ITS THREAD (maintainer 2026-11-22: "You should be able to
+          double-click on a thread name in the sidebar to rename it"). The first click has already opened
+          the thread, as any click does. While the editor is open the row is a plain box instead of a
+          button: a text box inside a button is invalid, and the button's click would reopen the thread
+          on every click into the text. */}
+      <RowBox
+        editing={editing}
         // The board's pane shows it (store openThread → pushDrawer), queued or not.
         onClick={() => openThread(t.id)}
+        onDoubleClick={(e) => {
+          if (!rename.canRename) return
+          e.preventDefault()
+          rename.start()
+        }}
         // THE READ STARTS AT THE PRESS, not the click. A thread this tab has not read opens on "Loading…"
         // until its transcript arrives, and the click comes a hand's press-and-release after the button went
         // down: 34-376ms of "Loading…" on every cold open of a 400-message thread before this (eight opens,
@@ -941,6 +1000,7 @@ export const ThreadRow = memo(function ThreadRow({
               12px is a gutter, and it costs the title 4px it does not miss. */}
           <span className="flex min-w-0 items-baseline gap-3">
             <span className={`min-w-0 flex-1 break-words text-[13px] leading-[19px] ${dimLabel ? "text-provisional" : dim ? "text-fg/75" : "text-fg/90"}`}>
+              {editing ? <RowTitleEditor rename={rename} trailers={<ProviderMark backend={t.backend} model={t.model} className="ml-1" />} /> : (
               <TitleWithTrailers title={title}>
                 {!legacy && <ProviderMark backend={t.backend} model={t.model} className="ml-1" />}
                 {/* MEASURED 2026-08-19, the first time this tag ever rendered (it was written for a
@@ -965,6 +1025,7 @@ export const ThreadRow = memo(function ThreadRow({
                 )}
                 {legacy && <StatusChip status={t.archived ? "archived" : t.status} />}
               </TitleWithTrailers>
+              )}
             </span>
             {/* The Retry verb is an OVERLAY pinned to this same right edge, so on the rows that offer
                 it the two would collide — a 19px opaque button landing halfway across "20 seconds",
@@ -973,7 +1034,7 @@ export const ThreadRow = memo(function ThreadRow({
             {restedAge && <RestedAge t={t} yieldsToRetry />}
           </span>
         </span>
-      </button>
+      </RowBox>
       {/* The Mark-as verb survives ONLY on legacy rows (a .frizz verb). Session lifecycle controls
           live in the thread header's action strip. */}
       {legacy && (
@@ -998,8 +1059,10 @@ export const ThreadRow = memo(function ThreadRow({
           of slicing one in half. Both are invisible because the row's hover wash paints ABOVE them (the
           `after:` pseudo on the row), so the strip is exactly the row's colour whether hovered,
           keyboard-focused or snoozed. The old opaque `bg-panel` pill sat UNDER the wash and read as a
-          darker box on the lit row. */}
-      {!legacy && (
+          darker box on the lit row.
+
+          Not while the row's title is being edited: the strip would cover the editor's first line. */}
+      {!legacy && !editing && (
         <div className="absolute right-1.5 top-1 hidden items-center gap-0.5 bg-bg group-hover:flex group-focus-within:flex before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-r before:from-transparent before:to-bg">
           {/* The pin sits LEFT of the fullscreen door on a row that can be pinned (the approved mockup's
               order). On a PINNED row the same button is the unpin and goes RIGHTMOST — after Retry too —
