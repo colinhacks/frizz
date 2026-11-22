@@ -389,8 +389,8 @@ kbd {
 .crumb a { display: inline-flex; align-items: center; gap: 5px; /* the arrow's ink ends 3/16 short of its box */ color: var(--ink-3); text-decoration: none; }
 .crumb a:hover { color: var(--ink); }
 .crumb .arrow { width: 15px; height: 15px; }
-.doc h1 { margin: 0; font-size: clamp(40px, 6vw, 60px); line-height: 1.02; font-weight: 720; letter-spacing: -0.045em; text-wrap: balance; }
-.doc .lede { margin: 22px 0 36px; font-size: 20px; line-height: 1.5; color: var(--ink-2); letter-spacing: -0.012em; text-wrap: pretty; }
+.doc h1 { margin: 0; font-size: clamp(32px, 4vw, 40px); line-height: 1.1; font-weight: 700; letter-spacing: -0.035em; text-wrap: balance; }
+.doc .lede { margin: 18px 0 36px; font-size: 20px; line-height: 1.5; color: var(--ink-2); letter-spacing: -0.012em; text-wrap: pretty; }
 .doc h2 { margin: 56px 0 14px; font-size: 28px; line-height: 1.15; font-weight: 680; letter-spacing: -0.03em; }
 .doc h3 { margin: 32px 0 10px; font-size: 20px; font-weight: 650; letter-spacing: -0.02em; }
 .doc p, .doc li { font-size: 17px; line-height: 1.65; color: var(--ink-2); }
