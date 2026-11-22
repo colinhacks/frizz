@@ -299,6 +299,7 @@ function account(overrides = {}) {
       { type: "A", name: "www.frizz.sh", content: "76.76.21.21" },
       { type: "AAAA", name: "*.frizz.sh", content: "100::" },
       { type: "AAAA", name: "registrar.frizz.sh", content: "100::" },
+      { type: "TXT", name: "frizz.sh", content: '"google-site-verification=Ds95o_ANQuEondYYteyvO-Rf8bHwKmQBll5L8fG3Qbs"' },
       { type: "TXT", name: "_acme-challenge.frizz.sh", content: "renewal" },
     ],
     [`${z}/rulesets`]: [{ kind: "managed", name: "Cloudflare Managed Free Ruleset", phase: "http_request_firewall_managed" }],

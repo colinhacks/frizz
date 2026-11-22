@@ -105,7 +105,11 @@ export const BASELINE = {
   members: [hashEmail("colin@pullfrog.com")],
   routes: { "*.frizz.sh/*": "frizz-relay", "registrar.frizz.sh/*": "frizz-registrar" },
   domains: { "registrar.frizz.sh": "frizz-registrar" },
-  dns: ["A frizz.sh 76.76.21.21", "A www.frizz.sh 76.76.21.21", "AAAA *.frizz.sh 100::", "AAAA registrar.frizz.sh 100::"],
+  dns: [
+    "A frizz.sh 76.76.21.21", "A www.frizz.sh 76.76.21.21", "AAAA *.frizz.sh 100::", "AAAA registrar.frizz.sh 100::",
+    // Google Search Console's ownership check, added by the maintainer's own sign-in on 2026-11-18.
+    'TXT frizz.sh "google-site-verification=Ds95o_ANQuEondYYteyvO-Rf8bHwKmQBll5L8fG3Qbs"',
+  ],
   workers: {
     "frizz-relay": {
       bindings: ["durable_object_namespace BOARD Board", "kv_namespace CLAIMS aa4a9c11473d4511a556e3e3a6857058", "plain_text FRIZZ_ZONE frizz.sh"],
