@@ -525,20 +525,27 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   const manifest: unknown = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8"));
   const spec = serverReleaseSpec(manifest, process.env.FRIZZ_SERVER_PACKAGE);
   const installer = npmServerPackageInstaller(env);
-  const store = new ServerReleaseStore(spec, installer, undefined, undefined, serverReleaseMinimum(manifest));
+  // A machine with no server, or one older than this launcher works with, starts on the newest release
+  // npm serves, with the pin as the fallback (ServerReleaseStore.prepareStarting).
+  const store = new ServerReleaseStore(spec, installer, undefined, undefined, serverReleaseMinimum(manifest), true);
   // The one time starting Frizz replaces the server without a click on Update, so it is said out
   // loud and written down: the selection moves, and the log is where someone asks why it did.
   const raise = store.belowMinimum();
   if (raise)
-    logger.info("launcher", `the installed Frizz server ${raise.selected} is older than this launcher works with (${raise.minimum}); starting on ${raise.pinned}`);
+    logger.info("launcher", `the installed Frizz server ${raise.selected} is older than this launcher works with (${raise.minimum}); starting on a newer one`);
   activityReadout?.notice(
     "progress",
     "Starting",
     raise
-      ? `installing Frizz server ${raise.pinned}: ${raise.selected} is older than this launcher works with`
+      ? `installing a newer Frizz server: ${raise.selected} is older than this launcher works with`
       : "loading the selected Frizz server release",
   );
   let active = await store.load();
+  const started = store.startedOn;
+  if (started?.fellBack)
+    logger.warn("launcher", `starting on the pinned Frizz server ${started.pinned}${started.newest ? `, not the newest (${started.newest})` : ""}: ${started.fellBack}`);
+  else if (started)
+    logger.info("launcher", `installed Frizz server ${started.version}${started.newest ? ` (this launcher pins ${started.pinned})` : ""}`);
   let pending: ServerGeneration | undefined;
   let previous = active;
   // The release that served before the last COMMITTED update: what the supervisor goes back to when

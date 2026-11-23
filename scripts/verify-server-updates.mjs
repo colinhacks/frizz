@@ -777,7 +777,9 @@ try {
   await stopShell()
   await launch("0.13.22", nowhere); await healthy("0.15.99")
   await until("the pinned release is selected once it is up", () => selected(newHome).version === "0.15.99", 30_000)
-  assert.match(launcherLogs(newHome), new RegExp(`the installed Frizz server ${OLD_SERVER.replaceAll(".", "\\.")} is older than this launcher works with \\(0\\.15\\.21\\); starting on 0\\.15\\.99`))
+  assert.match(launcherLogs(newHome), new RegExp(`the installed Frizz server ${OLD_SERVER.replaceAll(".", "\\.")} is older than this launcher works with \\(0\\.15\\.21\\); starting on a newer one`))
+  // This registry's newest frizz-server is older than the pin, so the pin is where it starts.
+  assert.match(launcherLogs(newHome), /installed Frizz server 0\.15\.99$/m)
   assert.deepEqual(await listed(), [realpathSync(theirs)], "the entry the older server wrote is gone from the dashboard")
   record("minimum-starts-an-older-machine-on-the-pinned-server", { from: OLD_SERVER, to: selected(newHome).version, listed: await listed() })
   assert.equal(children().some((event) => event.event === "overlapping-server"), false, "no server process may overlap its predecessor")

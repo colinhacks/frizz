@@ -373,6 +373,10 @@ export function describeGenerationSweep(sweep: GenerationSweep): string | undefi
   return parts.length > 0 ? `old Frizz server releases: ${parts.join("; ")}` : undefined;
 }
 
+function message(error: unknown): string {
+  return error instanceof Error ? error.message.split("\n")[0]! : String(error);
+}
+
 function atomicJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temp = `${path}.${randomUUID()}.tmp`;
@@ -400,6 +404,12 @@ export class ServerReleaseStore {
     readonly compatibility: ServerCompatibility = CURRENT_COMPATIBILITY,
     /** The oldest release this shell works with; see serverReleaseMinimum. */
     readonly minimum?: string,
+    /**
+     * Start a machine that has no server, or one older than `minimum`, on the newest release npm serves
+     * rather than on the pin (`startingRelease`). The launcher asks for it; a store that does not starts
+     * on the pin, as every launcher did until 2026-11-23.
+     */
+    private readonly startOnNewest = false,
   ) {
     assertSpec(spec, compatibility);
     const key = createHash("sha256").update(spec.package).digest("hex").slice(0, 16);
@@ -450,9 +460,49 @@ export class ServerReleaseStore {
     return generation;
   }
 
+  /** What the last `load` that had to install a release did instead of its first choice, for the log. */
+  startedOn?: { version: string; pinned: string; newest?: string; fellBack?: string };
+
   /**
-   * The selected release, when it is older than this shell works with: `load` will start the pinned
-   * one instead. Undefined for a machine with no selection, an unreadable one (`load` reports that),
+   * The release a machine with no server starts on, or one below `minimum`: the newest npm serves, when
+   * it is newer than the pin, installs and is one this shell can run. Otherwise the pin.
+   *
+   * Only a shell release moved the pin, so a machine started from a shell that had not shipped in weeks
+   * installed a server weeks old and then offered its own Update: a new machine started on 0.15.23 while
+   * 0.15.44 was out (frizz 0.13.14's notes). Update already installs the newest release under whichever
+   * shell is running, checked against the same protocol and data epoch, so starting there allows no
+   * pairing Update does not (plans/shell-release-cadence.md, item 4). Any failure falls back to the pin
+   * before anything is recorded: `prepare` validates before `markCompatibilityBeforeLaunch` runs.
+   */
+  private async prepareStarting(): Promise<ServerGeneration> {
+    const pinned = this.spec.version;
+    let newest: string | undefined;
+    if (this.startOnNewest) {
+      try {
+        const latest = await this.installer.latestVersion(this.spec.package);
+        if (compareReleaseVersions(latest, pinned) === 1) newest = latest;
+      } catch (error) {
+        this.startedOn = { version: pinned, pinned, fellBack: `npm could not say which release is newest: ${message(error)}` };
+        return this.prepareInitial(pinned);
+      }
+    }
+    if (newest) {
+      try {
+        const generation = await this.prepareInitial(newest);
+        this.startedOn = { version: newest, pinned, newest };
+        return generation;
+      } catch (error) {
+        this.startedOn = { version: pinned, pinned, newest, fellBack: message(error) };
+        return this.prepareInitial(pinned);
+      }
+    }
+    this.startedOn = { version: pinned, pinned };
+    return this.prepareInitial(pinned);
+  }
+
+  /**
+   * The selected release, when it is older than this shell works with: `load` will start the newest
+   * one, or the pinned one (`prepareStarting`), instead. Undefined for a machine with no selection, an unreadable one (`load` reports that),
    * and any selection at or above the minimum.
    */
   belowMinimum(): { selected: string; minimum: string; pinned: string } | undefined {
@@ -465,7 +515,7 @@ export class ServerReleaseStore {
 
   async load(): Promise<ServerGeneration> {
     this.assertMarkerIsSupported();
-    if (!existsSync(this.selection)) return this.prepareInitial(this.spec.version);
+    if (!existsSync(this.selection)) return this.prepareStarting();
     const selected = record(readJson(this.selection));
     const spec = selected as unknown as ServerReleaseSpec;
     assertSpecShape(spec);
@@ -478,11 +528,11 @@ export class ServerReleaseStore {
     if (spec.dataEpoch < this.compatibility.dataEpoch) return this.prepareInitial(this.spec.version);
     if (spec.dataEpoch > this.compatibility.dataEpoch)
       throw new Error("this Frizz server requires a newer launcher or a data migration; restart with a compatible Frizz release");
-    // Older than this shell works with: start on the pinned release, as a machine with no selection
-    // does. The caller commits it only once it is up, so a release that cannot boot leaves the old
-    // selection in place — and nothing here runs while a server is serving, because `load` is the
-    // cold start. Never the other way: a selection NEWER than the pin is what Update is for.
-    if (this.belowMinimum()) return this.prepareInitial(this.spec.version);
+    // Older than this shell works with: start where a machine with no selection does. The caller commits
+    // it only once it is up, so a release that cannot boot leaves the old selection in place — and
+    // nothing here runs while a server is serving, because `load` is the cold start. A selection at or
+    // above the minimum is never moved here, even below the pin: Update is for that.
+    if (this.belowMinimum()) return this.prepareStarting();
     const root = this.packageRoot(selected.id);
     // Cache eviction is recoverable, but only by reinstalling the EXACT committed release.
     const generation = !existsSync(root)

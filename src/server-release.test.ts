@@ -131,6 +131,64 @@ test("the minimum never moves a server that is new enough, and a shell without o
   assert.deepEqual(installs, ["1.2.0", "1.9.0"]);
 });
 
+test("a machine with no server starts on the newest release npm serves, and is not selected until it is up", async (t) => {
+  const { installer, roots, installs } = setup(t);
+  let asked = 0;
+  installer.latestVersion = async () => { asked++; return "1.4.0"; };
+  const store = new ServerReleaseStore(baseline, installer, roots, undefined, undefined, true);
+  const started = await store.load();
+  assert.equal(started.version, "1.4.0");
+  assert.deepEqual(store.startedOn, { version: "1.4.0", pinned: "1.0.0", newest: "1.4.0" });
+  assert.equal(existsSync(store.selection), false);
+  store.commit(started);
+  // Once a server is selected, starting never asks npm again: Update is what moves it.
+  assert.equal((await new ServerReleaseStore(baseline, installer, roots, undefined, undefined, true).load()).id, started.id);
+  assert.equal(asked, 1);
+  assert.deepEqual(installs, ["1.4.0"]);
+});
+
+test("the pin is where a machine starts when npm serves nothing newer, cannot say, or serves what this shell cannot run", async (t) => {
+  for (const [label, latest, expected] of [
+    ["the pin itself", async () => "1.0.0", undefined],
+    ["an older release", async () => "0.9.0", undefined],
+    ["no answer", async () => { throw new Error("getaddrinfo ENOTFOUND registry.npmjs.org"); }, /npm could not say which release is newest: getaddrinfo ENOTFOUND/],
+  ] as const) {
+    const { installer, roots, installs } = setup(t);
+    installer.latestVersion = latest;
+    const store = new ServerReleaseStore(baseline, installer, roots, undefined, undefined, true);
+    assert.equal((await store.load()).version, "1.0.0", label);
+    assert.deepEqual(installs, ["1.0.0"], label);
+    if (expected) assert.match(store.startedOn?.fellBack ?? "", expected, label);
+    else assert.deepEqual(store.startedOn, { version: "1.0.0", pinned: "1.0.0" }, label);
+  }
+
+  // A newer release for a later data epoch installs, fails validation, and leaves nothing behind it:
+  // no generation, and no data marker an older shell would then refuse.
+  const { installer, roots, installs } = setup(t);
+  installer.latestVersion = async () => "2.0.0";
+  installer.install = async (prefix, spec) => { installs.push(spec.version); fixture(prefix, spec.version === "2.0.0" ? { ...spec, dataEpoch: 2 } : spec); };
+  const store = new ServerReleaseStore(baseline, installer, roots, undefined, undefined, true);
+  const started = await store.load();
+  assert.equal(started.version, "1.0.0");
+  assert.deepEqual(installs, ["2.0.0", "1.0.0"]);
+  assert.match(store.startedOn?.fellBack ?? "", /protocol\/data epoch is incompatible/);
+  assert.deepEqual(readdirSync(store.generations), [started.id]);
+  assert.deepEqual(JSON.parse(readFileSync(store.compatibilityMarker, "utf8")), { protocol: 1, dataEpoch: 1 });
+});
+
+test("a machine below the minimum starts on the newest release too, and one at it is left alone", async (t) => {
+  const { installer, roots, installs, store: old } = setup(t);
+  old.commit(await old.load());
+  installer.latestVersion = async () => "1.6.0";
+  const pinned = { ...baseline, version: "1.3.0" };
+  const raised = await new ServerReleaseStore(pinned, installer, roots, undefined, "1.2.0", true).load();
+  assert.equal(raised.version, "1.6.0");
+  const atMinimum = await old.prepare("1.2.0");
+  old.commit(atMinimum);
+  assert.equal((await new ServerReleaseStore(pinned, installer, roots, undefined, "1.2.0", true).load()).id, atMinimum.id);
+  assert.deepEqual(installs, ["1.0.0", "1.6.0", "1.2.0"]);
+});
+
 test("a shell's minimum must be an exact version its own pinned server satisfies", () => {
   const manifest = (minimum: unknown) => ({ frizzServer: { ...baseline, version: "1.3.0", minimum } });
   assert.equal(serverReleaseMinimum({ frizzServer: baseline }), undefined);
