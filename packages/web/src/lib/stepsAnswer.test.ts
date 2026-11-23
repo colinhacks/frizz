@@ -10,9 +10,9 @@ const REGISTERED = questionAnswerMessage([{ questionId: "qst_changelog001", hand
 const ALL = [{ text: "Sign in.", done: true }, { text: "Approve it.", done: true }]
 const SOME = [{ text: "Sign in.", done: true }, { text: "Approve it.", done: false }]
 
-test("a report is the bare word when everything is done, and a checklist when some is not", () => {
-  assert.equal(withStepsReport(ALL, ""), "Done")
-  assert.equal(withStepsReport(ALL, "  Used the bot account. "), "Done\n\nUsed the bot account.")
+test("a report is a checklist of what it sent, every box ticked or not", () => {
+  assert.equal(withStepsReport(ALL, ""), "Done 2 of 2:\n- [x] Sign in.\n- [x] Approve it.")
+  assert.equal(withStepsReport(ALL, "  Used the bot account. "), "Done 2 of 2:\n- [x] Sign in.\n- [x] Approve it.\n\nUsed the bot account.")
   assert.equal(withStepsReport(SOME, ""), "Done 1 of 2:\n- [x] Sign in.\n- [ ] Approve it.")
   assert.equal(withStepsReport(SOME, "The prompt never came."), "Done 1 of 2:\n- [x] Sign in.\n- [ ] Approve it.\n\nThe prompt never came.")
 })
@@ -34,6 +34,10 @@ test("a reply is a report when its words open the human's own, under any answers
     withAnswersNote(FENCED, withStepsReport(ALL, "")),
     withAnswersNote(REGISTERED, withStepsReport(ALL, "Approved.")),
     withAnswersNote(REGISTERED, withAnswersNote(FENCED, withStepsReport(ALL, "Approved."))),
+    // The word typed alone, and what a send composed for everything done until 2026-11-23.
+    "Done",
+    "Done\n\nApproved it from the owner account.",
+    withAnswersNote(FENCED, "Done"),
   ]) {
     assert.equal(repliesStepsDone(reply), true, reply)
     assert.equal(repliedSteps(reply), "all", reply)
@@ -57,7 +61,9 @@ test("a report the send composes is not typing, under any answers, unless words 
   assert.equal(isHumanTypedMessage(withAnswersNote(REGISTERED, FENCED)), false, "two sets of answers and nothing typed is not typing either")
   assert.deepEqual(stepsReportOf(withStepsReport(SOME, "")), { all: false, rows: SOME, note: "" })
   assert.deepEqual(stepsReportOf(withStepsReport(SOME, "The prompt never came.")), { all: false, rows: SOME, note: "The prompt never came." })
-  assert.deepEqual(stepsReportOf(withStepsReport(ALL, "Used the bot account.")), { all: true, rows: [], note: "Used the bot account." })
+  assert.deepEqual(stepsReportOf(withStepsReport(ALL, "Used the bot account.")), { all: true, rows: ALL, note: "Used the bot account." })
+  assert.deepEqual(stepsReportOf("Done\n\nUsed the bot account."), { all: true, rows: [], note: "Used the bot account." }, "the word typed alone")
+  assert.equal(isHumanTypedMessage("Done"), false, "the word alone is a report, not typing")
   for (const typed of ["Done.", "Done, thanks", "Done 1 of 2: nearly", "Ship it"]) {
     assert.equal(stepsReportOf(typed), null, typed)
     assert.equal(isHumanTypedMessage(typed), true, typed)

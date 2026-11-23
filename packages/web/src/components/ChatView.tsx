@@ -3683,7 +3683,7 @@ function AnswersWithNote({ m, answers, note }: { m: ChatMessage; answers: Paired
     if (!noteText) return null
     const inner = depth < 2 ? parseAnswersCard(noteText) : null
     if (inner) return <>{<AnswersCard answers={inner} queued={m.queued} />}{body(answersNote(noteText), depth + 1)}</>
-    const report = partialStepsReport(noteText)
+    const report = sentStepsReport(noteText)
     if (report) return <>{<StepsReportCard rows={report.rows} queued={m.queued} />}{report.note && <UserBubble text={report.note} rawText={m.text} queued={m.queued} />}</>
     // No deliveryId: the bubble is half of a send, and taking back half of it is not a thing.
     return <UserBubble text={noteText} rawText={m.text} queued={m.queued} />
@@ -3698,12 +3698,12 @@ function AnswersWithNote({ m, answers, note }: { m: ChatMessage; answers: Paired
   )
 }
 
-// A STEPS REPORT THAT SAYS SOME OF THE LIST IS DONE draws as the to-do list's reply card, with the words
-// typed under it in their own bubble (AwaitingSteps StepsReportCard). The bare `Done` is the word typing
-// it would send, and stays a bubble.
-function partialStepsReport(text: string): { rows: { text: string; done: boolean }[]; note: string } | null {
+// A STEPS REPORT draws as the to-do list's reply card, every box it sent ticked as it said, with the words
+// typed under it in their own bubble (AwaitingSteps StepsReportCard). A `Done` with no checklist is the
+// human typing the word, or a send from before 2026-11-23 that composed it, and stays a bubble.
+function sentStepsReport(text: string): { rows: { text: string; done: boolean }[]; note: string } | null {
   const report = stepsReportOf(text)
-  return report && !report.all ? report : null
+  return report && report.rows.length > 0 ? report : null
 }
 
 function UserBubble({ text, rawText, queued, held, deliveryUnconfirmed, deliveryFailed, deliveryError, deliveryId, sourceId }: { text: string; rawText?: string; queued?: boolean; held?: boolean; deliveryUnconfirmed?: boolean; deliveryFailed?: boolean; deliveryError?: string; deliveryId?: string; sourceId?: string }) {
@@ -3969,7 +3969,7 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, done
       return <AnswersWithNote m={m} answers={answers} note={note} />
     }
     // The to-do list's report, as the answers above: a failed send keeps the plain bubble and its Retry.
-    const report = m.deliveryState !== "failed" ? partialStepsReport(text) : null
+    const report = m.deliveryState !== "failed" ? sentStepsReport(text) : null
     if (report && !report.note) return <StepsReportCard rows={report.rows} queued={m.queued} sourceId={m.sourceId} />
     if (report) {
       return (

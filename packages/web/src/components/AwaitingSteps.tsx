@@ -77,8 +77,8 @@ export function StepsList({ steps, done }: { steps: readonly AwaitingStep[]; don
  *  sent, ticked as it said, in the order it said them. It is the to-do list's answer the way the Answers
  *  card is a question's, so it wears that card's frame and this list's rows. It was the wire text in a
  *  bubble until 2026-11-17, every `- [ ]` and `- [x]` printed as typed (maintainer: "it comes back
- *  looking so shitty"). A report of every step done is the bare word, and stays the bubble typing it
- *  would draw. */
+ *  looking so shitty"). A report of every step done ("Done 3 of 3") draws the same way since 2026-11-23:
+ *  it was the bare word until then, a bubble saying "Done" and nothing of what was done. */
 export function StepsReportCard({ rows, queued, sourceId }: { rows: readonly { text: string; done: boolean }[]; queued?: boolean; sourceId?: string }) {
   return (
     <ReplyCard label={`Done ${rows.filter((row) => row.done).length} of ${rows.length}`} queued={queued} sourceId={sourceId} data-steps-report>

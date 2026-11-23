@@ -5859,4 +5859,5 @@ test("a steps report is the human coming in: the fence again after it is a reply
   assert.equal(run(`${shellDoneMessage({ taskId: "bzvt", label: "the suite", status: "completed" })}\n\n${wakeDeliveryToken("w1")}`), true, "after a wake: the sign-off before stands")
   assert.equal(run("Done"), false, "after the human's Done: a reply")
   assert.equal(run("Done 1 of 2:\n- [x] Approve the npm sign-in.\n- [ ] Merge it."), false, "a partial report too")
+  assert.equal(run("Done 1 of 1:\n- [x] Approve the npm sign-in."), false, "and one of every step done")
 })

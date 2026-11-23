@@ -120,6 +120,19 @@ test("the fold settles a rest on steps when it ends, and a reply of Done closes 
   assert.deepEqual(listOf(state).map((s) => s.closedAt), Array(2).fill(Date.parse("2026-11-09T10:02:00.000Z")))
 })
 
+test("a report with every box ticked closes the rest as the word does, and one with a box open does not", () => {
+  for (const [reply, closed] of [
+    [`Done 2 of 2:\n- [x] ${SIGN_IN}\n- [x] ${APPROVE}\n\nUsed the bot account.`, true],
+    [`Done 1 of 2:\n- [x] ${SIGN_IN}\n- [ ] ${APPROVE}`, false],
+  ] as const) {
+    const state = newFoldState()
+    applyEvent(state, assistant("2026-11-09T10:02:00.000Z", fence(SIGN_IN, APPROVE)))
+    applyEvent(state, human("2026-11-09T10:03:00.000Z", reply))
+    assert.deepEqual(listOf(state).map((s) => s.closedAt), Array(2).fill(closed ? Date.parse("2026-11-09T10:02:00.000Z") : undefined), reply)
+    assert.equal(state.stepsDoneAt, closed ? "2026-11-09T10:03:00.000Z" : undefined, "and it answers the handoff")
+  }
+})
+
 test("a fence opened with four backticks carries a code block in a step's body onto the list", () => {
   const state = newFoldState()
   const steps = ["steps:", "  - Sign in to npm", "", "    ```sh", "    npm login --auth-type=web", "    ```", "  - Approve the publish"].join("\n")

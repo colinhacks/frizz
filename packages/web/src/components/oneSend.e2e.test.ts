@@ -21,6 +21,8 @@ const baseUrl = process.env.FRIZZ_ONE_SEND_E2E_URL
 type Sent = { rpc: string; body: { slug?: string; message?: string; answers?: { questionId: string; question: string; chosen?: string[]; text?: string }[] } }
 
 const STEPS_BOX = "[data-awaiting-steps] button[role=checkbox]"
+// What the ticked step sends (lib/stepsAnswer withStepsReport).
+const STEPS_REPORT = "Done 1 of 1:\n- [x] Approve the pending `preview.acme.dev` record in the DNS panel."
 
 async function open(page: Page, query: string) {
   await page.goto(`${baseUrl}/one-send-fixture.html?${query}`, { waitUntil: "networkidle0" })
@@ -115,7 +117,7 @@ test("Enter in the prompt box sends every answer staged anywhere in the transcri
     await enterInPromptBox(page, "textarea[data-surface='chatComposer']", "Approved it from the owner account.")
     let calls = await sent(page)
     assert.deepEqual(calls.map((c) => c.rpc), ["followUp"], "one send, through the prompt box")
-    assert.equal(calls[0].body.message, "Done\n\nApproved it from the owner account.", "the steps box's word, with the typed note under it")
+    assert.equal(calls[0].body.message, `${STEPS_REPORT}\n\nApproved it from the owner account.`, "the steps box's report, with the typed note under it")
     assert.deepEqual(
       calls[0].body.answers?.map((a) => [a.questionId, a.question, a.chosen ?? [], a.text ?? ""]),
       [
@@ -138,12 +140,12 @@ test("Enter in the prompt box sends every answer staged anywhere in the transcri
     await enterInPromptBox(page, "textarea[data-surface='chatComposer']", "")
     calls = await sent(page)
     assert.deepEqual(calls.map((c) => c.rpc), ["followUp"], "one send, through the prompt box")
-    assert.equal(calls[0].body.message, "Done", "the steps box's word alone")
+    assert.equal(calls[0].body.message, STEPS_REPORT, "the steps box's report alone")
     assert.deepEqual(calls[0].body.answers?.map((a) => a.questionId), ["qst_d3pl0y0001", "qst_ch4ng3l0g1"])
 
     // THE LEGACY GRAMMAR, in the drawer: a free-form fence at the earlier rest, one at this rest, and a
     // row the `ask` tool registered. The fences' answers are composed into the message, the row's ride
-    // beside it, and the steps' word and the note close the message.
+    // beside it, and the steps' report and the note close the message.
     await open(page, "legacy=1")
     await pick(page, "Which ORM should the docs examples use?", "Drizzle")
     await pick(page, "Which database should the preview run on?", "Postgres")
@@ -160,11 +162,11 @@ test("Enter in the prompt box sends every answer staged anywhere in the transcri
         "2. “Which database should the preview run on?” → A. Postgres",
         "",
         "Sent with these answers:",
-        "Done",
+        STEPS_REPORT,
         "",
         "Approved.",
       ].join("\n"),
-      "both fences' answers, then the steps' word and the note",
+      "both fences' answers, then the steps' report and the note",
     )
     assert.deepEqual(calls[0].body.answers?.map((a) => [a.questionId, a.chosen]), [["qst_th3m30001", ["Dark"]]], "the registered row's answer rides beside it")
 
