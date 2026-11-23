@@ -106,6 +106,8 @@ export class Readout {
   private lastPlainLine = ""
   /** Has a post-boot notice printed yet? The first one leads with a blank line, the rest stack. */
   private noticed = false
+  /** Lines kept off the screen while a pane has it (`hold`), in order, each stamped when it was noticed. */
+  private held: string[] | null = null
 
   constructor(options: ReadoutOptions = {}) {
     this.out = options.output ?? process.stdout
@@ -294,8 +296,28 @@ export class Readout {
     this.write(line)
   }
 
+  /**
+   * Keep lines off the terminal while a pane (L, R) has it, and print them once it closes. A pane draws in
+   * the alternate screen, so a notice written meanwhile lands across the menu and is gone with it when the
+   * pane closes: a restart during an open R menu printed "Restarted" over the menu and nowhere else.
+   */
+  hold(): void {
+    this.held ??= []
+  }
+
+  /** Print what `hold` kept, in order, and write straight through again. */
+  release(): void {
+    const lines = this.held ?? []
+    this.held = null
+    for (const line of lines) this.write(line)
+  }
+
   /** Put one line on screen, above the repaint region if there still is one. */
   private write(line: string): void {
+    if (this.held) {
+      this.held.push(line)
+      return
+    }
     if (this.settled || !this.tty || this.debug) {
       this.out.write(`${line}\n`)
       return

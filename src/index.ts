@@ -505,7 +505,12 @@ async function runSupervisor(
         onClosedAfterChange: (config) => activityReadout?.notice("done", "Remote", remoteReachedLine(config)),
         onOpened: (by, why) => logger.info("remote", by === "server" ? "R: the server drew the menu" : `R: this launcher's own menu, since ${why}`),
       });
-      paneHost = installPaneHost({ bindings: { l: accessPane, L: accessPane, r: remotePane, R: remotePane } });
+      paneHost = installPaneHost({
+        bindings: { l: accessPane, L: accessPane, r: remotePane, R: remotePane },
+        // A notice written while a pane has the screen lands across the pane and is gone when it closes.
+        onOpen: () => activityReadout?.hold(),
+        onClose: () => activityReadout?.release(),
+      });
     }
   } catch (error) {
     launchOwner.release();

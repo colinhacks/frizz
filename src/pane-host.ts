@@ -52,6 +52,10 @@ export interface PaneHostOptions {
   output?: NodeJS.WriteStream;
   /** How ^C is re-raised. Injectable because signal delivery is async and therefore untestable inline. */
   onInterrupt?: () => void;
+  /** A pane took the screen, and anything else that writes to the terminal must wait (Readout.hold). */
+  onOpen?: () => void;
+  /** The pane gave the screen back, after its own close has restored the terminal. */
+  onClose?: () => void;
 }
 
 const CTRL_C = "\x03";
@@ -85,6 +89,7 @@ export function installPaneHost(options: PaneHostOptions): PaneHost | null {
     const pane = active;
     active = null;
     pane.close();
+    options.onClose?.();
   };
 
   const onKey = (chunk: Buffer | string) => {
@@ -99,7 +104,11 @@ export function installPaneHost(options: PaneHostOptions): PaneHost | null {
       return;
     }
     const pane = options.bindings[key];
-    if (pane && pane.open({ close: () => { if (active === pane) closeActive(); } })) active = pane;
+    if (!pane) return;
+    // Held before the pane draws, so nothing lands between its first screen and the hold.
+    options.onOpen?.();
+    if (pane.open({ close: () => { if (active === pane) closeActive(); } })) active = pane;
+    else options.onClose?.();
   };
 
   const restore = () => {

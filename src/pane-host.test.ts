@@ -56,6 +56,42 @@ test("reclaim rewrites raw mode through cooked, and stops once the host is dispo
   assert.deepEqual(writes, [true, false, true, false], "a disposed host leaves the shell cooked");
 });
 
+// The launchers hold the readout's notices on onOpen and print them on onClose, so the order against the
+// pane's own writes is the whole contract: held before the pane's first screen, released after its last.
+test("onOpen comes before the pane draws and onClose after it has restored the terminal, however it closes", () => {
+  const input = fakeTty();
+  const seen: string[] = [];
+  let handle: { close(): void } | undefined;
+  const pane = {
+    open: (h?: { close(): void }) => { handle = h; seen.push("pane open"); return true; },
+    key: (key: string) => { seen.push(`key ${key}`); return key === "q" ? "close" as const : "keep" as const; },
+    close: () => { seen.push("pane close"); },
+  };
+  const refusing = { open: () => { seen.push("refused"); return false; }, key: () => "keep" as const, close: () => {} };
+  const host = installPaneHost({
+    bindings: { r: pane, x: refusing },
+    input: input as never,
+    output: { isTTY: true } as NodeJS.WriteStream,
+    onOpen: () => seen.push("hold"),
+    onClose: () => seen.push("release"),
+  });
+  assert.ok(host);
+  input.emit("data", "r");
+  input.emit("data", "a");
+  input.emit("data", "q");
+  input.emit("data", "r");
+  handle?.close();
+  input.emit("data", "x");
+  input.emit("data", "r");
+  host.dispose();
+  assert.deepEqual(seen, [
+    "hold", "pane open", "key a", "key q", "pane close", "release",
+    "hold", "pane open", "pane close", "release",
+    "hold", "refused", "release",
+    "hold", "pane open", "pane close", "release",
+  ]);
+});
+
 test("with no SIGINT listener the interrupt falls through to a real signal", () => {
   const listeners = process.listeners("SIGINT");
   for (const listener of listeners) process.off("SIGINT", listener as never);

@@ -262,6 +262,33 @@ test("a lifecycle notice prints under the ready block without disturbing it", ()
   ]);
 });
 
+test("a notice while a pane has the screen waits for it to close, and keeps the time it was noticed", () => {
+  const out = new Capture(true);
+  const start = Date.UTC(2026, 0, 2, 3, 4, 5) + new Date(Date.UTC(2026, 0, 2)).getTimezoneOffset() * 60_000;
+  let at = start;
+  const readout = new Readout({ output: out, color: false, now: () => at });
+  readout.plan([{ key: "server", label: "Server" }]);
+  readout.begin("server");
+  readout.ready([{ label: "Local", value: "http://127.0.0.1:3939" }], "press ctrl-c to stop");
+  const before = out.raw;
+  readout.hold();
+  readout.notice("progress", "Restarting", "Restart Frizz requested from browser");
+  at += 4_000;
+  readout.notice("done", "Restarted", "in 4.0s");
+  readout.note("a warning");
+  assert.equal(out.raw, before, "nothing reaches the screen the pane is drawing on");
+  at += 60_000;
+  readout.release();
+  const added = out.raw.slice(before.length).split("\n").filter((line) => line.trim());
+  assert.deepEqual(added, [
+    "  ↻  03:04:05  Restarting  Restart Frizz requested from browser",
+    "  ✓  03:04:09  Restarted   in 4.0s",
+    "a warning",
+  ]);
+  readout.notice("done", "Remote", "localhost only");
+  assert.match(out.raw, /03:05:09  Remote\s+localhost only\n$/, "and once released, a notice prints straight away");
+});
+
 test("a notice still reaches a pipe, where there is no cursor to move", () => {
   const out = new Capture(false);
   const readout = new Readout({ output: out, color: false });
