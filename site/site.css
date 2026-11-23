@@ -58,6 +58,8 @@
   --shadow-term: 0 0 0 1px var(--obj-edge);
   --card-shadow: 0 0 0 1px var(--rule);
   --card-shadow-hover: 0 0 0 1px var(--rule-2), 0 16px 32px -14px rgba(0, 0, 0, 0.8);
+  /* A shadow can't be seen on the dark page, so a hovered card steps its fill up instead. */
+  --card-hover-bg: var(--paper-lo);
 }
 
 :root[data-theme="light"] {
@@ -68,7 +70,7 @@
   --ink: #111113;
   --ink-2: #3d3e42;
   --ink-3: #6a6b71;
-  --ink-4: #a1a2a7;
+  --ink-4: #8e8f95;
   --rule: rgba(0, 0, 0, 0.08);
   --rule-2: rgba(0, 0, 0, 0.14);
   --accent-line: #6a6b71;
@@ -84,8 +86,8 @@
   --cmd-fg: #f4f4f5;
   --cmd-edge: transparent;
   --cmd-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 12px 28px -10px rgba(0, 0, 0, 0.35);
-  --leader: #a1a2a7;
-  --lane: #dcdcdf;
+  --leader: #8e8f95;
+  --lane: #8b8e95;
   --lane-event: #111113;
   --lane-wake: #6a6b71;
   --shadow-object:
@@ -93,9 +95,8 @@
     0 1px 1px rgba(0, 0, 0, 0.06),
     0 2px 4px rgba(0, 0, 0, 0.05),
     0 6px 12px rgba(0, 0, 0, 0.05),
-    0 16px 32px rgba(0, 0, 0, 0.07),
-    0 36px 72px -8px rgba(0, 0, 0, 0.1),
-    0 72px 140px -24px rgba(0, 0, 0, 0.16);
+    0 16px 32px rgba(0, 0, 0, 0.06),
+    0 28px 56px -12px rgba(0, 0, 0, 0.1);
   --shadow-small:
     0 0 0 1px rgba(0, 0, 0, 0.85),
     0 1px 2px rgba(0, 0, 0, 0.06),
@@ -105,7 +106,11 @@
   --shadow-tile: 0 0 0 1px rgba(0, 0, 0, 0.9), 0 2px 4px rgba(0, 0, 0, 0.08), 0 10px 24px -4px rgba(0, 0, 0, 0.18), 0 24px 44px -16px rgba(0, 0, 0, 0.24);
   --shadow-term: 0 0 0 1px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 20px -8px rgba(0, 0, 0, 0.2);
   --card-shadow: 0 0 0 1px var(--rule), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --slab-shadow: var(--shadow-small);
+  --legend-key-bg: #0d0e10;
+  --legend-key-fg: var(--gold);
   --card-shadow-hover: 0 0 0 1px var(--rule-2), 0 2px 4px rgba(0, 0, 0, 0.05), 0 14px 28px -10px rgba(0, 0, 0, 0.14);
+  --card-hover-bg: var(--paper-hi);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -126,7 +131,8 @@ body {
 }
 img { display: block; max-width: 100%; height: auto; }
 a { color: inherit; }
-a:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 6px; }
+/* :where() so a pill or a card keeps its own radius under the ring; only a bare text link takes 6px. */
+:where(a):focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 6px; }
 ::selection { background: var(--select); color: var(--ink); }
 code, kbd, pre { font-family: var(--mono); font-feature-settings: "liga" 0, "calt" 0; }
 .wrap { max-width: calc(var(--max) + var(--pad) * 2); margin: 0 auto; padding: 0 var(--pad); }
@@ -389,7 +395,7 @@ kbd {
 .arch-cmd { grid-column: 3; grid-row: 1; justify-self: center; padding: 11px 20px; border-radius: 999px; background: var(--cmd-bg); color: var(--cmd-fg); box-shadow: 0 0 0 1px var(--cmd-edge); font: 600 16px/1 var(--mono); }
 .arch-cmd .dollar { color: var(--gold); }
 .arch-starts { position: relative; grid-column: 3; grid-row: 2; justify-self: center; display: grid; place-items: center; padding: 6px 0; font-size: 13.5px; font-weight: 520; color: var(--ink-3); }
-.arch-starts svg { width: 12px; height: 40px; fill: none; stroke: var(--ink-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.arch-starts svg { width: 12px; height: 40px; fill: none; stroke: var(--accent-line); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .arch-starts span { position: absolute; left: calc(50% + 14px); top: 50%; transform: translateY(-50%); }
 .arch-node { grid-row: 3; align-self: stretch; padding: 22px 24px 24px; border-radius: 16px; background: var(--paper-hi); box-shadow: var(--card-shadow); }
 .arch-node b { display: block; font-size: 20px; font-weight: 680; line-height: 1.15; letter-spacing: -0.024em; }
@@ -412,7 +418,7 @@ kbd {
 .termwin { border-radius: 16px; background: var(--term-bg); color: #d6d7da; box-shadow: var(--shadow-small); overflow: hidden; }
 .termwin-bar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
 .termwin-bar i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, 0.13); }
-.termwin-bar span { margin-left: 10px; font: 500 13px/1 var(--sans); color: rgba(255, 255, 255, 0.42); }
+.termwin-bar span { margin-left: 10px; font: 500 13px/1 var(--sans); color: rgba(255, 255, 255, 0.48); }
 /* The R menu, as rows rather than a <pre>, so nothing can scroll sideways. */
 .termbody { padding: 24px 26px 28px; font: 400 14px/1.5 var(--mono); }
 .termbody .title { margin: 0 0 18px; color: #fff; font-weight: 500; }
@@ -425,9 +431,9 @@ kbd {
 .opt {
   display: flex; flex-direction: column; padding: 22px; border-radius: 18px; text-decoration: none;
   background: var(--paper-hi); box-shadow: var(--card-shadow);
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
-.opt:hover { box-shadow: var(--card-shadow-hover); transform: translateY(-2px); }
+.opt:hover { background: var(--card-hover-bg); box-shadow: var(--card-shadow-hover); transform: translateY(-2px); }
 .opt b { font-size: 17px; font-weight: 640; letter-spacing: -0.02em; line-height: 1.25; }
 .opt span { margin-top: 6px; font-size: 15px; line-height: 1.42; color: var(--ink-3); flex: 1; }
 .opt .go { margin-top: 18px; flex: none; font-size: 14px; font-weight: 600; color: var(--ink); display: inline-flex; align-items: center; gap: 6px; }
@@ -439,17 +445,17 @@ kbd {
 .slab {
   position: relative; border-radius: 34px; background: var(--slab-bg); color: #f4f4f5; overflow: hidden;
   padding: clamp(64px, 8vw, 112px) var(--pad) clamp(64px, 7vw, 96px); text-align: center;
-  box-shadow: var(--shadow-object);
+  box-shadow: var(--slab-shadow, var(--shadow-object));
 }
 .slab .big-mark { width: clamp(132px, 13vw, 184px); margin: 0 auto 40px; display: block; overflow: visible; }
 .home .slab h2 { color: #fafafa; }
 .slab p { margin: 22px auto 0; max-width: 30em; font-size: clamp(18px, 1.4vw, 20px); color: rgba(255, 255, 255, 0.62); letter-spacing: -0.01em; text-wrap: balance; }
 .slab .cta { margin-top: 44px; }
 .slab .install { background: #f4f4f5; color: #111113; box-shadow: none; }
-.slab .install .dollar { color: #8b8e95; }
+.slab .install .dollar { color: #6a6b71; }
 .slab .copy { background: rgba(0, 0, 0, 0.07); }
 .slab .install:hover .copy { background: rgba(0, 0, 0, 0.13); }
-.slab .copy:focus-visible { outline-color: #f4f4f5; }
+.slab .copy:focus-visible { outline-color: #111113; }
 .slab .copy .done { color: #111113; }
 
 /* ============================== guides ============================== */
@@ -484,7 +490,7 @@ kbd {
 }
 .term code { font: inherit; }
 .term .prompt { color: var(--gold); }
-.term .c { color: rgba(255, 255, 255, 0.42); }
+.term .c { color: rgba(255, 255, 255, 0.48); }
 .term + ul { margin-top: 20px; }
 .doc .callout { margin: 0 0 18px; padding: 4px 0 4px 20px; border-left: 3px solid var(--accent-line); }
 .doc .callout p { margin: 0; }
@@ -509,9 +515,12 @@ kbd {
     background: var(--gold); color: #0d0e10; font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums;
     box-shadow: 0 0 0 3px rgba(12, 14, 16, 0.85);
   }
+  .shot .num-marker:first-of-type { margin-left: 0; } /* it marks the rail at the window's left edge, and half of it hung outside */
   .legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px 24px; max-width: 1060px; margin: 40px auto 0; padding: 0; list-style: none; text-align: left; }
   .legend li { display: grid; grid-template-columns: 24px 1fr; align-content: start; gap: 0 12px; font-size: 15px; line-height: 1.38; }
-  .legend .k { grid-row: span 2; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--paper-hi); font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums; }
+  /* The key is the marker it explains: gold with a dark number, or in light that gold on black. Lifted 2.5px
+     onto its title's cap band (measured at 15px, 2026-11-22). */
+  .legend .k { grid-row: span 2; width: 24px; height: 24px; margin-top: -2.5px; border-radius: 50%; display: grid; place-items: center; background: var(--legend-key-bg, var(--gold)); color: var(--legend-key-fg, #0d0e10); font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums; }
   .legend b { font-weight: 640; letter-spacing: -0.01em; }
   .legend span { color: var(--ink-3); }
 }
