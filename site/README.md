@@ -5,7 +5,8 @@ The one-page site at [frizz.sh](https://frizz.sh). Static: no framework. The onl
 | Path | What it is |
 | --- | --- |
 | `index.html` | The page. The cursive `fff` mark is inlined twice (the hero tile and the closing slab) as a simplified copy of `assets/logo-concepts/final/fff.svg`'s path, so the stroke can draw itself. `img/fff-mark.svg` is the same mark on the hero tile's black at the same proportions, for the nav, the footer and the social card. Image URLs carry `?v=<first 8 hex of the file's sha1>`; change the file, change the hash. |
-| `site.css` | Warm paper, near-black ink and the brand gold. Inter for all prose, Geist Mono only where something is literally code. The homepage (`body.home`) and the guides (`.doc`) share its tokens, nav and footer. |
+| `site.css` | Two palettes: dark by default, and a neutral light one under `html[data-theme="light"]`. The brand gold is the accent on dark. In light it stays only where it sits on black. Inter for all prose, Geist Mono only where something is literally code. The homepage (`body.home`) and the guides (`.doc`) share its tokens, nav and footer. |
+| `theme.js` | Sets `html[data-theme]` before the first paint, and runs the footer's theme button. Every page loads it in its `<head>`. Dark unless the visitor chose light, whatever the OS prefers. |
 | `img/` | Screenshots of the real app, served as WebP (`cwebp -q 86 -m 6`). `board.webp` is the hero and `f-*.webp` are the feature sections. See [Regenerating the screenshots](#regenerating-the-screenshots). |
 | `og.html` | Source for `img/og.png`, the 1200×630 social card. Not deployed (`.vercelignore`). |
 | `fonts/` | Inter and Geist Mono, Latin-subset variable woff2 from Google Fonts, under the OFL in `fonts/OFL.txt`. |

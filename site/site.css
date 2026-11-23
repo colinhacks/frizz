@@ -1,46 +1,111 @@
-/* frizz.sh — warm paper, near-black ink, and the brand's one gold. The dark Frizz board sits on the page
-   as an object, which is the contrast the whole design leans on: no glows, no gradients behind text,
-   no glass. Inter for everything that is prose; Geist Mono only where something is literally code.
-   The homepage (body.home) and the remote-access guides (.doc) share the tokens, nav and footer. */
+/* frizz.sh — the board's own near-black, light ink, and the brand's one gold. The dark Frizz board sits on the
+   page as an object with a hairline round it: no glows, no gradients behind text, no glass. Inter for
+   everything that is prose; Geist Mono only where something is literally code. The homepage (body.home)
+   and the remote-access guides (.doc) share the tokens, nav and footer.
+
+   DARK IS THE PAGE, whatever the OS prefers. Light is a choice the footer's theme button stores
+   (theme.js sets html[data-theme] before the first paint), and it is neutral grey: the warm cream it
+   replaced read as mustard, and gold text on it as brown (maintainer 2026-11-22). Gold stays where it
+   sits on black in both — the mark, the $ of a command, a terminal caret — and is the highlighter under
+   the H1; in light every other accent is ink. */
 
 @font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Inter.woff2") format("woff2"); }
 @font-face { font-family: "Geist Mono"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/GeistMono.woff2") format("woff2"); }
 
 :root {
-  color-scheme: light;
-  --paper: #f6f3ec;
-  --paper-hi: #fbfaf6;
-  --paper-lo: #eeeae0;
-  --ink: #141311;
-  --ink-2: #3d3a34;
-  --ink-3: #6b665c;
-  --ink-4: #a39d90;
-  --rule: rgba(20, 19, 17, 0.1);
-  --rule-2: rgba(20, 19, 17, 0.16);
+  color-scheme: dark;
+  --paper: #09090b;
+  --paper-hi: #111214;
+  --paper-lo: #1a1b1e;
+  --ink: #ededef;
+  --ink-2: #b7b9be;
+  --ink-3: #8b8e95;
+  --ink-4: #5c5f66;
+  --rule: rgba(255, 255, 255, 0.08);
+  --rule-2: rgba(255, 255, 255, 0.14);
   --gold: #e8b923;
-  --gold-deep: #cf9412;
-  --gold-ink: #8a5f00;
+  /* An accent that is a line or a mark (arrows, list marks, a quote's edge), and one that is text. */
+  --accent-line: #e0ad1f;
+  --accent-text: #e8b923;
+  --focus: #e8b923;
+  --select: rgba(232, 185, 35, 0.32);
   --app: #0c0e10;
+  /* A dark object on the page: the board, a terminal, the closing slab. On dark it needs a light edge. */
+  --obj-edge: rgba(255, 255, 255, 0.1);
+  --term-bg: #111215;
+  --slab-bg: #111214;
+  /* The diagram's server: the one dark box among light ones in light, so a lifted box with a gold edge in dark. */
+  --server-bg: #17181b;
+  --server-edge: 0 0 0 1px rgba(232, 185, 35, 0.5);
+  /* A command pill (the install line, `npx frizz` in the diagram): dark, with a gold $, in both themes. */
+  --cmd-bg: #1a1b1e;
+  --cmd-fg: #ededef;
+  --cmd-edge: rgba(255, 255, 255, 0.12);
+  --cmd-shadow: 0 0 0 1px var(--cmd-edge), 0 12px 28px -12px rgba(0, 0, 0, 0.8);
+  --leader: rgba(255, 255, 255, 0.34);
+  --lane: #e8b923;
+  --lane-event: #ededef;
+  --lane-wake: #e0ad1f;
   --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --pad: clamp(20px, 4vw, 48px);
   --max: 1200px;
   --co: 208px; /* the board's callout column: label + reach */
-  /* An object on paper: a dark hairline, then stacked warm-tinted shadows from tight to wide. */
+  /* A black shadow on a near-black page only smudges it: on dark an object is its edge, and little more. */
+  --shadow-object: 0 0 0 1px var(--obj-edge), 0 32px 80px -40px rgba(0, 0, 0, 0.55);
+  --shadow-small: 0 0 0 1px var(--obj-edge), 0 20px 40px -24px rgba(0, 0, 0, 0.55);
+  --shadow-tile: 0 0 0 1px var(--obj-edge);
+  --shadow-term: 0 0 0 1px var(--obj-edge);
+  --card-shadow: 0 0 0 1px var(--rule);
+  --card-shadow-hover: 0 0 0 1px var(--rule-2), 0 16px 32px -14px rgba(0, 0, 0, 0.8);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --paper: #fbfbfb;
+  --paper-hi: #ffffff;
+  --paper-lo: #f0f0f1;
+  --ink: #111113;
+  --ink-2: #3d3e42;
+  --ink-3: #6a6b71;
+  --ink-4: #a1a2a7;
+  --rule: rgba(0, 0, 0, 0.08);
+  --rule-2: rgba(0, 0, 0, 0.14);
+  --accent-line: #6a6b71;
+  --accent-text: #6a6b71;
+  --focus: #111113;
+  --select: rgba(232, 185, 35, 0.35);
+  --obj-edge: rgba(0, 0, 0, 0.9);
+  --term-bg: #0d0e10;
+  --slab-bg: #0d0e10;
+  --server-bg: #0d0e10;
+  --server-edge: var(--shadow-small);
+  --cmd-bg: #111113;
+  --cmd-fg: #f4f4f5;
+  --cmd-edge: transparent;
+  --cmd-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 12px 28px -10px rgba(0, 0, 0, 0.35);
+  --leader: #a1a2a7;
+  --lane: #dcdcdf;
+  --lane-event: #111113;
+  --lane-wake: #6a6b71;
   --shadow-object:
-    0 0 0 1px rgba(20, 15, 5, 0.9),
-    0 1px 1px rgba(70, 50, 15, 0.08),
-    0 2px 4px rgba(70, 50, 15, 0.07),
-    0 6px 12px rgba(70, 50, 15, 0.07),
-    0 16px 32px rgba(70, 50, 15, 0.09),
-    0 36px 72px -8px rgba(70, 50, 15, 0.13),
-    0 72px 140px -24px rgba(70, 50, 15, 0.2);
+    0 0 0 1px var(--obj-edge),
+    0 1px 1px rgba(0, 0, 0, 0.06),
+    0 2px 4px rgba(0, 0, 0, 0.05),
+    0 6px 12px rgba(0, 0, 0, 0.05),
+    0 16px 32px rgba(0, 0, 0, 0.07),
+    0 36px 72px -8px rgba(0, 0, 0, 0.1),
+    0 72px 140px -24px rgba(0, 0, 0, 0.16);
   --shadow-small:
-    0 0 0 1px rgba(20, 15, 5, 0.85),
-    0 1px 2px rgba(70, 50, 15, 0.08),
-    0 4px 10px rgba(70, 50, 15, 0.08),
-    0 14px 30px -4px rgba(70, 50, 15, 0.12),
-    0 34px 70px -18px rgba(70, 50, 15, 0.2);
+    0 0 0 1px rgba(0, 0, 0, 0.85),
+    0 1px 2px rgba(0, 0, 0, 0.06),
+    0 4px 10px rgba(0, 0, 0, 0.06),
+    0 14px 30px -4px rgba(0, 0, 0, 0.1),
+    0 34px 70px -18px rgba(0, 0, 0, 0.16);
+  --shadow-tile: 0 0 0 1px rgba(0, 0, 0, 0.9), 0 2px 4px rgba(0, 0, 0, 0.08), 0 10px 24px -4px rgba(0, 0, 0, 0.18), 0 24px 44px -16px rgba(0, 0, 0, 0.24);
+  --shadow-term: 0 0 0 1px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 20px -8px rgba(0, 0, 0, 0.2);
+  --card-shadow: 0 0 0 1px var(--rule), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --card-shadow-hover: 0 0 0 1px var(--rule-2), 0 2px 4px rgba(0, 0, 0, 0.05), 0 14px 28px -10px rgba(0, 0, 0, 0.14);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -61,8 +126,8 @@ body {
 }
 img { display: block; max-width: 100%; height: auto; }
 a { color: inherit; }
-a:focus-visible { outline: 2px solid var(--gold-deep); outline-offset: 3px; border-radius: 6px; }
-::selection { background: rgba(232, 185, 35, 0.38); color: var(--ink); }
+a:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 6px; }
+::selection { background: var(--select); color: var(--ink); }
 code, kbd, pre { font-family: var(--mono); font-feature-settings: "liga" 0, "calt" 0; }
 .wrap { max-width: calc(var(--max) + var(--pad) * 2); margin: 0 auto; padding: 0 var(--pad); }
 
@@ -83,10 +148,8 @@ kbd {
 .nav {
   position: sticky; top: 0; z-index: 20;
   background: var(--paper);
-  border-bottom: 1px solid transparent;
-  transition: border-color 0.25s ease;
+  border-bottom: 1px solid var(--rule);
 }
-.nav.scrolled, .nav.ruled { border-bottom-color: var(--rule); }
 .nav-in { display: flex; align-items: center; height: 64px; gap: 28px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 650; font-size: 18px; letter-spacing: -0.02em; }
 .brand img { width: 30px; height: 30px; }
@@ -96,7 +159,7 @@ kbd {
 .nav-gh {
   display: inline-flex; align-items: center; gap: 8px;
   height: 36px; padding: 0 14px 0 12px; border-radius: 999px;
-  background: var(--ink); color: var(--paper-hi) !important;
+  background: var(--ink); color: var(--paper) !important;
 }
 .nav-gh svg { width: 16px; height: 16px; }
 
@@ -108,15 +171,19 @@ kbd {
 .foot-in .brand { color: var(--ink); font-size: 16px; }
 .foot-in .brand img { width: 24px; height: 24px; }
 .foot-in .sp { flex: 1; }
+/* Reads like the footer's links: the theme this page is NOT in, one click away. */
+.theme-toggle { appearance: none; margin: 0; padding: 0; border: 0; background: none; font: inherit; color: var(--ink-2); cursor: pointer; }
+.theme-toggle:hover { color: var(--ink); }
+.theme-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
 
 /* ---------- the install command (hero and closing slab) ---------- */
 .cta { display: flex; justify-content: center; margin-top: 40px; }
 .install {
   display: inline-flex; align-items: center; gap: 0.62em;
   height: 72px; padding: 0 13px 0 38px; border-radius: 999px;
-  background: var(--ink); color: #f6f3ec;
+  background: var(--cmd-bg); color: var(--cmd-fg);
   font: 600 26px/1 var(--mono); letter-spacing: -0.01em; white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(70, 50, 15, 0.15), 0 12px 28px -10px rgba(70, 50, 15, 0.45);
+  box-shadow: var(--cmd-shadow);
   cursor: pointer;
 }
 /* Lifted 0.04em: flex centres the line box, which left the lowercase's x-height 2.1px below the pill's
@@ -146,7 +213,7 @@ kbd {
   width: 72px; height: 72px; margin: 0 auto 30px;
   border-radius: 19px; background: #0d0e10;
   display: grid; place-items: center;
-  box-shadow: 0 0 0 1px rgba(20, 15, 5, 0.9), 0 2px 4px rgba(70, 50, 15, 0.1), 0 10px 24px -4px rgba(70, 50, 15, 0.22), 0 24px 44px -16px rgba(70, 50, 15, 0.3);
+  box-shadow: var(--shadow-tile);
 }
 .tile svg { width: 84%; height: 84%; overflow: visible; }
 .hero h1 {
@@ -175,7 +242,7 @@ kbd {
 }
 .meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; margin: 24px 0 0; padding: 0; list-style: none; font-size: 14.5px; color: var(--ink-3); letter-spacing: -0.003em; }
 .meta li { display: inline-flex; align-items: center; gap: 7px; }
-.meta svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--gold-ink); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.meta svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--accent-text); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 /* Centred on the cap band, measured at 14.5px: each glyph's ink sat 0.51px low in its box, and the
    person in No account 0.84px. */
 .meta svg { transform: translateY(-0.035em); }
@@ -219,6 +286,9 @@ kbd {
 .stage.on .callout { opacity: 1; transform: none; }
 .leader-line { stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
 .stage.on .leader-line { stroke-dashoffset: 0; }
+/* A leader's run across the page, and the dot at its label; the run over the board is white in both themes. */
+.leader-out { stroke: var(--leader); }
+.leader-end { fill: var(--leader); }
 .dot { opacity: 0; transform-box: fill-box; transform-origin: center; transform: scale(0.3); transition: opacity 0.3s ease, transform 0.4s cubic-bezier(0.3, 1.6, 0.5, 1); }
 .stage.on .dot { opacity: 1; transform: none; }
 .legend, .num-marker { display: none; }
@@ -241,7 +311,7 @@ kbd {
 
 /* Section type. */
 .home section { position: relative; }
-.kicker { margin: 0 0 18px; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; color: var(--gold-ink); }
+.kicker { margin: 0 0 18px; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; color: var(--accent-text); }
 .home h2 {
   margin: 0; font-size: clamp(40px, 5.5vw, 78px); line-height: 1; font-weight: 710;
   letter-spacing: -0.045em; text-wrap: balance;
@@ -256,7 +326,7 @@ kbd {
 .fit-list li { position: relative; padding: 26px 0 28px 52px; border-bottom: 1px solid var(--rule); font-size: clamp(22px, 2.05vw, 29px); line-height: 1.24; font-weight: 640; letter-spacing: -0.03em; text-wrap: pretty; }
 .fit-list li em { font-style: normal; color: var(--ink-3); font-weight: 560; }
 .fit-list svg { position: absolute; left: 2px; top: calc(26px + 0.62em - 13px); width: 26px; height: 26px; overflow: visible; }
-.fit-list svg path { stroke: var(--gold-deep); }
+.fit-list svg path { stroke: var(--accent-line); }
 
 /* Features: four divisions under their own H2, in rows that swap sides. Each image keeps its own height. */
 .story { padding: clamp(120px, 14vw, 200px) 0 0; }
@@ -289,10 +359,10 @@ kbd {
 .lanes text { font-size: 12.5px; font-weight: 520; letter-spacing: -0.004em; fill: var(--ink-3); }
 .lanes .awake rect { fill: var(--ink); }
 .lanes .asleep line { stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 2 5; stroke-linecap: round; }
-.lanes .lane { fill: var(--gold); }
+.lanes .lane { fill: var(--lane); }
 .lanes .labels text { text-anchor: middle; }
-.lanes .wake path { fill: none; stroke: var(--gold-deep); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.lanes .event { fill: var(--gold-ink); stroke: var(--paper, #fff); stroke-width: 2; }
+.lanes .wake path { fill: none; stroke: var(--lane-wake); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.lanes .event { fill: var(--lane-event); stroke: var(--paper); stroke-width: 2; }
 .phones { display: flex; justify-content: center; gap: clamp(16px, 4vw, 48px); margin-top: clamp(32px, 4vw, 48px); }
 .phones img { width: min(320px, calc(50% - 8px)); border-radius: clamp(16px, 2.6vw, 28px); }
 
@@ -303,7 +373,7 @@ kbd {
 .not-grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: auto auto; gap: 0 16px; margin-top: 56px; }
 .not-item {
   display: grid; grid-row: span 2; grid-template-rows: subgrid; align-content: start; padding: 30px 30px 34px; border-radius: 18px;
-  background: var(--paper-hi); box-shadow: 0 0 0 1px var(--rule), 0 1px 2px rgba(70, 50, 15, 0.04);
+  background: var(--paper-hi); box-shadow: var(--card-shadow);
 }
 .not-item h3 { margin: 0; font-size: clamp(26px, 2.5vw, 34px); line-height: 1.06; font-weight: 700; letter-spacing: -0.038em; text-wrap: balance; }
 .not-item p { margin: 14px 0 0; font-size: 17px; color: var(--ink-2); text-wrap: pretty; }
@@ -316,30 +386,30 @@ kbd {
   margin: clamp(40px, 5vw, 64px) 0 0; padding: 28px clamp(20px, 3vw, 36px) 36px; border-radius: 22px; border: 1.5px dashed var(--rule-2);
 }
 .arch-tag { grid-column: 1; grid-row: 1; align-self: start; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink-3); }
-.arch-cmd { grid-column: 3; grid-row: 1; justify-self: center; padding: 11px 20px; border-radius: 999px; background: var(--ink); color: #f6f3ec; font: 600 16px/1 var(--mono); }
+.arch-cmd { grid-column: 3; grid-row: 1; justify-self: center; padding: 11px 20px; border-radius: 999px; background: var(--cmd-bg); color: var(--cmd-fg); box-shadow: 0 0 0 1px var(--cmd-edge); font: 600 16px/1 var(--mono); }
 .arch-cmd .dollar { color: var(--gold); }
 .arch-starts { position: relative; grid-column: 3; grid-row: 2; justify-self: center; display: grid; place-items: center; padding: 6px 0; font-size: 13.5px; font-weight: 520; color: var(--ink-3); }
 .arch-starts svg { width: 12px; height: 40px; fill: none; stroke: var(--ink-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .arch-starts span { position: absolute; left: calc(50% + 14px); top: 50%; transform: translateY(-50%); }
-.arch-node { grid-row: 3; align-self: stretch; padding: 22px 24px 24px; border-radius: 16px; background: var(--paper-hi); box-shadow: 0 0 0 1px var(--rule), 0 1px 2px rgba(70, 50, 15, 0.04); }
+.arch-node { grid-row: 3; align-self: stretch; padding: 22px 24px 24px; border-radius: 16px; background: var(--paper-hi); box-shadow: var(--card-shadow); }
 .arch-node b { display: block; font-size: 20px; font-weight: 680; line-height: 1.15; letter-spacing: -0.024em; }
 .arch-node span { display: block; margin-top: 8px; font-size: 15.5px; line-height: 1.38; color: var(--ink-3); letter-spacing: -0.006em; text-wrap: pretty; }
 .arch-browser { grid-column: 1; }
-.arch-server { grid-column: 3; background: #0d0e10; color: #f4f1ea; box-shadow: var(--shadow-small); }
-.arch-server span { color: rgba(244, 241, 234, 0.66); font-family: var(--mono); font-size: 14.5px; letter-spacing: 0; }
+.arch-server { grid-column: 3; background: var(--server-bg); color: #f4f4f5; box-shadow: var(--server-edge); }
+.arch-server span { color: rgba(255, 255, 255, 0.62); font-family: var(--mono); font-size: 14.5px; letter-spacing: 0; }
 .arch-agents { grid-column: 5; }
 .arch-link { grid-row: 3; display: grid; gap: 7px; padding: 0 12px; text-align: center; font-size: 13.5px; font-weight: 520; line-height: 1.2; color: var(--ink-3); }
 .arch-link-rpc { grid-column: 2; }
 .arch-link-pipes { grid-column: 4; padding-bottom: calc(1.2em + 7px); /* the label's height again below the arrow, so the arrow sits on the middle of the boxes it joins */ }
-.arch-arrow { position: relative; display: block; height: 0; border-top: 1.5px solid var(--gold-deep); /* a border keeps its width wherever it lands: a 1.5px-tall box snapped to 1px or 2px by its fractional position, so the two RPC arrows drew different weights */ }
-.arch-arrow::before, .arch-arrow::after { content: none; position: absolute; top: -0.75px; width: 7px; height: 7px; border: solid var(--gold-deep); border-width: 1.5px 1.5px 0 0; }
+.arch-arrow { position: relative; display: block; height: 0; border-top: 1.5px solid var(--accent-line); /* a border keeps its width wherever it lands: a 1.5px-tall box snapped to 1px or 2px by its fractional position, so the two RPC arrows drew different weights */ }
+.arch-arrow::before, .arch-arrow::after { content: none; position: absolute; top: -0.75px; width: 7px; height: 7px; border: solid var(--accent-line); border-width: 1.5px 1.5px 0 0; }
 .arch-arrow.r::after { content: ""; right: 0; transform: translateY(-50%) rotate(45deg); }
 .arch-arrow.l::before { content: ""; left: 0; transform: translateY(-50%) rotate(-135deg); }
 
 /* Remote access: the terminal's R menu, then one card per guide. */
 .remote { padding: clamp(120px, 14vw, 200px) 0 0; scroll-margin-top: 40px; }
 .remote-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(40px, 6vw, 96px); align-items: center; }
-.termwin { border-radius: 16px; background: #0d0e10; color: #d9d6cf; box-shadow: var(--shadow-small); overflow: hidden; }
+.termwin { border-radius: 16px; background: var(--term-bg); color: #d6d7da; box-shadow: var(--shadow-small); overflow: hidden; }
 .termwin-bar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
 .termwin-bar i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, 0.13); }
 .termwin-bar span { margin-left: 10px; font: 500 13px/1 var(--sans); color: rgba(255, 255, 255, 0.42); }
@@ -354,33 +424,33 @@ kbd {
 .opts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-top: 64px; }
 .opt {
   display: flex; flex-direction: column; padding: 22px; border-radius: 18px; text-decoration: none;
-  background: var(--paper-hi); box-shadow: 0 0 0 1px var(--rule), 0 1px 2px rgba(70, 50, 15, 0.04);
+  background: var(--paper-hi); box-shadow: var(--card-shadow);
   transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
-.opt:hover { box-shadow: 0 0 0 1px var(--rule-2), 0 2px 4px rgba(70, 50, 15, 0.06), 0 14px 28px -10px rgba(70, 50, 15, 0.18); transform: translateY(-2px); }
+.opt:hover { box-shadow: var(--card-shadow-hover); transform: translateY(-2px); }
 .opt b { font-size: 17px; font-weight: 640; letter-spacing: -0.02em; line-height: 1.25; }
 .opt span { margin-top: 6px; font-size: 15px; line-height: 1.42; color: var(--ink-3); flex: 1; }
 .opt .go { margin-top: 18px; flex: none; font-size: 14px; font-weight: 600; color: var(--ink); display: inline-flex; align-items: center; gap: 6px; }
 .opt .go svg { width: 13px; height: 13px; transition: transform 0.2s ease; }
 .opt:hover .go svg { transform: translateX(3px); }
 
-/* Closing slab: the mark drawn large on the app's own black. */
+/* Closing slab: the mark drawn large on the app's own black (lifted a step on the dark page). */
 .finale { padding: clamp(120px, 14vw, 200px) 0 0; }
 .slab {
-  position: relative; border-radius: 34px; background: #0d0e10; color: #f4f1ea; overflow: hidden;
+  position: relative; border-radius: 34px; background: var(--slab-bg); color: #f4f4f5; overflow: hidden;
   padding: clamp(64px, 8vw, 112px) var(--pad) clamp(64px, 7vw, 96px); text-align: center;
   box-shadow: var(--shadow-object);
 }
 .slab .big-mark { width: clamp(132px, 13vw, 184px); margin: 0 auto 40px; display: block; overflow: visible; }
-.home .slab h2 { color: #fbfaf6; }
-.slab p { margin: 22px auto 0; max-width: 30em; font-size: clamp(18px, 1.4vw, 20px); color: rgba(244, 241, 234, 0.66); letter-spacing: -0.01em; text-wrap: balance; }
+.home .slab h2 { color: #fafafa; }
+.slab p { margin: 22px auto 0; max-width: 30em; font-size: clamp(18px, 1.4vw, 20px); color: rgba(255, 255, 255, 0.62); letter-spacing: -0.01em; text-wrap: balance; }
 .slab .cta { margin-top: 44px; }
-.slab .install { background: #f6f3ec; color: var(--ink); box-shadow: none; }
-.slab .install .dollar { color: var(--gold-deep); }
-.slab .copy { background: rgba(20, 19, 17, 0.08); }
-.slab .install:hover .copy { background: rgba(20, 19, 17, 0.15); }
-.slab .copy:focus-visible { outline-color: var(--gold-deep); }
-.slab .copy .done { color: var(--gold-deep); }
+.slab .install { background: #f4f4f5; color: #111113; box-shadow: none; }
+.slab .install .dollar { color: #8b8e95; }
+.slab .copy { background: rgba(0, 0, 0, 0.07); }
+.slab .install:hover .copy { background: rgba(0, 0, 0, 0.13); }
+.slab .copy:focus-visible { outline-color: #f4f4f5; }
+.slab .copy .done { color: #111113; }
 
 /* ============================== guides ============================== */
 
@@ -402,21 +472,21 @@ kbd {
 .doc ol > li::marker { color: var(--ink-3); font-weight: 600; font-variant-numeric: tabular-nums; }
 .doc li + li { margin-top: 0.5em; }
 .doc a { text-decoration: underline; text-decoration-color: var(--rule-2); text-decoration-thickness: 1px; text-underline-offset: 3px; transition: text-decoration-color 0.15s; }
-.doc a:hover { text-decoration-color: var(--gold-deep); }
+.doc a:hover { text-decoration-color: var(--accent-line); }
 .doc .crumb a { text-decoration: none; }
 /* A command block in a guide: the same dark terminal as the homepage's, without the window bar. A long
    line wraps. Nothing in a guide ever scrolls sideways. */
 .term {
   margin: 0 0 18px; padding: 18px 22px;
-  background: #0d0e10; color: #d9d6cf; border-radius: 14px;
-  box-shadow: 0 0 0 1px rgba(20, 15, 5, 0.9), 0 1px 2px rgba(70, 50, 15, 0.08), 0 8px 20px -8px rgba(70, 50, 15, 0.25);
+  background: var(--term-bg); color: #d6d7da; border-radius: 14px;
+  box-shadow: var(--shadow-term);
   font-size: 14.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .term code { font: inherit; }
 .term .prompt { color: var(--gold); }
 .term .c { color: rgba(255, 255, 255, 0.42); }
 .term + ul { margin-top: 20px; }
-.doc .callout { margin: 0 0 18px; padding: 4px 0 4px 20px; border-left: 3px solid var(--gold); }
+.doc .callout { margin: 0 0 18px; padding: 4px 0 4px 20px; border-left: 3px solid var(--accent-line); }
 .doc .callout p { margin: 0; }
 .doc table { width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 15.5px; }
 .doc th, .doc td { text-align: left; padding: 10px 28px 10px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
@@ -436,7 +506,7 @@ kbd {
   .stage .callout, .leaders { display: none; }
   .num-marker {
     display: grid; place-items: center; position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%;
-    background: var(--gold); color: var(--ink); font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums;
+    background: var(--gold); color: #0d0e10; font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums;
     box-shadow: 0 0 0 3px rgba(12, 14, 16, 0.85);
   }
   .legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px 24px; max-width: 1060px; margin: 40px auto 0; padding: 0; list-style: none; text-align: left; }
@@ -448,7 +518,7 @@ kbd {
 @media (max-width: 1023px) {
   /* A 140px blur is wider than half the object at these sizes: it muddied the paper behind the legend and
      rasterized with a visible step. The shadow scales down with the thing casting it. */
-  :root { --shadow-object: var(--shadow-small); }
+  :root, :root[data-theme="light"] { --shadow-object: var(--shadow-small); }
   .nav-links .opt-link { display: none; }
   .fit-grid { grid-template-columns: 1fr; gap: 36px; }
   .row, .row.flip, .row.fit, .row.fit.flip, .row.level, .row.level.flip { grid-template-columns: 1fr; gap: 28px; }
@@ -464,7 +534,7 @@ kbd {
   .arch-tag, .arch-node, .arch-link { grid-column: 1; grid-row: auto; }
   .arch-link { padding: 12px 0; }
   .arch-link .arch-arrow { display: none; }
-  .arch-link::after { content: "\2195"; order: -1; font-size: 18px; color: var(--gold-deep); }
+  .arch-link::after { content: "\2195"; order: -1; font-size: 18px; color: var(--accent-line); }
   .opts { grid-template-columns: repeat(2, 1fr); margin-top: 44px; }
   .legend { grid-template-columns: repeat(2, 1fr); }
 }

@@ -20,8 +20,9 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta name="theme-color" content="#f6f3ec" />
-    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#09090b" />
+    <meta name="color-scheme" content="dark light" />
+    <script src="/theme.js"></script>
     <link rel="preload" href="/fonts/Inter.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/site.css" />
   </head>
@@ -395,6 +396,7 @@
         <a href="https://github.com/colinhacks/frizz#readme">README</a>
         <a href="https://github.com/colinhacks/frizz/blob/main/LICENSE">MIT license</a>
         <span class="sp"></span>
+        <button class="theme-toggle" type="button" data-theme-toggle>Light theme</button>
         <span>by <a href="https://x.com/colinhacks">@colinhacks</a></span>
       </div>
     </footer>
@@ -403,12 +405,6 @@
       (() => {
         document.documentElement.classList.add("js")
         const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches
-
-        // The nav takes a hairline once the page moves.
-        const nav = document.getElementById("nav")
-        const onScrollNav = () => nav.classList.toggle("scrolled", scrollY > 8)
-        addEventListener("scroll", onScrollNav, { passive: true })
-        onScrollNav()
 
         // The install command copies on a click anywhere on the pill, unless that click ended a text selection.
         for (const pill of document.querySelectorAll("[data-copy]")) {
@@ -496,12 +492,12 @@
             g.innerHTML = `
               <defs><clipPath id="lead${n}o"><path d="M-9999 -9999 H9999 V9999 H-9999 Z M${wx} ${wy} h${w.width} v${w.height} h${-w.width} Z" clip-rule="evenodd"/></clipPath>
               <clipPath id="lead${n}i"><rect x="${wx}" y="${wy}" width="${w.width}" height="${w.height}" rx="18"/></clipPath></defs>
-              <path class="leader-line" pathLength="1" d="${d}" fill="none" stroke="#8f897c" stroke-width="1" clip-path="url(#lead${n}o)"/>
+              <path class="leader-line leader-out" pathLength="1" d="${d}" fill="none" stroke-width="1" clip-path="url(#lead${n}o)"/>
               <path class="leader-line" pathLength="1" d="${d}" fill="none" stroke="rgba(255,255,255,.62)" stroke-width="1" clip-path="url(#lead${n}i)"/>
               ${ring
                 ? `<circle class="dot" cx="${px}" cy="${py}" r="${ring}" fill="none" stroke="#e8b923" stroke-width="1.5"/>`
                 : `<circle class="dot" cx="${px}" cy="${py}" r="4.5" fill="#e8b923" stroke="#0c0e10" stroke-width="2" paint-order="stroke"/>`}
-              <circle class="dot" cx="${lx}" cy="${ty}" r="2" fill="#8f897c"/>`
+              <circle class="dot leader-end" cx="${lx}" cy="${ty}" r="2"/>`
             svg.appendChild(g)
           })
         }
