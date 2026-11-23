@@ -1,6 +1,6 @@
 # Why the `frizz` shell keeps shipping
 
-Investigation, 2026-11-22. Nothing here is built yet.
+Investigation, 2026-11-22. All five changes were built on 2026-11-23, and [Status](#status) says where each one lives.
 
 The October move of launch routing into the server worked: the shell then went 24 days without a release. Since 2026-11-05 it has shipped in 12 of 19 releases, and remote access is the main reason.
 
@@ -66,11 +66,12 @@ Update already installs `frizz-server@latest` under whichever shell is running, 
 The R menu is already "a small state machine over a handful of screens, rendered whole on every change", fed raw keys by the pane host. That's the seam:
 
 ```
-shell                                         server child
-R pressed  ── POST /_frizz/control/pane ──▶   state machine, claim, registrar client,
-key        ── { key } ──────────────────▶     device list, access level
-paint      ◀── { lines, cursor } ─────────    writes the remote config
-relay      ◀── reads the config ──────────
+shell                                                 server child
+R pressed  ── POST /_frizz/control/remote-setup ──▶   menu, claim, registrar client, probes
+key        ── { key, context } ──────────────────▶    (context: setup, devices, terminal size)
+screen     ◀── { screen, effect? } ───────────────
+effect     ── { effect outcome } ────────────────▶    apply, access level, sign-in link,
+                                                      sign-out, forget a name's sessions
 ```
 
 The route is gated by the owner token, as `/_frizz/control/launch` is. A server that predates it gets today's menu, frozen and never edited again, the same fallback launch routing uses. The shell keeps the relay transport (`relay-connection.ts`, `relay-agent.ts`), the public listener and its session check, and applying a config to the running board.
@@ -79,7 +80,21 @@ Those stay because a phone away from the machine has to reach a broken server th
 
 Setup can move because nothing it does matters while the server is down. It runs at launch, on a keypress, or once a day to renew the name. The relay reconnects with the name and key already on disk. Signing devices out goes through the supervisor's own sessions route, which `frizz --sign-out` already uses.
 
-One property changes. Today only the R menu and the saved setup can change what a relayed session may do (`setRelayAccess`), and no route reaches it. After the move, the owner-token route can change it too. That route is loopback-only, like `/_frizz/control/launch`.
+One property changes. The owner-token route can now ask the shell to serve a setup or to change what a relayed session may do (`setRelayAccess`). The shell runs those asks only for the menu its own terminal opened, and the route refuses every caller from away ([`remote-gate.ts`](../packages/server/src/remote-gate.ts)).
+
+## Status
+
+| # | Built | Where |
+| --- | --- | --- |
+| 1 | The preflight builds the shell at the release commit and compares it with npm's, one source file at a time | [`shell-bundle-diff.mjs`](../scripts/lib/shell-bundle-diff.mjs), [`release-preflight.mjs`](../scripts/release-preflight.mjs) |
+| 2 | The shell bundle went from 1.28 MB to 621 KB, with no shared index, zod or yaml | `@frizz/shared` subpaths; guarded in [`build-package.test.mjs`](../scripts/build-package.test.mjs) |
+| 3 | The launch route answers `notices`, and the Claude Code retention warning is written in the server | [`launch-notices.ts`](../packages/server/src/launch-notices.ts) |
+| 4 | A machine with no server, or one below the minimum, starts on `frizz-server@latest`, with the pin as the fallback | `ServerReleaseStore.prepareStarting` in [`server-release.ts`](../src/server-release.ts) |
+| 5 | The server draws the R menu, and the shell forwards keys and runs the effects it asks for | [`remote-setup/`](../packages/server/src/remote-setup/), [`remote-setup-client.ts`](../src/remote-setup-client.ts) |
+
+Items 3 and 5 reach users only once a shell carrying them ships, and the server's half of item 5 needs a server release too. A shell paired with an older server keeps today's behavior: the frozen menu in [`remote-pane.ts`](../src/remote-pane.ts), and the notices the server does not send.
+
+Lease renewal stayed in the shell ([`remote-controller.ts`](../src/remote-controller.ts)). It runs at launch and daily whether or not a server is up, so a change to the registrar's renewal protocol still needs a shell release.
 
 ## Not doing
 
