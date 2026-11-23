@@ -2216,6 +2216,15 @@ test("a compressed Codex rollout renders on cold open and pages back without a r
     assert.equal(pushed.page?.transcriptKey, page.transcriptKey)
     assert.deepEqual(readThreadTranscript(h.project, h.store, "t", backendFor), page.messages)
 
+    // A Node older than 22.15 has no Zstd in zlib: the thread reads empty, as it did before, and nothing throws.
+    const zstd = zlib.zstdDecompressSync
+    try {
+      ;(zlib as { zstdDecompressSync?: unknown }).zstdDecompressSync = undefined
+      assert.deepEqual(readLatestThreadTranscriptPage(h.project, h.store, "t", backendFor).messages, [])
+    } finally {
+      zlib.zstdDecompressSync = zstd
+    }
+
     writeFileSync(path, raw + event("user_message", "New message") + event("agent_message", "Plain rollout wins"))
     const resumed = readLatestThreadTranscriptPage(h.project, h.store, "t", backendFor)
     assert.equal(resumed.messages.at(-1)?.text, "Plain rollout wins")

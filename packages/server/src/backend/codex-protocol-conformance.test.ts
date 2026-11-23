@@ -297,9 +297,11 @@ function featureStates(overrides: string[] = []): Map<string, string> {
   }
 }
 
-// Codex can compress old rollouts into `.jsonl.zst` behind `local_thread_store_compression`.
-// The conversation reader can open them, but live tailing, discovery and quota sampling still read
-// plain JSONL. Audit those consumers before accepting a pin that changes the default.
+// Codex compresses a rollout untouched for 7 days into `.jsonl.zst` behind `local_thread_store_compression`,
+// under development and off by default through 0.171.0 (codex-rs/features/src/lib.rs, re-checked 2026-11-23),
+// and turns it back into plain JSONL when the thread resumes. The conversation reader decodes one
+// (transcript.ts, on a Node whose zlib has Zstd), but the live tailer, discovery, sub-agent rollouts and quota
+// sampling still read plain JSONL only. Audit those before accepting a pin that turns the flag on.
 // The forced-on read proves the parse can see `true` at all, so a reworded listing cannot pass by
 // matching nothing.
 test("the pinned codex leaves cold-rollout compression off by default", { skip }, () => {
