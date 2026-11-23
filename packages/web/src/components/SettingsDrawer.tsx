@@ -304,9 +304,9 @@ function MobilePickerRow<V extends string>({
 function MobileThemeSegments() {
   const theme = useSyncExternalStore(subscribeTheme, getThemeSnapshot, getThemeSnapshot)
   const options: { value: ThemePreference; label: string }[] = [
+    { value: "system", label: "System" },
     { value: "dark", label: "Dark" },
     { value: "light", label: "Light" },
-    { value: "system", label: "System" },
   ]
   return (
     <div role="radiogroup" aria-label="Theme" className="flex shrink-0 rounded-[9px] border border-border-strong">
@@ -561,7 +561,7 @@ function AppearanceControl() {
       variant="bordered"
       value={theme.preference}
       onValueChange={(value) => setThemePreference(value as ThemePreference)}
-      options={[{ value: "dark", label: "Dark" }, { value: "light", label: "Light" }, { value: "system", label: "System" }]}
+      options={[{ value: "system", label: "System" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]}
       indicatorPosition="right"
       ariaLabel="Appearance"
     />

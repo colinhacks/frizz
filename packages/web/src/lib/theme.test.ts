@@ -9,8 +9,7 @@ test("theme preferences validate independently from the resolved appearance", ()
   assert.equal(parseThemePreference("system"), "system")
   assert.equal(parseThemePreference("light"), "light")
   assert.equal(parseThemePreference("dark"), "dark")
-  assert.equal(parseThemePreference("sepia"), "dark", "a browser that never chose gets dark, whatever its OS prefers")
-  assert.equal(parseThemePreference(null), "dark")
+  assert.equal(parseThemePreference("sepia"), "system")
   assert.equal(resolveTheme("system", false), "light")
   assert.equal(resolveTheme("system", true), "dark")
   assert.equal(resolveTheme("light", true), "light")
@@ -32,14 +31,11 @@ test("the pre-paint resolver handles stored, denied-storage, and unavailable-med
     return { documentElement, meta }
   }
   assert.deepEqual(run({ stored: "dark" }).documentElement.dataset, { theme: "dark" })
-  assert.deepEqual(run({ storageFails: true, systemDark: false }).documentElement.dataset, { theme: "dark" })
-  assert.deepEqual(run({ stored: null, systemDark: false }).documentElement.dataset, { theme: "dark" }, "a light OS alone does not choose light")
-  const light = run({ stored: "light", systemDark: true })
-  assert.equal(light.documentElement.dataset.theme, "light")
-  assert.equal(light.documentElement.style.colorScheme, "light")
-  assert.equal(light.meta.content, "#f7f7f7")
-  assert.equal(run({ stored: "system", systemDark: false }).documentElement.dataset.theme, "light", "System follows a light OS once chosen")
-  assert.equal(run({ stored: "system", mediaAvailable: false }).documentElement.dataset.theme, "dark")
+  assert.deepEqual(run({ storageFails: true, systemDark: true }).documentElement.dataset, { theme: "dark" })
+  const noMedia = run({ storageFails: true, mediaAvailable: false })
+  assert.equal(noMedia.documentElement.dataset.theme, "light")
+  assert.equal(noMedia.documentElement.style.colorScheme, "light")
+  assert.equal(noMedia.meta.content, "#f7f7f7")
 })
 
 test("the runtime and pre-paint resolver share the dedicated preference key and canvas values", () => {
@@ -91,12 +87,13 @@ test("a focus-revealed icon edge never rides a box-shadow transition", () => {
   assert.deepEqual(offenders, [])
 })
 
-test("both palettes are complete, with recovery subset parity, and nothing follows the OS unasked", () => {
+test("both palettes are complete, including OS fallback and recovery subset parity", () => {
   const css = readFileSync(new URL("../theme.css", import.meta.url), "utf8")
   const dark = declarations(css.split(':root, :root[data-theme="dark"] {')[1]!.split("}")[0]!)
   const light = declarations(css.split(':root[data-theme="light"] {')[1]!.split("}")[0]!)
+  const fallback = declarations(css.split(':root:not([data-theme]) {')[1]!.split("}")[0]!)
   assert.deepEqual(Object.keys(dark).sort(), Object.keys(light).sort())
-  assert.doesNotMatch(css, /prefers-color-scheme/, "an unthemed root is dark: light is only ever chosen")
+  assert.deepEqual(light, fallback)
   const recovery = recoveryPage("/")
   const recoveryDark = declarations(recovery.split(":root{")[1]!.split("}")[0]!)
   const recoveryLight = declarations(recovery.split(":root[data-theme=light]{")[1]!.split("}")[0]!)
@@ -135,7 +132,7 @@ test("actual startup scripts and runtime agree for the complete preference matri
   const scripts = [entry, recoveryPage("/")].map(html => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0]![1]!)
   const css = readFileSync(new URL("../theme.css", import.meta.url), "utf8")
   for (const stored of [null, "system", "dark", "light", "invalid"]) for (const systemDark of [false, true]) for (const denied of [false, true]) for (const noMedia of [false, true]) {
-    const expected = resolveTheme(parseThemePreference(denied ? null : stored), noMedia ? true : systemDark)
+    const expected = resolveTheme(parseThemePreference(denied ? null : stored), noMedia ? false : systemDark)
     for (const script of scripts) {
       const meta = { content: "", setAttribute(_: string, value: string) { this.content = value } }
       const root = { dataset: {} as Record<string, string>, style: {} as Record<string, string> }
@@ -174,8 +171,7 @@ test("runtime retains memory choices, stable snapshots and one disposable listen
     assert.equal(mediaEvents.size, 1)
     assert.equal(events.size, 1)
     const stable = getThemeSnapshot()
-    assert.deepEqual(stable, { preference: "dark", resolved: "dark" })
-    setThemePreference("dark")
+    setThemePreference("system")
     assert.equal(getThemeSnapshot(), stable)
     setThemePreference("light")
     media.matches = false
@@ -196,13 +192,11 @@ test("runtime retains memory choices, stable snapshots and one disposable listen
     const beforeStorage = writes
     events.get("storage")!({ key: "frizz-theme", newValue: "light", storageArea: {} })
     assert.equal(getThemeSnapshot().resolved, "dark", "sessionStorage is not theme storage")
-    events.get("storage")!({ key: "frizz-theme", newValue: "system", storageArea: storage })
-    assert.deepEqual(getThemeSnapshot(), { preference: "system", resolved: "light" })
     events.get("storage")!({ key: "frizz-theme", newValue: null, storageArea: storage })
-    assert.deepEqual(getThemeSnapshot(), { preference: "dark", resolved: "dark" })
-    events.get("storage")!({ key: "frizz-theme", newValue: "light", storageArea: storage })
+    assert.deepEqual(getThemeSnapshot(), { preference: "system", resolved: "light" })
+    events.get("storage")!({ key: "frizz-theme", newValue: "dark", storageArea: storage })
     events.get("storage")!({ key: null, storageArea: storage })
-    assert.deepEqual(getThemeSnapshot(), { preference: "dark", resolved: "dark" })
+    assert.deepEqual(getThemeSnapshot(), { preference: "system", resolved: "light" })
     assert.equal(writes, beforeStorage)
     assert.ok(notifications.length >= 4)
     cleanup?.()

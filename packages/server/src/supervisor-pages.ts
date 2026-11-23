@@ -70,6 +70,15 @@ const BASE_STYLE = `
   --fg:#292929;--muted:#606060;--accent:#416896;--danger:#cf222e;
   --focus-border:#416896;--focus-ring:#416896;
 }
+@media(prefers-color-scheme:light){
+  :root:not([data-theme]){
+    color-scheme:light;
+    --bg:#f7f7f7;--panel:#fff;--panel-2:#fafafa;
+    --border:#dedede;--border-strong:#cecece;--control-border:#858585;--control-strong:#7d7d7d;
+    --fg:#292929;--muted:#606060;--accent:#416896;--danger:#cf222e;
+    --focus-border:#416896;--focus-ring:#416896;
+  }
+}
 html,body{background:var(--bg)}
 body{
   margin:0;min-height:100vh;min-height:100dvh;
@@ -104,6 +113,7 @@ code{font-family:var(--mono);font-size:.92em;padding:.1em .35em;border-radius:4p
 const RECOVERY_STYLE = `
 :root{--on-accent:#0d0e10;--success:#6ad58b}
 :root[data-theme=light]{--on-accent:#fff;--success:#1a7f37}
+@media(prefers-color-scheme:light){:root:not([data-theme]){--on-accent:#fff;--success:#1a7f37}}
 .elapsed{margin-left:auto;padding-left:10px;font-family:var(--mono);font-size:11px;font-weight:400;letter-spacing:0;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .actions{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
 /* ErrorBoundary's ACTION_CLASS, one size up for a page that is alone in a viewport. */
@@ -214,9 +224,7 @@ const RECOVERY_STYLE = `
 }
 `.trim()
 
-// The board's own pre-paint resolver (packages/web/index.html): dark unless the browser chose light, or
-// chose to follow a light OS.
-const THEME_SCRIPT = `var p;try{p=localStorage.getItem("frizz-theme")}catch{}var d=true;try{if(p==="system")d=typeof matchMedia!=="function"||matchMedia("(prefers-color-scheme: dark)").matches}catch{}var t=p==="light"||(p==="system"&&!d)?"light":"dark";document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;document.querySelector('meta[name="theme-color"]').content=t==="dark"?"#0d0e10":"#f7f7f7"`
+const THEME_SCRIPT = `var p;try{p=localStorage.getItem("frizz-theme")}catch{}var d=false;try{d=matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches}catch{}var t=p==="dark"||p==="light"?p:d?"dark":"light";document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;document.querySelector('meta[name="theme-color"]').content=t==="dark"?"#0d0e10":"#f7f7f7"`
 
 /** The sentence under the heading whenever the boot is making progress. */
 export const RECOVERY_PROGRESS_DETAIL = "Running threads keep working. The board opens when it is ready."
@@ -465,7 +473,9 @@ function documentShell(options: {
   return `<!doctype html><html lang="en" data-font="sans"><head><meta charset="utf-8">`
     + `<title>${options.title}</title>`
     + `<meta name="viewport" content="width=device-width,initial-scale=1">`
-    + `<meta name="color-scheme" content="dark light"><meta name="theme-color" content="#0d0e10">`
+    + (options.appearance
+      ? `<meta name="color-scheme" content="dark light"><meta name="theme-color" content="#0d0e10">`
+      : `<meta name="color-scheme" content="dark light"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d0e10"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f7f7">`)
     + `<style>${options.style ? `${BASE_STYLE}\n${options.style}` : BASE_STYLE}</style>`
     + (options.appearance ? `<script>${THEME_SCRIPT}</script>` : "")
     + `</head>`

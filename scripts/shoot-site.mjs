@@ -1,6 +1,6 @@
 // Photograph the frizz.sh screenshots from a stack seeded by scripts/seed-site-scene.mjs.
 //
-//   nub scripts/shoot-site.mjs --stack=<file holding adhoc-stack's json line> --out=<dir> --set=hero|features [--only=a,b] [--dsf=2] [--theme=dark|light]
+//   nub scripts/shoot-site.mjs --stack=<file holding adhoc-stack's json line> --out=<dir> --set=hero|features [--only=a,b] [--dsf=2]
 //
 // Each shot is the real app in a real browser, driven the way a person would: a click to pick an answer,
 // keystrokes in the box, the pointer resting on a control. The one thing added is the pointer itself,
@@ -16,8 +16,6 @@ const outDir = opt("out")
 const defaultDsf = Number(opt("dsf", "2"))
 const set = opt("set", "hero")
 const only = opt("only")?.split(",")
-/** The site shows the board in dark, its default. `--theme=light` shoots the same stages in light, for reviewing that palette. */
-const theme = opt("theme", "dark")
 mkdirSync(outDir, { recursive: true })
 const base = `http://127.0.0.1:${stack.port}`
 const API = "acme-api", APP = "mobile-app"
@@ -540,10 +538,7 @@ async function take(name, shot) {
   try {
     const page = await browser.newPage()
     // The hero's thread has helpers still running, so it is the newest row in the queue.
-    await page.evaluateOnNewDocument((theme) => {
-      localStorage.setItem("frizz.prefs.v1", JSON.stringify({ queueOrder: "lifo" }))
-      localStorage.setItem("frizz-theme", theme)
-    }, theme)
+    await page.evaluateOnNewDocument(() => localStorage.setItem("frizz.prefs.v1", JSON.stringify({ queueOrder: "lifo" })))
     await page.setViewport({ width: shot.w, height: shot.h, deviceScaleFactor: shot.dsf ?? defaultDsf })
     const errors = []
     page.on("pageerror", (e) => errors.push(e.message))
