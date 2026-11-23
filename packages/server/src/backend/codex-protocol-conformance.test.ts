@@ -297,12 +297,9 @@ function featureStates(overrides: string[] = []): Map<string, string> {
   }
 }
 
-// Frizz reads a Codex thread's history from its plain `rollout-*.jsonl` (codex.ts, transcript.ts,
-// codex-quota.ts) and has no zstd reader. Codex can compress a rollout untouched for 7 days into
-// `.jsonl.zst` behind `local_thread_store_compression`, which is under development and off by default
-// through 0.167.0 (codex-rs/rollout/src/compression.rs at the pinned commit, read 2026-10-23; unchanged
-// since #55545 of 2026-10-20, re-checked 2026-10-27, 2026-10-29 and 2026-11-05). A release that turns it on would empty the
-// transcript of every Codex thread older than a week, with no error, so the bump has to stop here first.
+// Codex can compress old rollouts into `.jsonl.zst` behind `local_thread_store_compression`.
+// The conversation reader can open them, but live tailing, discovery and quota sampling still read
+// plain JSONL. Audit those consumers before accepting a pin that changes the default.
 // The forced-on read proves the parse can see `true` at all, so a reworded listing cannot pass by
 // matching nothing.
 test("the pinned codex leaves cold-rollout compression off by default", { skip }, () => {
@@ -310,8 +307,7 @@ test("the pinned codex leaves cold-rollout compression off by default", { skip }
   assert.equal(
     featureStates().get(flag),
     "false",
-    `${flag} is on by default or no longer listed: Codex may now write cold rollouts as .jsonl.zst, ` +
-      "which Frizz cannot read. Teach the rollout readers zstd (or switch the flag off for workers) before this pin lands.",
+    `${flag} is on by default or no longer listed: verify the remaining plain-JSONL rollout readers before this pin lands.`,
   )
   assert.equal(featureStates(["-c", `features.${flag}=true`]).get(flag), "true", "the listing parse reads a flag that is on")
 })
