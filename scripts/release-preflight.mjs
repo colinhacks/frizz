@@ -22,7 +22,8 @@
 //               one npm serves (the workflow's own script, .github/scripts/npm-refuse-overtake.sh)
 //   manifests   the shell's server pin exists, its minimum is not above the pin, protocol and data
 //               epoch agree across both packages, `engines.node` is the supported range
-//   shell       launcher files changed since the last served shell, with its version unchanged
+//   shell       the shell built from this commit differs from the one npm serves, and its version is
+//               unchanged (scripts/lib/shell-bundle-diff.mjs)
 //   lockfile    the pnpm that release.yml pins accepts the lockfile as frozen
 //   ci          the checks GitHub ran on this commit
 //   pins        the bundled Claude Code and Codex are current (scripts/check-runtime-pins.mjs)
@@ -43,6 +44,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ghCommand } from "./lib/gh-command.mjs";
+import { buildShellAt, describeShellChanges, publishedShellBundle, shellSectionChanges } from "./lib/shell-bundle-diff.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
@@ -120,11 +122,6 @@ export function versionsWithoutNotes(packument, tags, tagOf, since = NOTES_SINCE
     .filter((version) => (packument.time?.[version] ?? "") >= since)
     .filter((version) => !have.has(tagOf(version)))
     .sort(byVersion);
-}
-
-/** Files of the launcher itself: what a new shell version would carry and a server release does not. */
-export function launcherFiles(paths) {
-  return paths.filter((file) => file.startsWith("src/") && !/\.test\.[cm]?[jt]sx?$/.test(file) && !file.includes(".fixtures/"));
 }
 
 /** Commit subjects grouped by conventional type, most common first. */
@@ -274,21 +271,24 @@ async function main(argv) {
     else for (const manifest of wrong) say("✖", "manifests", `${manifest.name} declares engines.node ${manifest.engines?.node}, and the launcher supports ${range}`);
   });
 
-  // shell ─ a launcher change reaches nobody until the shell's own version moves.
+  // shell ─ a launcher change reaches nobody until the shell's own version moves. Judged by the bundle
+  // itself, built from this commit, against the one npm serves: a file the shell does not carry is no
+  // reason for a release, and a server file it does carry is one (plans/shell-release-cadence.md).
   await attempt("shell", async () => {
     bothManifests();
     await served();
     const last = highestServed(packuments.shell);
-    const head = packuments.shell?.versions?.[last]?.gitHead;
-    if (!last || !head) throw new Error("npm records no gitHead for the last served shell");
-    if (!gitOk("cat-file", "-e", `${head}^{commit}`)) throw new Error(`frizz@${last} was built from ${short(head)}, which this checkout does not have`);
-    const changed = launcherFiles(git("diff", "--name-only", head, sha, "--", "src").split("\n").filter(Boolean));
+    const tarball = packuments.shell?.versions?.[last]?.dist?.tarball;
+    if (!last || !tarball) throw new Error("npm records no tarball for the last served shell");
+    const [published, built] = await Promise.all([publishedShellBundle(tarball), buildShellAt(sha, root)]);
+    const changes = shellSectionChanges(published, built);
     const bumped = shell.version !== last;
-    const some = `${changed.slice(0, 4).join(", ")}${changed.length > 4 ? ` and ${changed.length - 4} more` : ""}`;
-    if (changed.length > 0 && !bumped) say("!", "shell", `${changed.length} launcher file${changed.length === 1 ? "" : "s"} changed since frizz@${last} and the shell is still ${last}, so they ship with no release until it is bumped: ${some}`);
-    else if (changed.length === 0 && bumped) say("!", "shell", `the shell is bumped to ${shell.version} with no launcher file changed since frizz@${last}`);
-    else if (bumped) say("✓", "shell", `frizz ${shell.version} carries ${changed.length} launcher file${changed.length === 1 ? "" : "s"} changed since ${last}`);
-    else say("✓", "shell", `no launcher file changed since frizz@${last}`);
+    const which = describeShellChanges(changes);
+    const files = `${changes.length} source file${changes.length === 1 ? "" : "s"}`;
+    if (changes.length > 0 && !bumped) say("!", "shell", `the shell built from ${short(sha)} differs from frizz@${last} in ${files} and is still ${last}, so they ship with no release until it is bumped: ${which}`);
+    else if (changes.length === 0 && bumped) say("!", "shell", `the shell is bumped to ${shell.version}, and the shell built from ${short(sha)} is the same as frizz@${last}`);
+    else if (bumped) say("✓", "shell", `frizz ${shell.version} differs from ${last} in ${files}: ${which}`);
+    else say("✓", "shell", `the shell built from ${short(sha)} is the same as frizz@${last}`);
   });
 
   // lockfile ─ six release runs died at `Install workspace`. Judged by the pnpm the workflow installs:

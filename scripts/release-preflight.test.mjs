@@ -12,7 +12,6 @@ import {
   environmentProblems,
   highestServed,
   installInputs,
-  launcherFiles,
   NOTES_SINCE,
   pinnedPnpm,
   repoSlug,
@@ -108,13 +107,6 @@ test("a version served since the rule with no GitHub release is named, and earli
   assert.ok(packument.time["0.15.27"] < NOTES_SINCE && packument.time["0.15.28"] >= NOTES_SINCE);
   // The shell's tags are a bare `v`, which a server tag must not satisfy.
   assert.deepEqual(versionsWithoutNotes(packument, ["frizz-server-v0.15.28", "frizz-server-v0.15.29", "frizz-server-v0.15.30"], (version) => `v${version}`), ["0.15.28", "0.15.29", "0.15.30"]);
-});
-
-test("the launcher's files are its sources, not its tests or their fixtures", () => {
-  assert.deepEqual(
-    launcherFiles(["src/index.ts", "src/launcher.test.ts", "src/production.ts", "src/artifacts.fixtures/x.mjs", "packages/server/src/index.ts", "scripts/prepare-package.mjs"]),
-    ["src/index.ts", "src/production.ts"],
-  );
 });
 
 test("commits are grouped by their conventional type, most common first", () => {
