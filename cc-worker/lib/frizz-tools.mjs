@@ -555,10 +555,10 @@ const ASK_RETIRED =
   "question: Should the settings store use SQLite or a JSON file?\n" +
   "options:\n" +
   "  - label: SQLite\n" +
-  "    description: Transactional, and one store to back up\n" +
+  "    description: Every worker writes settings at once, and only SQLite survives a crash mid-write\n" +
   "    recommended: true\n" +
   "  - label: JSON file\n" +
-  "    description: No dependency, hand-editable\n" +
+  "    description: No dependency and hand-editable, but the last of two concurrent writes wins\n" +
   "---\n" +
   "Optional context, in any Markdown: a table, a diff, a callout, a <details> section.\n" +
   "```\n\n" +
@@ -566,7 +566,7 @@ const ASK_RETIRED =
   "id is free again once its question is answered, withdrawn or dismissed.\n" +
   "- `kind:` is `choice` (pick one), `multi` (pick several), `text` (free text) or `secret` (one masked " +
   "box, for a token or a one-time code).\n" +
-  "- `question:` is one line. Each option takes `label:`, `description:` (one line, in sentence case), `recommended: true` " +
+  "- `question:` is one line. Each option takes `label:`, `description:` (one line, in sentence case; on the recommended option, why it wins), `recommended: true` " +
   "and `detail: |` (an indented Markdown block). The question may also carry `danger: true`.\n" +
   "- Every value is read verbatim to the end of its line. A code block inside the fence needs a longer " +
   "outer fence (````question).\n" +
