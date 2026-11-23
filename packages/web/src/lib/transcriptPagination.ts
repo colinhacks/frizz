@@ -2,15 +2,69 @@ import type { TranscriptMessage, TranscriptPage } from "@frizz/shared"
 
 export type PaginatedTranscriptData = TranscriptPage & { historyLoaded?: boolean }
 
-// The next click starts at the immediately-previous projected user message. When no earlier user exists
-// in the in-memory window, reveal its whole remaining prefix in one step; the caller consults the server
-// cursor first when history exists beyond that prefix.
+// MESSAGES LESS THAN A MINUTE APART ARE ONE EVENT (maintainer 2026-11-23: "If a bunch of messages came
+// through in the span of a minute, then it should consider that one kind of user event … and then it
+// should keep reaching further back").
+export const BURST_GAP_MS = 60_000
+
+// The next click opens the window back to the previous projected user message, and then keeps going on
+// two rules, each read off the messages' `at`:
+//
+// - A BURST STAYS WHOLE. Every user message less than a minute before the one after it belongs to the
+//   same step, so three steers sent in quick succession, or a run of wakes a minute apart, arrive in one
+//   click rather than one click each.
+// - A STEP THAT SPANS UNDER A MINUTE REACHES FURTHER. When everything in a step arrived within a minute
+//   of its first message (a sign-off reminder and the reply to it, a quick exchange), the click reveals
+//   the step before it as well, and so on back to the first step that spans a minute or more.
+//
+// A message with no `at` never joins a burst and never reads as quick, so a transcript without times
+// steps one user message at a time. When no earlier user exists in the in-memory window, reveal its whole
+// remaining prefix in one step; the caller consults the server cursor first when history exists beyond it.
 export function previousUserBoundary(messages: readonly TranscriptMessage[], currentStart: number): number | null {
   const start = Math.max(0, Math.min(messages.length, currentStart))
-  for (let i = start - 1; i >= 0; i--) {
+  let boundary = previousUser(messages, start)
+  if (boundary === null) return start > 0 ? 0 : null
+  let end = start
+  for (;;) {
+    let prior = previousUser(messages, boundary)
+    while (prior !== null && gapMs(messages[prior], messages[boundary]) < BURST_GAP_MS) {
+      boundary = prior
+      prior = previousUser(messages, boundary)
+    }
+    const first = atMs(messages[boundary])
+    const last = latestAtMs(messages, boundary, end)
+    if (first === undefined || last === undefined || last - first >= BURST_GAP_MS) return boundary
+    if (prior === null) return 0
+    end = boundary
+    boundary = prior
+  }
+}
+
+function previousUser(messages: readonly TranscriptMessage[], before: number): number | null {
+  for (let i = before - 1; i >= 0; i--) {
     if (messages[i].role === "user") return i
   }
-  return start > 0 ? 0 : null
+  return null
+}
+
+function atMs(message: TranscriptMessage | undefined): number | undefined {
+  const at = message?.at ? Date.parse(message.at) : NaN
+  return Number.isFinite(at) ? at : undefined
+}
+
+// Infinity when either side has no time: unknown is never "quick".
+function gapMs(earlier: TranscriptMessage, later: TranscriptMessage): number {
+  const from = atMs(earlier)
+  const to = atMs(later)
+  return from === undefined || to === undefined ? Infinity : to - from
+}
+
+function latestAtMs(messages: readonly TranscriptMessage[], from: number, to: number): number | undefined {
+  for (let i = to - 1; i >= from; i--) {
+    const at = atMs(messages[i])
+    if (at !== undefined) return at
+  }
+  return undefined
 }
 
 function firstOverlap(

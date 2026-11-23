@@ -34,6 +34,81 @@ test("client boundary selection handles first-visible assistant, user, consecuti
   assert.equal(previousUserBoundary(messages, 0), null)
 })
 
+// Minutes and seconds past 10:00, so each test reads as a timeline.
+const timed = (role: "user" | "assistant", sourceId: string, mmss: string): TranscriptMessage => ({
+  ...message(role, sourceId),
+  at: `2026-11-23T10:${mmss}.000Z`,
+})
+
+test("a burst of user messages less than a minute apart opens in one click", () => {
+  const messages = [
+    timed("user", "ask", "00:00"),
+    timed("assistant", "work", "05:00"),
+    timed("user", "h1", "20:00"),
+    timed("user", "h2", "20:20"),
+    timed("user", "h3", "20:40"),
+    timed("assistant", "long-turn", "45:00"),
+    timed("user", "steer", "59:00"),
+  ]
+  // The three quick messages start a 25-minute turn, so the click stops at the first of them.
+  assert.equal(previousUserBoundary(messages, 6), 2)
+  // A gap of a minute or more is not a burst: the next click is the step before, on its own.
+  assert.equal(previousUserBoundary(messages, 2), 0)
+})
+
+test("a step that all arrived within a minute keeps reaching back", () => {
+  const messages = [
+    timed("user", "ask", "00:00"),
+    timed("assistant", "work", "10:00"),
+    timed("user", "reminder-1", "30:01"),
+    timed("assistant", "reply-1", "30:10"),
+    timed("user", "reminder-2", "31:30"),
+    timed("assistant", "reply-2", "31:40"),
+    timed("user", "steer", "59:00"),
+  ]
+  // reminder-2 and its reply span 10s, and reminder-1 is 89s before it: no burst, but each step is quick,
+  // so the click reaches past both to the ask and the 10 minutes of work it started.
+  assert.equal(previousUserBoundary(messages, 6), 0)
+  // The same quick steps at the head of the loaded window reveal the whole prefix.
+  assert.equal(previousUserBoundary(messages.slice(2), 4), 0)
+})
+
+test("a window that opens inside a burst reveals the rest of it and the step before", () => {
+  const messages = [
+    timed("user", "ask", "00:00"),
+    timed("assistant", "work", "20:00"),
+    timed("user", "h1", "30:00"),
+    timed("user", "h2", "30:15"),
+    timed("user", "h3", "30:30"),
+    timed("assistant", "reply", "40:00"),
+  ]
+  assert.equal(previousUserBoundary(messages, 4), 0)
+})
+
+test("a step that spans a minute or more stops where it is", () => {
+  const messages = [
+    timed("user", "ask", "00:00"),
+    timed("assistant", "work", "10:00"),
+    timed("user", "reminder", "30:00"),
+    timed("assistant", "reply", "31:00"),
+    timed("user", "steer", "59:00"),
+  ]
+  assert.equal(previousUserBoundary(messages, 4), 2)
+})
+
+test("a message without a time never joins a burst", () => {
+  const messages = [
+    timed("user", "ask", "00:00"),
+    timed("assistant", "work", "10:00"),
+    message("user", "untimed"),
+    timed("user", "h2", "30:10"),
+    timed("assistant", "reply", "45:00"),
+    timed("user", "steer", "59:00"),
+  ]
+  assert.equal(previousUserBoundary(messages, 5), 3)
+  assert.equal(previousUserBoundary(messages, 3), 2)
+})
+
 test("client prepend is gap-free/idempotent across a repeated response", () => {
   const current = { ...page([["user", "u2"], ["assistant", "a2"]], { beforeCursor: "cursor-2", hasEarlier: true }) }
   const earlier = page([["user", "u1"], ["assistant", "a1"]], { beforeCursor: "cursor-1", hasEarlier: true })
