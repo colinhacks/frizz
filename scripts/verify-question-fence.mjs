@@ -24,6 +24,8 @@
 //      neither form registers anything.
 //   9. A bare option label that opens on `Word:` (`- Yes: merge it`) is refused with ONE fault per line,
 //      each giving the line to write — and that line, written, registers.
+//  10. A `recommended: true` with no `why:` is refused by name and registers nothing; with one, it
+//      registers and the board carries the reason on that option (2026-11-23).
 //
 // It leaves `qf-shot` with one open question placed mid-handoff, for a screenshot of the card in its slot,
 // and `qf-openers-shot` with a tilde question, a capitalised one and their quoted samples in its newest message.
@@ -115,7 +117,7 @@ const SETTINGS_FENCE = [
   "options:",
   "  - label: SQLite",
   "    description: transactional, and one store to back up",
-  "    recommended: true",
+  "    recommended: true", "    why: It is the smaller change",
   "  - label: JSON file",
   "    description: no dependency, hand-editable",
   "---",
@@ -176,7 +178,7 @@ const q = asked.questions.find((x) => x.spec.handle === "settings-store")
 check("one question registered for the two fences (the follow-up rides its parent)", asked.questions.length === 1, `${asked.questions.length} open`)
 check("its id is a minted qst_… and its handle the worker's id", /^qst_/.test(q.id) && q.spec.handle === "settings-store", q.id)
 check("asked at the record's own timestamp", q.askedAt === askedAt, `${q.askedAt} vs ${askedAt}`)
-check("a choice with two options, SQLite recommended", q.spec.kind === "question" && q.spec.options?.length === 2 && q.spec.options[0].recommended === true)
+check("a choice with two options, SQLite recommended, with the reason it gave", q.spec.kind === "question" && q.spec.options?.length === 2 && q.spec.options[0].recommended === true && q.spec.options[0].why === "It is the smaller change")
 const follow = q.spec.options?.find((o) => o.label === "SQLite")?.followUps?.[0]
 check("the `when:` follow-up hangs under SQLite with its own handle", follow?.handle === "sqlite-path" && follow?.question === "Where should the database file live?")
 check("the body below `---` is the question's context, table included", q.spec.context?.includes("| JSON file | no | last write wins |") === true)
@@ -236,7 +238,7 @@ check("a thread dispatched before 2026-09-11 registers nothing from the fence", 
 
 const late = worker({ slug: "qf-late", sessionId: "9f0e1a00-0000-4000-9000-0000000000d4", spawnedAt: minutesAgo(7), title: "Preferences store" })
 late.user("persist user preferences", minutesAgo(7))
-const prefsStore = ["```question", "id: prefs-store", "kind: choice", "question: Should user preferences persist in SQLite or in Postgres?", "options:", "  - label: SQLite (better-sqlite3)", "    recommended: true", "  - label: Postgres", "```"].join("\n")
+const prefsStore = ["```question", "id: prefs-store", "kind: choice", "question: Should user preferences persist in SQLite or in Postgres?", "options:", "  - label: SQLite (better-sqlite3)", "    recommended: true", "    why: It is the smaller change", "  - label: Postgres", "```"].join("\n")
 const prefsPath = (when) => ["```question", "id: prefs-sqlite-path", "kind: choice", `when: ${when}`, "question: Where should the SQLite preferences file live?", "options:", "  - label: Beside `data/sessions.db`", "  - label: Its own `data/prefs.db`", "```"].join("\n")
 const prefsAskedAt = late.say(`The store is your call.\n\n${prefsStore}\n\n${prefsPath("prefs-store = SQLite")}`)
 const parentOnly = await until("prefs-store on the board", async () => {
@@ -263,7 +265,7 @@ const TILDE_FENCE = [
   "question: When should the `archived_at` migration run?",
   "options:",
   "  - label: Tonight, in the maintenance window",
-  "    recommended: true",
+  "    recommended: true", "    why: It is the smaller change",
   "  - label: With the next release",
   "---",
   "It takes a lock on `orders` for the length of the index build:",
@@ -377,6 +379,25 @@ const colonFixed = await until("the corrected fence to register", async () => {
   return t?.questions?.length === 1 ? t : undefined
 })
 check("the lines the fault spelled register, labels whole", colonFixed.questions[0].spec.options.map((o) => o.label).join(" | ") === "Yes: merge it | No: leave it open", colonFixed.questions[0].spec.options.map((o) => o.label).join(" | "))
+
+// ---- 10: a recommendation says why ------------------------------------------------------------------------
+
+const why = worker({ slug: "qf-why", sessionId: "9f0e1a00-0000-4000-9000-0000000000f7", spawnedAt: minutesAgo(5), title: "Pick the cache store" })
+why.user("pick a cache store", minutesAgo(5))
+const cacheFence = (reason) => ["```question", "id: cache-store", "kind: choice", "question: Which store should the cache use?", "options:", "  - label: Redis", "    recommended: true", ...reason, "  - label: Local disk", "```"].join("\n")
+why.say(`Two stores fit.\n\n${cacheFence([])}`)
+const bare = await until("the reasonless recommendation on the board as a refused fence", async () => {
+  const t = await threadOf("qf-why")
+  return t?.questionFaults?.some((f) => f.id === "cache-store") ? t : undefined
+})
+const bareFaults = bare.questionFaults.filter((f) => f.id === "cache-store").flatMap((f) => f.faults)
+check("a recommendation with no `why:` is refused by name, and nothing registers", bareFaults.length === 1 && bareFaults[0].includes("`recommended: true` needs a `why:`") && bare.questions.length === 0, bareFaults.join(" "))
+why.say(`With the reason.\n\n${cacheFence(["    why: Three servers share the cache, and local disk would give each its own"])}`)
+const reasoned = await until("the reasoned recommendation to register", async () => {
+  const t = await threadOf("qf-why")
+  return t?.questions?.length === 1 ? t : undefined
+})
+check("…and with one it registers, the reason on the recommended option", reasoned.questions[0].spec.options[0].why === "Three servers share the cache, and local disk would give each its own", reasoned.questions[0].spec.options[0].why)
 
 // ---- the screenshot fixtures ----------------------------------------------------------------------------
 

@@ -685,8 +685,9 @@ export function questionFenceCorrection(faults: readonly QuestionFenceFault[], o
     "Fix the fence and write it again in your next message; a fence that registers needs nothing else.",
     "The shape: `id:` (a slug of your own), `kind:` (`choice`, `multi`, `text` or `secret`), a one-line",
     "`question:`, and for `choice`/`multi` two or more `options:` — each `- label: …`, with optional",
-    "`description:`, `recommended: true` and an indented `detail: |` block. Anything else the human needs",
-    "goes below a `---` line as markdown. A fence with `id:` alone references a question you already asked.",
+    "`description:`, `recommended: true` with a one-line `why:` under it, and an indented `detail: |` block.",
+    "Anything else the human needs goes below a `---` line as markdown. A fence with `id:` alone references",
+    "a question you already asked.",
   ]
   if (opts.typedPast) lines.push("", QUESTION_FENCE_TYPED_PAST_HINT)
   if (opts.closedOnDone) lines.push("", QUESTION_FENCE_UNDER_DONE_HINT)

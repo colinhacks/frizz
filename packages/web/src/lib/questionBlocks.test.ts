@@ -415,14 +415,14 @@ test("inline (recommended) marker → flags the option, strips the marker, no le
   const p = parseQuestionBlock("How to proceed?\n\n- A. SQLite — transactional (recommended)\n- B. JSON — zero deps", "question")
   assert.deepEqual(p.recommendedIdxs, [0])
   assert.deepEqual(p.options, ["A. SQLite — transactional", "B. JSON — zero deps"])
-  assert.equal(p.recommendedNote, undefined)
+  assert.equal(p.optionWhys, undefined)
 })
 
-test("inline (recommended: why) → rationale captured as the note", () => {
+test("inline (recommended: why) → the reason is drawn beside that option's chip", () => {
   const p = parseQuestionBlock("Pick one:\n\n- A. one\n- B. two (recommended: cheaper and simpler)", "question")
   assert.deepEqual(p.recommendedIdxs, [1])
   assert.deepEqual(p.options, ["A. one", "B. two"])
-  assert.equal(p.recommendedNote, "cheaper and simpler")
+  assert.deepEqual(p.optionWhys, [undefined, "cheaper and simpler"])
 })
 
 test("inline marker variants: **Recommended** — lead, trailing — recommended, no dangling separators", () => {
@@ -455,7 +455,8 @@ test("a `multi` flags EVERY marked option — its recommendation is the set wort
   const p = parseQuestionBlock("Q?\n\n- A. one (recommended: fast)\n- B. two\n- C. three (recommended)", "multi")
   assert.deepEqual(p.recommendedIdxs, [0, 2])
   assert.deepEqual(p.options, ["A. one", "B. two", "C. three"])
-  assert.equal(p.recommendedNote, "fast")
+  // Each marked option keeps its own reason, not just the first.
+  assert.deepEqual(p.optionWhys, ["fast", undefined, undefined])
 })
 
 test("no marker + no rec line → recommendedIdxs empty, no caption", () => {
@@ -466,10 +467,12 @@ test("no marker + no rec line → recommendedIdxs empty, no caption", () => {
 
 // ---- legacy "Recommendation: X" line still works as a fallback ----
 
-test("legacy rec line: matches an option by letter → recommendedIdxs + note, chip (no inline marker)", () => {
+test("legacy rec line: matches an option by letter → recommendedIdxs + its reason, chip (no inline marker)", () => {
   const p = parseQuestionBlock("Pick:\n\n- A. one\n- B. two\n\nRecommendation: B — cheaper", "question")
   assert.deepEqual(p.recommendedIdxs, [1])
-  assert.equal(p.recommendedNote, "Recommendation: B — cheaper")
+  // The reason without the label and the letter the chip already shows.
+  assert.deepEqual(p.optionWhys, [undefined, "cheaper"])
+  assert.equal(parseQuestionBlock("Pick:\n\n- A. one\n- B. two\n\nRecommendation: **B**.", "question").optionWhys, undefined)
   assert.equal(p.recommendation, "Recommendation: B — cheaper")
 })
 
@@ -490,9 +493,9 @@ test("inline note accepts comma/semicolon separators, not just colon/dash", () =
   const comma = parseQuestionBlock("Q?\n\n- A. Foo (recommended, because it's faster)\n- B. Bar", "question")
   assert.deepEqual(comma.options, ["A. Foo", "B. Bar"])
   assert.deepEqual(comma.recommendedIdxs, [0])
-  assert.equal(comma.recommendedNote, "because it's faster")
+  assert.deepEqual(comma.optionWhys, ["because it's faster", undefined])
   const semi = parseQuestionBlock("Q?\n\n- A. Foo (recommended; also cheapest)\n- B. Bar", "question")
-  assert.equal(semi.recommendedNote, "also cheapest")
+  assert.deepEqual(semi.optionWhys, ["also cheapest", undefined])
 })
 
 test("a bare interior 'recommended' is CONTENT, not a marker — never flagged, never rewritten", () => {
@@ -549,7 +552,7 @@ test("heal: an option-less fence adopts the A-led list immediately after it (pul
   assert.equal(parsed.options.length, 4)
   assert.equal(parsed.contextMd, "Pullfrog runs stop for 85 active orgs on Sep 8. What should happen?")
   assert.deepEqual(parsed.recommendedIdxs, [0])
-  assert.equal(parsed.recommendedNote, "gets the conversion")
+  assert.equal(parsed.optionWhys?.[0], "gets the conversion")
 })
 
 test("heal: two option-less fences each adopt their own trailing list", () => {
@@ -743,7 +746,7 @@ const ASK = [
   "question: Should the settings store use SQLite or a JSON file?",
   "options:",
   "  - label: SQLite",
-  "    recommended: true",
+  "    recommended: true", "    why: It is the smaller change",
   "  - label: JSON file",
   "---",
   "| Store | Crash-safe |",

@@ -203,7 +203,7 @@ test("`ending=question` and `reply=question` ask the way a worker asks: a questi
   const said = story(records).filter((l) => l.startsWith("<"))
   const fence = (n) => [
     "```question", `id: publish-release-${n}`, "kind: choice", "question: Publish the release now, or hold it for the changelog?",
-    "options:", "  - label: Publish now", "    description: every gate passed on this commit", "    recommended: true",
+    "options:", "  - label: Publish now", "    description: every gate passed on this commit", "    recommended: true", "    why: It is the smaller change",
     "  - label: Hold it", "    description: the changelog entry is still a draft", "```",
   ].join("\n")
   assert.ok(said[0].endsWith(`\n\n${fence(1)}`), "the first turn closes on the fence")

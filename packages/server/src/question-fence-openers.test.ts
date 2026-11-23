@@ -21,7 +21,7 @@ import { applyRecord, hasQuestionBlock, newTailState, parseSignalFence } from ".
 const backtick = (body: string) => `\`\`\`question\n${body}\n\`\`\``
 const tilde = (body: string) => `~~~question\n${body}\n~~~`
 const capital = (body: string) => `\`\`\`Question\n${body}\n\`\`\``
-const choiceBody = (id: string, question = "SQLite or a JSON file?") => `id: ${id}\nkind: choice\nquestion: ${question}\noptions:\n  - label: SQLite\n    recommended: true\n  - label: JSON file`
+const choiceBody = (id: string, question = "SQLite or a JSON file?") => `id: ${id}\nkind: choice\nquestion: ${question}\noptions:\n  - label: SQLite\n    recommended: true\n    why: It is the smaller change\n  - label: JSON file`
 const textBody = (id: string, question = "Which scope?") => `id: ${id}\nkind: text\nquestion: ${question}`
 // After QUESTION_FENCES_REGISTER_FROM, so every sighting here is one the registrar reads.
 // Every fixture instant sits a week AHEAD of the real clock. The code compares a message's time with

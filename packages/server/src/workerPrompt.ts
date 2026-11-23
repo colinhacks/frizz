@@ -1039,6 +1039,16 @@ The API call is the unit of cost, not the tokens you type: each message re-reads
 //   - "Only questions that hang on the same paragraph sit together": a follow-up beside its parent, or
 //     three credential asks under one setup, belong together, and without the sentence the rule asks for
 //     filler prose between them.
+//
+// A RECOMMENDATION SAYS WHY (2026-11-23). Maintainer: *"Despite Frizz confidently adding a recommended chip
+// to lots of question answers, I feel like it rarely does a good job of explaining why certain things are
+// recommended or not … The model needs to justify its recommendations. It can be succinct."* The fence took
+// `recommended: true` and nothing else, so a chip arrived bare, and what reasoning there was sat in the
+// option's `description:` as one more trade-off, or in prose the card is read away from. Each recommended
+// option now carries `why:`, one line the card draws beside its chip, and the fence reader refuses a
+// recommendation without one (question-fence.ts) — so the rule holds for a worker that skims this section,
+// and one whose contract predates it learns it from the refusal. Every example below shows the split: the
+// `description:` says what the option costs or gives, the `why:` says what makes that win.
 const QUESTIONS = `## Questions for the human
 
 You run under a dashboard, not a live chat, so a question is a ROW the human still owes an answer to,
@@ -1061,6 +1071,7 @@ options:
   - label: SQLite
     description: Transactional, and one store to back up
     recommended: true
+    why: Every worker writes settings at once, and only SQLite survives a crash mid-write
   - label: JSON file
     description: No dependency, hand-editable
 ---
@@ -1081,7 +1092,7 @@ whole quoted string is unquoted:
 | \`id\` | Required. Your own name for the question: lowercase letters, digits, \`-\`, \`_\` and \`.\`, up to 64. One open question per id: while it waits for its answer a different question takes another id, and once it is answered, withdrawn or dismissed the id is free to ask again |
 | \`kind\` | Required. \`choice\` (pick one), \`multi\` (pick several), \`text\` (a free-text box) or \`secret\` (one masked box) |
 | \`question\` | Required. ONE line: the card's heading, and what the answer's wake restates |
-| \`options\` | Two or more for \`choice\` and \`multi\`; none for \`text\` and \`secret\`. Each \`- \` item takes \`label\` (required), \`description\` (one line, in sentence case), \`recommended: true\`, and \`detail\`, an indented Markdown block drawn inside the option. A bare \`- Label\` is a label alone; a label with a colon in it takes the key (\`- label: Yes: merge it\`) |
+| \`options\` | Two or more for \`choice\` and \`multi\`; none for \`text\` and \`secret\`. Each \`- \` item takes \`label\` (required), \`description\` (one line, in sentence case), \`recommended: true\`, \`why\` (one line, required beside every \`recommended: true\` and nowhere else), and \`detail\`, an indented Markdown block drawn inside the option. A bare \`- Label\` is a label alone; a label with a colon in it takes the key (\`- label: Yes: merge it\`) |
 | \`danger\` | \`true\` for the genuinely irreversible: the card turns red and the human's × cannot dismiss it |
 | \`when\` | \`<parent id> = <option label>\`: a follow-up, asked only if that option is picked (below) |
 
@@ -1105,6 +1116,7 @@ options:
   - label: Exponential
     description: Doubles from 100ms, capped at five tries
     recommended: true
+    why: Every failure is on the first try, so a longer wait clears it where a sixth quick try would not
     detail: |
       \`\`\`ts-diff
       -  await sleep(100)
@@ -1124,7 +1136,16 @@ Each question must stand alone: the specific question on ONE line, options each 
 trade-off, and enough context to answer cold. The card letters the options A, B, C in the order you
 give them, so put the one you would take FIRST and mark it \`recommended: true\`; mark exactly one —
 except on a \`multi\`, where the mark goes on EVERY option you would tick, since one mark alone reads
-as "pick only this". A \`description\` names the trade-off and stops; anything more goes in the
+as "pick only this".
+
+**EVERY RECOMMENDATION SAYS WHY.** Under each \`recommended: true\` goes a \`why:\` — ONE line, drawn
+beside the option's Recommended chip, naming what makes it beat the others: the fact, the cost or the
+risk that tips it, in the human's terms. Not a restatement of the option ("it is the safest choice"),
+and not its trade-off again: the \`description\` says what an option costs or gives, the \`why\` says
+why that wins here. A chip with no reason asks the human to take it on trust, so a fence that
+recommends without one is refused and the human is not asked.
+
+A \`description\` names the trade-off and stops; anything more goes in the
 option's \`detail\`, spent on a shape the human can SCAN — a short list, a table, the diff the option
 would produce, the message that would be posted — and never a run of
 one-sentence paragraphs. A bare "which approach?" with no options is a broken handoff.
@@ -1154,6 +1175,7 @@ options:
   - label: Keep them
     description: Deliverability stays where it is
     recommended: true
+    why: Dropping them cannot be undone without asking each one again; waiting costs only inbox placement
   - label: Unsubscribe them
     description: Better inbox placement; re-adding any of them needs their consent
 \`\`\`
@@ -1169,6 +1191,7 @@ options:
   - label: Now
     description: A minute of paused mail at the quietest hour of the day
     recommended: true
+    why: Anyone who found the key since March can send as the company until it is rotated
   - label: At Sunday's maintenance window
     description: No pause; the key stays live for four more days
 \`\`\`
@@ -1205,8 +1228,9 @@ kind: choice
 question: A reply for issue acme/app#482 explaining the workaround is drafted. Post it from the maintainer's GitHub account, or leave it a draft?
 options:
   - label: Post it
-    description: The reporter is blocked and the workaround is verified
+    description: Goes out under the maintainer's name now
     recommended: true
+    why: The reporter is blocked, and the workaround is verified
   - label: Leave it in the handoff
     description: For edits before anything is posted
 \`\`\`

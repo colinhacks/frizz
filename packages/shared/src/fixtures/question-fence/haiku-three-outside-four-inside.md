@@ -11,6 +11,7 @@ options:
   - label: Run it against prod as written
     description: adds the column (metadata-only) and builds the index without blocking writes
     recommended: true
+    why: Neither step blocks writes, and the rollback drops anything a failed build leaves
   - label: Hold it
     description: nothing changes in prod; the migration file is still to be written
 ---

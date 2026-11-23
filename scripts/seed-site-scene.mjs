@@ -134,7 +134,7 @@ const shellDone = (min, op, id, label, path) => ({
 
 const question = (id, q, opts, context = "") => [
   "```question", `id: ${id}`, "kind: choice", `question: ${q}`, "options:",
-  ...opts.flatMap(([label, description, rec]) => [`  - label: ${label}`, `    description: ${description}`, ...(rec ? ["    recommended: true"] : [])]),
+  ...opts.flatMap(([label, description, rec]) => [`  - label: ${label}`, `    description: ${description}`, ...(rec ? ["    recommended: true", `    why: ${rec}`] : [])]),
   ...(context ? ["---", context] : []),
   "```",
 ].join("\n")
@@ -223,7 +223,7 @@ async function seedFeatures() {
 
   write(APP, "push-provider", {
     title: "Add push notifications", rested: 2,
-    records: [user(40, "Add push notifications to the app."), say(2, ["The notification service is stubbed behind one interface, so either provider fits. This choice decides what I wire up next.", "", question("push-provider", "Which push provider should the app use?", [["APNs and FCM directly", "No vendor or per-message cost; two integrations to maintain", true], ["A push vendor", "One API and delivery reports; a monthly bill and a third party"]])].join("\n"))],
+    records: [user(40, "Add push notifications to the app."), say(2, ["The notification service is stubbed behind one interface, so either provider fits. This choice decides what I wire up next.", "", question("push-provider", "Which push provider should the app use?", [["APNs and FCM directly", "No vendor or per-message cost; two integrations to maintain", "The service already hides the provider behind one interface, so the second integration is small"], ["A push vendor", "One API and delivery reports; a monthly bill and a third party"]])].join("\n"))],
   })
 
   // A question that opens another: the follow-up is asked only if the option it hangs on is picked.
@@ -231,9 +231,9 @@ async function seedFeatures() {
     title: "Add crash reporting", rested: 3,
     records: [user(35, "Add crash reporting to the app."), say(3, [
       "The app has no crash reporting yet. This decides which SDK goes in, and where the reports go.", "",
-      question("crash-reports", "Where should crash reports go?", [["A hosted service", "Set up in an afternoon; a monthly bill and a third party", true], ["Our own server", "No third party; one more service to run"]]), "",
+      question("crash-reports", "Where should crash reports go?", [["A hosted service", "Set up in an afternoon; a monthly bill and a third party", "Reports start arriving this week, with nothing new to run or patch"], ["Our own server", "No third party; one more service to run"]]), "",
       "```question", "id: crash-service", "kind: choice", "when: crash-reports = A hosted service", "question: Which hosted service?", "options:",
-      "  - label: Sentry", "    description: The best stack traces for this stack", "    recommended: true",
+      "  - label: Sentry", "    description: The best stack traces for this stack", "    recommended: true", "    why: Its traces map straight back to this app's source, which is what gets a crash fixed",
       "  - label: Bugsnag", "    description: Release health out of the box",
       "  - label: Firebase Crashlytics", "    description: Free, and ties the app to Firebase",
       "```",
@@ -246,9 +246,9 @@ async function seedFeatures() {
     records: [user(45, "Get the 2.4 release ready."), say(4, [
       "The release branch is cut. Every check that blocks adds time to each release, so these are worth choosing.", "",
       "```question", "id: release-gates", "kind: multi", "question: Which checks should block the 2.4 release?", "options:",
-      "  - label: Unit tests", "    description: 4 minutes, and green today", "    recommended: true",
-      "  - label: End-to-end tests on a device", "    description: 25 minutes on the device farm", "    recommended: true",
-      "  - label: Bundle size budget", "    description: Fails above 40 MB", "    recommended: true",
+      "  - label: Unit tests", "    description: 4 minutes, and green today", "    recommended: true", "    why: Cheap, and it blocks nothing that works today",
+      "  - label: End-to-end tests on a device", "    description: 25 minutes on the device farm", "    recommended: true", "    why: The only check that runs the app on a real phone",
+      "  - label: Bundle size budget", "    description: Fails above 40 MB", "    recommended: true", "    why: Takes seconds, and a build over the budget cannot ship anyway",
       "  - label: Accessibility audit", "    description: 10 minutes, with two known warnings",
       "  - label: Translations complete", "    description: Holds the release for the French strings",
       "```",
@@ -536,7 +536,7 @@ if (!features) {
       shellDone(11, "bgsite02", doneShellId, "Running the integration suite", suitePath),
       user(8, formatThreadMessage({ slug: "audit-store", title: "Audit src/store.js for correctness bugs" }, "The write path in `store.ts` is not atomic. If the store is persisted, write to a temp file and rename it.")),
       say(3, ["The store is scaffolded and the session registry already uses SQLite. One call is yours before I wire persistence.", "", question("settings-store", "Should the settings store use SQLite or a JSON file?", [
-        ["SQLite", "Transactional, matches how sessions are already stored", true],
+        ["SQLite", "Transactional, matches how sessions are already stored", "The CLI and the server write it at once, and only SQLite keeps both writes"],
         ["JSON file", "Zero dependencies, editable by hand"],
       ])].join("\n")),
     ],

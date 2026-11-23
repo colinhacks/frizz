@@ -65,6 +65,9 @@ export function toParsedQuestion(spec: AskedQuestion): { question: ParsedQuestio
       options: parts.map((p) => p.line),
       recommendedIdxs: options.flatMap((o, i) => (o.recommended ? [i] : [])),
       ...(parts.some((p) => p.body) ? { optionBodies: parts.map((p) => p.body) } : {}),
+      // A reason belongs to a recommendation: the stored schema would hold a `why` on any option, and the
+      // fence refuses one anywhere else, so the card never draws a reason beside no chip.
+      ...(options.some((o) => o.recommended && o.why?.trim()) ? { optionWhys: options.map((o) => (o.recommended ? o.why?.trim() || undefined : undefined)) } : {}),
     },
     optionLabels: options.map((o) => o.label),
   }
@@ -190,6 +193,7 @@ export function settledQuestionNodes(spec: AskedQuestion, answer: QuestionAnswer
         options: kept.map((i) => question.options[i]),
         recommendedIdxs: kept.flatMap((i, j) => (question.recommendedIdxs.includes(i) ? [j] : [])),
         ...(question.optionBodies ? { optionBodies: kept.map((i) => question.optionBodies![i]) } : {}),
+        ...(question.optionWhys ? { optionWhys: kept.map((i) => question.optionWhys![i]) } : {}),
       },
       settled: { chosenIdxs: kept.map((_, j) => j), ...(text ? { text } : {}) },
       depth,

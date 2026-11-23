@@ -76,8 +76,8 @@ function view(text: string): View {
 
 // ── The inputs ─────────────────────────────────────────────────────────────────────────────────────────
 
-// The models lane's real replies and its probe, verbatim (shared fixtures/question-fence — the same files
-// the parser's own tests read).
+// The models lane's real replies and its probe, verbatim but for the `why:` each recommendation has needed
+// since 2026-11-23 (shared fixtures/question-fence — the same files the parser's own tests read).
 const fixture = (name: string) => readFileSync(new URL(`../../../shared/src/fixtures/question-fence/${name}.md`, import.meta.url), "utf8")
 const REPLY_THREE_THREE = fixture("haiku-three-outside-three-inside")
 const REPLY_THREE_FOUR = fixture("haiku-three-outside-four-inside")
@@ -253,7 +253,7 @@ test("the web cuts a card slot for exactly the ids the server registers or refer
   // The four-deep tree: its root registers with three levels, and the fourth is refused by name.
   assert.deepEqual([view(inputs["a tree four deep"]).server, view(inputs["a tree four deep"]).faults], [["a"], 1])
   // The control: the harness can see a difference — a root the server refuses whole is still cut by the web.
-  const refusedRoot = view("```question\nid: m\nkind: choice\nquestion: Q?\noptions:\n  - label: A\n    recommended: true\n  - label: B\n    recommended: true\n```")
+  const refusedRoot = view("```question\nid: m\nkind: choice\nquestion: Q?\noptions:\n  - label: A\n    recommended: true\n    why: It is the smaller change\n  - label: B\n    recommended: true\n    why: It is the smaller change\n```")
   assert.deepEqual([refusedRoot.server, refusedRoot.web.length > 0 || refusedRoot.faults > 0], [[], true])
   assert.deepEqual(view(inputs.plain), { server: ["x"], faults: 0, web: ["x"], legacyCards: 0, marked: ["code"] })
 })

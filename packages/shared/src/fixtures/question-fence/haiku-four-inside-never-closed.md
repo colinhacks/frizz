@@ -8,6 +8,7 @@ options:
   - label: Approve and run against prod
     description: adds the column and the index, with no table rewrite and no write lock held for the index build
     recommended: true
+    why: Neither step blocks writes, and the rollback drops anything a failed build leaves
   - label: Decline
     description: nothing runs against prod
 ---

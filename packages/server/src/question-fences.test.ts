@@ -18,7 +18,7 @@ import type { Tailer } from "./tailer.ts"
 
 const fence = (body: string) => `\`\`\`question\n${body}\n\`\`\``
 const choice = (id: string, question = "SQLite or a JSON file?") =>
-  fence(`id: ${id}\nkind: choice\nquestion: ${question}\noptions:\n  - label: SQLite\n    recommended: true\n  - label: JSON file`)
+  fence(`id: ${id}\nkind: choice\nquestion: ${question}\noptions:\n  - label: SQLite\n    recommended: true\n    why: It is the smaller change\n  - label: JSON file`)
 // After QUESTION_FENCES_REGISTER_FROM, so every sighting here is one the registrar reads.
 // Every fixture instant sits a week AHEAD of the real clock. The code compares a message's time with
 // Date.now() (a Goal armed now refuses only questions written after it), and a fixed date stopped
@@ -541,7 +541,7 @@ const PREFS_STORE = [
   "options:",
   "  - label: SQLite (better-sqlite3)",
   "    description: no network hop on reads, same driver as sessions; not in the nightly backup",
-  "    recommended: true",
+  "    recommended: true", "    why: It is the smaller change",
   "  - label: Postgres",
   "    description: backed up nightly; ~3ms round trip on every prefs read",
   "---",
@@ -554,7 +554,7 @@ const prefsPath = (when: string, extra = "") => [
   "options:",
   "  - label: Beside `data/sessions.db`",
   "    description: one directory to back up and mount",
-  "    recommended: true",
+  "    recommended: true", "    why: It is the smaller change",
   "  - label: Its own `data/prefs.db`",
   "    description: can be moved or wiped without touching sessions",
   ...(extra ? ["---", extra] : []),

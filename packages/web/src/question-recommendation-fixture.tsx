@@ -4,7 +4,8 @@ import "./styles.css"
 
 // Isolates the ```question rendering to PROVE two things:
 //  1. The recommended option is flagged by the inline word "recommended" on its line (primary
-//     mechanism), stripped from the label, with an optional `(recommended: why)` rationale → tooltip.
+//     mechanism), stripped from the label, with an optional `(recommended: why)` rationale drawn on a
+//     line of its own under the label, led by the badge (a tooltip until 2026-11-23).
 //  2. The "Recommended" badge FLOATS top-right so a long option's text flows around it and reclaims
 //     full width below — not squeezed into a narrow left column.
 // Legacy `Recommendation: B` line still chips B (backward-compat fallback).

@@ -178,6 +178,7 @@ const ROW = "flex w-full items-start gap-3 border-t border-border px-[18px] py-3
 
 function OptionRow({ option, multi, on, onClick }: { option: AskedOption; multi: boolean; on: boolean; onClick: () => void }) {
   const line = oneLineDescription(option.description)
+  const why = option.recommended ? option.why?.trim() || undefined : undefined
   // A multi-line description (or a legacy `preview`) is the option's rich body — a list, a diff — and
   // it decides the choice, so it renders in full under the label, as the desktop card does.
   const body = [line ? undefined : option.description?.trim(), option.preview?.trim()].filter(Boolean).join("\n\n")
@@ -194,9 +195,16 @@ function OptionRow({ option, multi, on, onClick }: { option: AskedOption; multi:
       <span className="min-w-0 flex-1">
         <span className="block text-[15.5px] font-medium leading-[21px] text-fg">
           <InlineLabel md={option.label} />
-          {option.recommended && <span className={`ml-1.5 text-[11px] font-bold ${RECOMMENDED_TAG_LINE} tracking-[0.02em] text-accent`}>RECOMMENDED</span>}
+          {option.recommended && !why && <span className={`ml-1.5 text-[11px] font-bold ${RECOMMENDED_TAG_LINE} tracking-[0.02em] text-accent`}>RECOMMENDED</span>}
         </span>
         {line && <span className="mt-px block text-[13px] leading-[18px] text-muted">{line}</span>}
+        {/* The reason the worker recommends it, led by the tag, as the desktop card draws it (Chip's `why`). */}
+        {why && (
+          <span data-option-why className="mt-0.5 block text-[13px] leading-[18px] text-muted">
+            <span className={`mr-1.5 text-[11px] font-bold ${RECOMMENDED_TAG_LINE} tracking-[0.02em] text-accent`}>RECOMMENDED</span>
+            <InlineLabel md={why} />
+          </span>
+        )}
         {body && <OptionBody md={body} />}
       </span>
     </button>
