@@ -115,3 +115,17 @@ export function aboveAnchor(gap: number, margin = 8): Placement {
     return { left: anchor.left, top, width: panelWidthOn(anchor.width, TYPEAHEAD_WIDEST_PX, TYPEAHEAD_NARROWEST_PX) }
   }
 }
+
+/**
+ * The typeahead's placement on a page whose text runs down from the top (the phone's new-thread page):
+ * `gap` px BELOW the anchor, under the line being typed, and above it only when the room below runs out
+ * and there is more above. Opening above there covered the lines already written, and the header.
+ */
+export function belowAnchor(gap: number, margin = 8): Placement {
+  return (anchor, size, viewport) => {
+    const above = anchor.top - gap - margin
+    const below = viewport.height - anchor.bottom - gap - margin
+    const top = size.height <= below || below >= above ? anchor.bottom + gap : anchor.top - gap - size.height
+    return { left: anchor.left, top, width: panelWidthOn(anchor.width, TYPEAHEAD_WIDEST_PX, TYPEAHEAD_NARROWEST_PX) }
+  }
+}

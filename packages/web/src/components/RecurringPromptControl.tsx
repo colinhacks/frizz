@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   RECURRING_PROMPT_MAX,
   DEFAULT_RECURRING_PROMPT,
@@ -11,6 +11,8 @@ import { showToast } from "../store.ts"
 import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
 import { panelWidthOn } from "../lib/overlaySurface.ts"
 import { Popover, PopoverAnchor, PopoverContent, POPOVER_COLLISION_PADDING as COLLISION_MARGIN } from "./ui/Popover.tsx"
+import { useSlashTypeahead } from "./SlashTypeahead.tsx"
+import { fetchThreadSkills } from "../lib/skillSources.ts"
 import { Switch } from "./ui/Switch.tsx"
 
 // THE GOAL MARK — `target-arrow` from Tabler Icons 3.46.0 (MIT, https://tabler.io/icons/icon/target-arrow),
@@ -263,6 +265,17 @@ export function RecurringPromptControl({ thread }: { thread: ThreadView }) {
           style={bounds ? { width: bounds.width } : undefined}
           alignOffset={bounds ? -bounds.toBoxEnd : 0}
           onPointerDownOutside={keepAnchorClicks}
+          // Escape closes the goal's `/` menu before it closes the panel. Radix reads Escape on the
+          // document in the CAPTURE phase, before the textarea sees it, so while a menu is up the panel
+          // only declines to close (preventDefault) and lets the key travel on to the textarea, whose
+          // menu closes and stops it there (SlashTypeahead.tsx). Stopping it here, as the shared
+          // wrapper does, would keep it from ever reaching the textarea. Only a focused box draws a
+          // menu, so a menu on the page is this panel's. With none up, the wrapper's rule: close this
+          // panel, and stop the key before App's window-level Escape unwinds what is under it.
+          onEscapeKeyDown={(e) => {
+            if (document.querySelector("[data-slash-menu]")) e.preventDefault()
+            else e.stopPropagation()
+          }}
           // Radix otherwise autofocuses the first focusable child, which is a toggle segment — and a focus
           // ring sitting on "Off" reads as the toggle being SET to off by the act of opening the panel.
           onOpenAutoFocus={(e) => e.preventDefault()}
@@ -488,6 +501,11 @@ export function PromptPanel({ thread, armed, close, heading = true }: {
   // "120") is not immediately clamped out from under the caret. It becomes a number on commit.
   const [minutes, setMinutes] = useState(String(Math.round((carried?.seconds ?? armed?.intervalSeconds ?? DEFAULT_INTERVAL_SECONDS) / 60)))
   const textarea = useRef<HTMLTextAreaElement>(null)
+  // The `/` menu, as the prompt box has it: these words reach the agent as a message, so `/name` invokes a
+  // skill here exactly as it does there, and the list is the thread's own (lib/skillSources.ts).
+  const [textFocused, setTextFocused] = useState(false)
+  const suggestSkills = useMemo(() => () => fetchThreadSkills(thread.id), [thread.id])
+  const slash = useSlashTypeahead({ text, setText, textareaRef: textarea, suggest: suggestSkills, active: textFocused })
   // What the server row is holding (as far as this panel knows), so a save can skip the round-trip when
   // nothing actually changed, and the unmount can tell a draft worth writing from one already stored.
   //
@@ -652,45 +670,56 @@ export function PromptPanel({ thread, armed, close, heading = true }: {
           that toggle was the feature's on switch. With the switch gone, gating the textarea on "some
           trigger is on" would mean an operator has to decide WHEN to send a prompt before they are
           allowed to write it — backwards. Write first, then pick the triggers. */}
-      <textarea
-        ref={textarea}
-        data-recurring-text
-        data-1p-ignore
-        value={text}
-        maxLength={RECURRING_PROMPT_MAX}
-        onChange={(e) => setText(e.target.value)}
-        // Enter (or ⌘/Ctrl-Enter) saves; Shift/Option-Enter make a newline — the three Enter keys
-        // every box shares (2026-08-26). Same write a dismissal makes, made explicitly: same close on
-        // success, and the panel stays open to retry on a refusal.
-        onKeyDown={(e) => {
-          if (shouldSubmitStagedEnter({
-            key: e.key,
-            altKey: e.altKey,
-            ctrlKey: e.ctrlKey,
-            metaKey: e.metaKey,
-            shiftKey: e.shiftKey,
-            isComposing: e.nativeEvent.isComposing,
-            keyCode: e.nativeEvent.keyCode,
-          })) {
-            e.preventDefault()
-            save()
-          }
-        }}
-        placeholder="What is this thread trying to achieve?"
-        // `field-sizing: content` — the browser sizes the box from what is in it. It replaced a flat
-        // `rows={4}`, which made a prompt that can run to 4000 chars a four-line peephole you scrolled
-        // your own writing through. `min-h`/`max-h` are the only bounds it needs.
-        //
-        // Deliberately NOT a JS auto-grow (maintainer 2026-08-02: "this should be a browser-native
-        // style, you shouldn't need to write JavaScript auto-grow logic"). The measure-and-set version
-        // is also the one that broke: driven from an effect it ran with a null ref, because the panel
-        // mounts behind a Radix portal a render later, and never ran again. Chromium ≥123.
-        // GREY WHILE NOTHING IS ARMED (see `anyTrigger`). Not `disabled` and not `readOnly` — the words
-        // stay fully editable, because writing them is what you do BEFORE picking a trigger. The tone is
-        // the only thing that changes, and it says the same thing the glyph says from outside: these words
-        // are parked, not live.
-        className={`field-sizing-content max-h-[28vh] min-h-[4rem] w-full resize-none overflow-y-auto rounded-md border border-border bg-bg px-2 py-1.5 text-[12px] leading-snug outline-none placeholder:text-muted-50 focus:border-border-strong ${anyTrigger ? "text-fg" : "text-muted"}`}
-      />
+      {/* The `/` menu hangs off this wrapper (SlashTypeahead.tsx), so it spans the textarea. */}
+      <div className="relative">
+        {slash.menu}
+        <textarea
+          ref={textarea}
+          data-recurring-text
+          data-1p-ignore
+          value={text}
+          maxLength={RECURRING_PROMPT_MAX}
+          onChange={(e) => {
+            slash.noteCaret(e.target)
+            setText(e.target.value)
+          }}
+          onSelect={(e) => slash.noteCaret(e.currentTarget)}
+          onFocus={() => setTextFocused(true)}
+          onBlur={() => setTextFocused(false)}
+          // Enter (or ⌘/Ctrl-Enter) saves; Shift/Option-Enter make a newline — the three Enter keys
+          // every box shares (2026-08-26). Same write a dismissal makes, made explicitly: same close on
+          // success, and the panel stays open to retry on a refusal. An open `/` menu takes Enter first.
+          onKeyDown={(e) => {
+            if (slash.onKeyDown(e)) return
+            if (shouldSubmitStagedEnter({
+              key: e.key,
+              altKey: e.altKey,
+              ctrlKey: e.ctrlKey,
+              metaKey: e.metaKey,
+              shiftKey: e.shiftKey,
+              isComposing: e.nativeEvent.isComposing,
+              keyCode: e.nativeEvent.keyCode,
+            })) {
+              e.preventDefault()
+              save()
+            }
+          }}
+          placeholder="What is this thread trying to achieve?"
+          // `field-sizing: content` — the browser sizes the box from what is in it. It replaced a flat
+          // `rows={4}`, which made a prompt that can run to 4000 chars a four-line peephole you scrolled
+          // your own writing through. `min-h`/`max-h` are the only bounds it needs.
+          //
+          // Deliberately NOT a JS auto-grow (maintainer 2026-08-02: "this should be a browser-native
+          // style, you shouldn't need to write JavaScript auto-grow logic"). The measure-and-set version
+          // is also the one that broke: driven from an effect it ran with a null ref, because the panel
+          // mounts behind a Radix portal a render later, and never ran again. Chromium ≥123.
+          // GREY WHILE NOTHING IS ARMED (see `anyTrigger`). Not `disabled` and not `readOnly` — the words
+          // stay fully editable, because writing them is what you do BEFORE picking a trigger. The tone is
+          // the only thing that changes, and it says the same thing the glyph says from outside: these words
+          // are parked, not live.
+          className={`field-sizing-content max-h-[28vh] min-h-[4rem] w-full resize-none overflow-y-auto rounded-md border border-border bg-bg px-2 py-1.5 text-[12px] leading-snug outline-none placeholder:text-muted-50 focus:border-border-strong ${anyTrigger ? "text-fg" : "text-muted"}`}
+        />
+      </div>
       {/* THE THREE MECHANISMS, one per line under the text they all send. They are NAMED — Stop hook,
           Heartbeat, Compaction — rather than described, because those are the names everything else in
           frizz uses for them: the scheduler's passes, the delivery fence prefixes, the trailer on every

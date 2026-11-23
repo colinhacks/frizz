@@ -13,6 +13,11 @@ import { Composer } from "./Composer.tsx"
 import { Sheet } from "./ui/Sheet.tsx"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { draftKey, draftStore, useDraft, useProjectDir } from "../lib/drafts.ts"
+import { fetchDispatchSkills } from "../lib/skillSources.ts"
+
+// The session-less thread's `/` menu. Adopting one always starts a Claude worker (dispatch.ts `adopt`),
+// so it lists what a new Claude thread in this project gets. Module scope: one function, one list.
+const suggestAdoptSkills = () => fetchDispatchSkills(undefined, "claude")
 
 // The frizz-document drawer: a RIGHT side sheet (same slide/backdrop family as settings and the
 // Open-thread sheet — nothing renders as a centered dialog) showing the thread's .frizz/<slug>.md body
@@ -120,6 +125,7 @@ export function ThreadDrawer({ id, slug, title, depth, widthDepth }: { id: numbe
                   adopt.mutate(submitted)
                 }}
                 placeholder="Kick off work on this thread…"
+                slashSuggest={suggestAdoptSkills}
                 minHeight={44}
                 busy={adopt.isPending}
               />
