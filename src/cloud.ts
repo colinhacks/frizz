@@ -226,28 +226,37 @@ export function cloudConfigPath(home = homedir()): string {
 
 export function readCloudConfig(home = homedir()): CloudConfig | null {
   try {
-    const parsed = JSON.parse(readFileSync(cloudConfigPath(home), "utf8")) as Partial<CloudConfig>;
-    if (typeof parsed.hostname !== "string" || !parsed.hostname) return null;
-    // Exactly one of the two shapes must be present. A config naming NEITHER a tunnel nor a claim
-    // describes a hostname nothing can serve, which is worse than having no config at all — the
-    // launcher would arm the origin gate for an address with no tunnel behind it.
-    const claimed = typeof parsed.claim === "string" && parsed.claim.length > 0;
-    const named = typeof parsed.tunnel === "string" && parsed.tunnel.length > 0;
-    const external = parsed.serve === "external";
-    if (!claimed && !named && !external) return null;
-    return {
-      hostname: parsed.hostname,
-      ...(named ? { tunnel: parsed.tunnel } : {}),
-      ...(claimed ? { claim: parsed.claim } : {}),
-      ...(parsed.serve === "relay" || parsed.serve === "tunnel" || external ? { serve: parsed.serve } : {}),
-      ...(external && (parsed.provider === "tailscale" || parsed.provider === "other") ? { provider: parsed.provider } : {}),
-      ...(parsed.config ? { config: parsed.config } : {}),
-      // A value this build does not know is the narrower one.
-      ...(parsed.relayAccess === undefined ? {} : { relayAccess: parsed.relayAccess === "full" ? "full" as const : "read-and-answer" as const }),
-    };
+    return parseCloudConfig(JSON.parse(readFileSync(cloudConfigPath(home), "utf8")));
   } catch {
     return null;
   }
+}
+
+/**
+ * A setup as `cloud.json` holds it, or null when the value is not one: what the file says, and what the
+ * server's R menu asks the launcher to serve (remote-setup-client.ts), which is read the same way.
+ */
+export function parseCloudConfig(value: unknown): CloudConfig | null {
+  if (typeof value !== "object" || value === null) return null;
+  const parsed = value as Partial<CloudConfig>;
+  if (typeof parsed.hostname !== "string" || !parsed.hostname) return null;
+  // Exactly one of the two shapes must be present. A config naming NEITHER a tunnel nor a claim
+  // describes a hostname nothing can serve, which is worse than having no config at all — the
+  // launcher would arm the origin gate for an address with no tunnel behind it.
+  const claimed = typeof parsed.claim === "string" && parsed.claim.length > 0;
+  const named = typeof parsed.tunnel === "string" && parsed.tunnel.length > 0;
+  const external = parsed.serve === "external";
+  if (!claimed && !named && !external) return null;
+  return {
+    hostname: parsed.hostname,
+    ...(named ? { tunnel: parsed.tunnel } : {}),
+    ...(claimed ? { claim: parsed.claim } : {}),
+    ...(parsed.serve === "relay" || parsed.serve === "tunnel" || external ? { serve: parsed.serve } : {}),
+    ...(external && (parsed.provider === "tailscale" || parsed.provider === "other") ? { provider: parsed.provider } : {}),
+    ...(typeof parsed.config === "string" && parsed.config ? { config: parsed.config } : {}),
+    // A value this build does not know is the narrower one.
+    ...(parsed.relayAccess === undefined ? {} : { relayAccess: parsed.relayAccess === "full" ? "full" as const : "read-and-answer" as const }),
+  };
 }
 
 /**

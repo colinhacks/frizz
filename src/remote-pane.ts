@@ -19,6 +19,11 @@ import type { CloudflaredProbe, TailscaleProbe } from "./remote-detect.ts";
  * exactly the one or two values Frizz cannot find out for itself. What it saves is served by every
  * later plain launch; "Off" clears it.
  *
+ * FROZEN SINCE 2026-11-23. The server draws this menu now (packages/server/src/remote-setup/pane.ts, through
+ * remote-setup-client.ts), so a change to it ships in a server release instead of a release of this shell.
+ * This copy is what R shows when the running server does not draw one — a server from before the route,
+ * or one restarting — and it is left as it was: change the server's copy, not this one.
+ *
  * The pane is a small state machine over a handful of screens, rendered whole on every change. Keys
  * arrive raw from the pane host: printable characters go into the focused field, arrows move, enter
  * advances or submits, escape goes back, and while a change is being applied nothing but ^C (the

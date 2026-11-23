@@ -20,6 +20,8 @@ import { callerAccess, refuseRemoteRoute, remoteGate, remoteRouteAllowed } from 
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { LAUNCH_ROUTE_PATH, LAUNCH_ROUTE_PROTOCOL, LAUNCH_TOKEN_HEADER, parseLaunchRouteRequest, routeLaunch, type LaunchRouteRequest } from "./launch-routing.ts"
 import { launchNotices } from "./launch-notices.ts"
+import { REMOTE_SETUP_PATH } from "./remote-setup-protocol.ts"
+import { createRemoteSetupRoute, type RemoteSetupRouteOptions } from "./remote-setup/route.ts"
 import { openableFileRoots, resolveProject } from "./project.ts"
 import { registeredWorktreeRoots } from "./worktree-changes.ts"
 import { ProjectServedElsewhereError, projectServedElsewhere } from "./project-serving.ts"
@@ -43,6 +45,8 @@ export interface AppOptions {
   requestOwnerStop?: () => void
   /** Test seam for the launch route: the project resolver, and the home whose registry it reads. */
   launchRouting?: { open?: (dir: string) => { id: string; dir: string; name: string }; home?: string; notices?: (request: LaunchRouteRequest) => string[] }
+  /** Test seams for the R menu's route: the claim, the probes, the GitHub login, how long a wait is held. */
+  remoteSetup?: RemoteSetupRouteOptions
 }
 
 export function createApp(ctx: AppContext, options: AppOptions = {}) {
@@ -62,6 +66,7 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
       (c.req.method === "GET" && c.req.path === frizzRoute("/health")) ||
       (c.req.method === "POST" && c.req.path === frizzRoute("/control/stop")) ||
       (c.req.method === "POST" && c.req.path === frizzRoute(LAUNCH_ROUTE_PATH)) ||
+      (c.req.method === "POST" && c.req.path === frizzRoute(REMOTE_SETUP_PATH)) ||
       c.req.header("sec-fetch-site") === "same-origin"
     )
     if (!isTrustedLocalHttpRequest({
@@ -224,6 +229,18 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
       // The folder is gone, or cannot be read at all: nothing to classify.
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400)
     }
+  })
+
+  // The R menu (remote-setup/route.ts): the launcher forwards the keys pressed in its terminal and writes
+  // the screens answered here, so the menu changes with a server release. Token-bound like the launch
+  // route, because an answer can ask the launcher to put the board on the internet.
+  const remoteSetup = createRemoteSetupRoute(options.remoteSetup)
+  app.post(frizzRoute(REMOTE_SETUP_PATH), async (c) => {
+    const supplied = c.req.header(LAUNCH_TOKEN_HEADER)
+    const held = [options.controlToken, options.machineToken].filter((token): token is string => !!token)
+    if (!supplied || !held.includes(supplied)) return c.text("Forbidden", 403)
+    const answered = await remoteSetup.handle(await c.req.json().catch(() => undefined))
+    return c.json(answered.body, answered.status as 200 | 400 | 404)
   })
 
   // Pictures AND videos (a ```lightbox gallery plays both), in byte ranges — see local-image.ts.

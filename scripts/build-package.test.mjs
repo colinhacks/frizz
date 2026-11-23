@@ -87,6 +87,16 @@ test("the shell carries none of the shared index, zod or yaml", () => {
   assert.deepEqual(carried.filter((path) => /packages\/shared\/src\/index\.ts$|node_modules\/(?:\.pnpm\/)?(?:zod|yaml)[@/]/.test(path) || /\/(?:zod|yaml)@[^/]+\/node_modules\//.test(path)), []);
 });
 
+test("the shell carries the R menu's wire, and none of the menu the server draws", () => {
+  // The menu moved into the server on 2026-11-23 so that changing it needs no shell release: the shell
+  // forwards keys and draws screens (src/remote-setup-client.ts). An import that pulled the server's copy
+  // back in would make every edit to it a change to the shell again.
+  const [output] = Object.values(bundled.metafile.outputs);
+  const carried = Object.entries(output.inputs).filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path);
+  assert.ok(carried.some((path) => path.endsWith("src/remote-setup-client.ts")), "the shell asks the server for the menu");
+  assert.deepEqual(carried.filter((path) => path.includes("packages/server/src/remote-setup/")), []);
+});
+
 test("the build script bundles with the options this file tests", async () => {
   // The script cannot be imported (it writes `dist/` when it loads), so it is read: a second copy of
   // the options there would be what ships, and this file would be testing something else.

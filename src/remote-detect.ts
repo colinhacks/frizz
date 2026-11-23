@@ -1,5 +1,6 @@
 /**
- * What the R pane can find out about this machine before it asks anything.
+ * What the R pane can find out about this machine before it asks anything. Frozen with the shell's own
+ * menu (remote-pane.ts); the server's menu probes with packages/server/src/remote-setup/probes.ts.
  *
  * Each probe is best-effort and bounded: a missing binary, a signed-out CLI or a hung daemon must
  * turn into a line on the screen ("cloudflared: not found"), never a pane that does not open. Nothing

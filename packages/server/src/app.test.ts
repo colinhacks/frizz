@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { createApp, resolveLocalImage, type AppOptions } from "./app.ts"
 import type { AppContext } from "./context.ts"
+import { CALLER_HEADER, encodeCallerStamp } from "./audit.ts"
 
 // A 1x1 PNG's leading bytes are enough — the route serves the bytes verbatim, it doesn't decode.
 const PNG = Buffer.from("89504e470d0a1a0a", "hex")
@@ -164,6 +165,39 @@ test("the launch route answers a launcher holding either owner token, and nobody
     body: JSON.stringify({ protocol: 1, dir: elsewhere }),
   })
   assert.equal(refused.status, 403)
+})
+
+test("the R menu's route answers the launcher holding an owner token, and nobody else, nor anyone from away", async () => {
+  const port = 49_178
+  const app = originTestApp(port, undefined, {
+    controlToken: "host-capability",
+    machineToken: "machine-capability",
+    remoteSetup: { probes: { cloudflared: async () => ({ version: null }), tailscale: async () => ({ installed: false, dnsName: null }) }, githubLogin: () => null },
+  })
+  const context = { port, columns: 80, rows: 24, current: null, devices: [], sandbox: false }
+  const ask = (headers: Record<string, string>, body: unknown = { protocol: 1, event: { type: "open" }, context }) =>
+    app.request(`http://127.0.0.1:${port}/_frizz/control/remote-setup`, {
+      method: "POST",
+      headers: { host: `127.0.0.1:${port}`, "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    })
+  for (const token of ["host-capability", "machine-capability"]) {
+    const answered = await ask({ "x-frizz-launch-token": token })
+    assert.equal(answered.status, 200, token)
+    const menu = (await answered.json()) as { session: string; screen: string }
+    assert.match(menu.screen, /Reach this board from other devices/)
+    const closed = await ask({ "x-frizz-launch-token": token }, { protocol: 1, session: menu.session, event: { type: "key", key: "q" }, context })
+    assert.equal(((await closed.json()) as { close?: boolean }).close, true)
+  }
+  assert.equal((await ask({})).status, 403)
+  assert.equal((await ask({ "x-frizz-launch-token": "forged" })).status, 403)
+  assert.equal((await ask({ "x-frizz-launch-token": "machine-capability", origin: `http://localhost:${port}` })).status, 403)
+  // Through the relay, even with full control and the token, the route is not there: it answers the
+  // terminal the board runs in and nothing else.
+  const away = encodeCallerStamp({ via: "public", remote: "127.0.0.1", host: "colin.frizz.sh", session: "s1", access: "full" })
+  assert.equal((await ask({ "x-frizz-launch-token": "machine-capability", [CALLER_HEADER]: away })).status, 403)
+  assert.equal((await ask({ "x-frizz-launch-token": "machine-capability" }, { protocol: 2, event: { type: "open" }, context })).status, 400)
+  assert.equal((await ask({ "x-frizz-launch-token": "machine-capability" }, { protocol: 1, session: "gone", event: { type: "key", key: "q" }, context })).status, 404)
 })
 
 test("HTTP/CORS rejects every cross-loopback Host/Origin pair before reads, preflights, or mutation bodies", async () => {

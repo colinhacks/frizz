@@ -15,13 +15,9 @@ import { SUPERVISOR_ACCESS_CODE_PATH } from "@frizz/server/restart-supervisor";
 import { createAccessPane, type AccessPane } from "./access-pane.ts";
 import { installPaneHost, type PaneHost } from "./pane-host.ts";
 import { createRemoteController, type RemoteController } from "./remote-controller.ts";
-import { frizzGithubLogin, frizzGithubSignIn } from "./github-claim-identity.ts";
-import { probeCloudflared, probeTailscale } from "./remote-detect.ts";
-import { createRemotePane, remoteReachedLine } from "./remote-pane.ts";
+import { remoteReachedLine } from "./remote-pane.ts";
+import { createRemoteMenu } from "./remote-menu.ts";
 import { LOOPBACK_BIND_HOST } from "@frizz/server/local-origin";
-import {
-  establishCloudConfig,
-} from "./cloud.ts";
 import { noticeOnlyReadout, Readout, renderSupervisorActivity, tildePath } from "./readout.ts";
 import {
   appendCrashRecord,
@@ -790,26 +786,17 @@ async function runSupervisor(port: number, token: string, onPrepared: () => void
   // "Press L for a fresh link" — the only way to reissue without restarting. Null when stdout is not
   // a terminal, which leaves the plain records path untouched.
   accessPane = createAccessPane({ issue: () => supervisor.issueAccessLink() });
-  const remotePane = createRemotePane({
+  // R: the server's menu, or this launcher's own for a server that does not draw one (remote-menu.ts).
+  const remotePane = createRemoteMenu({
     port,
-    current: () => remote?.current() ?? null,
-    apply: (next, applyOptions) => remote!.apply(next, applyOptions),
-    setRelayAccess: (access) => remote!.setRelayAccess(access),
-    claim: (name, progress) =>
-      establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn(), {
-        say: progress,
-        promptHint: false,
-        // A name claimed afresh signs out what was signed in under it before (cloud.ts, onFreshClaim).
-        onFreshClaim: (hostname) => void supervisor.forgetSessionsFor(hostname),
-      }),
-    githubLogin: frizzGithubLogin,
-    issueLink: () => supervisor.issueAccessLink(),
-    devices: { list: () => supervisor.signedInDeviceList(), signOut: (id) => supervisor.signOutDevice(id), signOutAll: () => supervisor.signOutAllDevices() },
-    probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },
+    token: serverOwner?.token,
+    sandbox: sandbox !== null,
+    supervisor,
+    remote: () => remote,
     onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "localhost only"),
     // The readout above the pane still names the setup this launch started with; say the new one under it.
     onClosedAfterChange: (config) => activityReadout?.notice("done", "Remote", remoteReachedLine(config)),
-    sandbox: sandbox !== null,
+    onOpened: (by, why) => logger.info("remote", by === "server" ? "R: the server drew the menu" : `R: this launcher's own menu, since ${why}`),
   });
   paneHost = installPaneHost({ bindings: { l: accessPane, L: accessPane, r: remotePane, R: remotePane } });
 

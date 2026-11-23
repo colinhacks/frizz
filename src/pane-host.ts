@@ -11,11 +11,22 @@
  */
 
 export interface Pane {
-  /** Show the pane. False means there is nothing to show, and the host leaves the terminal alone. */
-  open(): boolean;
+  /**
+   * Show the pane. False means there is nothing to show, and the host leaves the terminal alone. `handle`
+   * closes the pane later, for one that learns it is done only after the key that did it has returned.
+   */
+  open(handle?: PaneHandle): boolean;
   /** A key while this pane is open. Return "close" to hand the terminal back. */
   key(key: string): "close" | "keep";
   /** Take the pane down — after "close", or at shutdown. Must be safe to call when not open. */
+  close(): void;
+}
+
+export interface PaneHandle {
+  /**
+   * Hand the terminal back, as a key answered "close" would. The R menu needs it: the server decides what
+   * a key does there, and its answer arrives after `key` has returned. A no-op once the pane is closed.
+   */
   close(): void;
 }
 
@@ -88,7 +99,7 @@ export function installPaneHost(options: PaneHostOptions): PaneHost | null {
       return;
     }
     const pane = options.bindings[key];
-    if (pane && pane.open()) active = pane;
+    if (pane && pane.open({ close: () => { if (active === pane) closeActive(); } })) active = pane;
   };
 
   const restore = () => {

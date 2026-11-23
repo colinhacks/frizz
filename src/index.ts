@@ -2,18 +2,14 @@
 import { bindHostIsExposed } from "@frizz/server/local-origin";
 import { liveSessions, loadSessionState, remoteDevicesLine, sessionEpochLogLine, sessionEpochNotice } from "@frizz/server/access-codes";
 import { claudeRetentionWarning, claudeTranscriptRetention, claudeUserSettingsFile } from "@frizz/server/claude-retention";
-import {
-  establishCloudConfig,
-} from "./cloud.ts";
 import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
 import { listSessions, signOutSession } from "./sessions-cli.ts";
 import { SUPERVISOR_ACCESS_CODE_PATH } from "@frizz/server/restart-supervisor";
 import { createAccessPane, type AccessPane } from "./access-pane.ts";
 import { installPaneHost, type PaneHost } from "./pane-host.ts";
 import { createRemoteController, type RemoteController } from "./remote-controller.ts";
-import { frizzGithubLogin, frizzGithubSignIn } from "./github-claim-identity.ts";
-import { probeCloudflared, probeTailscale } from "./remote-detect.ts";
-import { createRemotePane, remoteReachedLine } from "./remote-pane.ts";
+import { remoteReachedLine } from "./remote-pane.ts";
+import { createRemoteMenu } from "./remote-menu.ts";
 import { LOOPBACK_BIND_HOST } from "@frizz/server/local-origin";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -497,26 +493,17 @@ async function runSupervisor(
     }
     {
       accessPane = createAccessPane({ issue: () => supervisor.issueAccessLink() });
-      const remotePane = createRemotePane({
+      // R: the server's menu, or this launcher's own for a server that does not draw one (remote-menu.ts).
+      const remotePane = createRemoteMenu({
         port,
-        current: () => remote?.current() ?? null,
-        apply: (next, applyOptions) => remote!.apply(next, applyOptions),
-        setRelayAccess: (access) => remote!.setRelayAccess(access),
-        claim: (name, progress) =>
-          establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn(), {
-            say: progress,
-            promptHint: false,
-            // A name claimed afresh signs out what was signed in under it before (cloud.ts, onFreshClaim).
-            onFreshClaim: (hostname) => void supervisor.forgetSessionsFor(hostname),
-          }),
-        githubLogin: frizzGithubLogin,
-        issueLink: () => supervisor.issueAccessLink(),
-        devices: { list: () => supervisor.signedInDeviceList(), signOut: (id) => supervisor.signOutDevice(id), signOutAll: () => supervisor.signOutAllDevices() },
-        probes: { cloudflared: probeCloudflared, tailscale: probeTailscale },
+        token: launchOwner.token,
+        sandbox: sandbox !== null,
+        supervisor,
+        remote: () => remote,
         onChanged: (config) => logger.info("remote", config ? `reached at https://${config.hostname}` : "localhost only"),
         // The readout above the pane still names the setup this launch started with; say the new one under it.
         onClosedAfterChange: (config) => activityReadout?.notice("done", "Remote", remoteReachedLine(config)),
-        sandbox: sandbox !== null,
+        onOpened: (by, why) => logger.info("remote", by === "server" ? "R: the server drew the menu" : `R: this launcher's own menu, since ${why}`),
       });
       paneHost = installPaneHost({ bindings: { l: accessPane, L: accessPane, r: remotePane, R: remotePane } });
     }

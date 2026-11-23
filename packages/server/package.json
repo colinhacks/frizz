@@ -13,6 +13,7 @@
     "./project-registry": "./src/project-registry.ts",
     "./project-launch": "./src/project-launch.ts",
     "./launch-routing": "./src/launch-routing.ts",
+    "./remote-setup-protocol": "./src/remote-setup-protocol.ts",
     "./project-serving": "./src/project-serving.ts",
     "./local-origin": "./src/local-origin.ts",
     "./access-codes": "./src/access-codes.ts",

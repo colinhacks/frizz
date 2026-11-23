@@ -103,12 +103,16 @@ test("only the launcher writes the setting: nothing a request can reach calls it
   const callers = sources.filter((path) => /\b(?:setRelayAccess|writeCloudConfig)\(/.test(readFileSync(join(repo, path), "utf8"))).sort();
   assert.deepEqual(callers, [
     "packages/server/src/dev-supervisor.ts", // forwards to the proxy, for the launcher
+    // The server's R menu, which only ASKS the launcher (remote-setup/route.ts). Its route takes the owner
+    // token alone and no caller from away (remote-gate.ts; app.test.ts), and the launcher runs what it asks
+    // only for the menu open in its own terminal.
+    "packages/server/src/remote-setup/pane.ts",
     "packages/server/src/restart-supervisor.ts", // the proxy's own method, and it writes no file
     "src/cloud.ts", // defines writeCloudConfig
-    "src/index.ts", // hands the pane its controller, in the dev launcher
-    "src/production.ts", // and in the shipped one
     "src/remote-controller.ts", // the launcher's controller
-    "src/remote-pane.ts", // the R pane
+    "src/remote-menu.ts", // hands both R menus the controller, for both launchers
+    "src/remote-pane.ts", // the launcher's own R pane
+    "src/remote-setup-client.ts", // runs what the server's R menu asks, for the menu this terminal opened
   ]);
 });
 
