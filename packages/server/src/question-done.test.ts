@@ -523,8 +523,7 @@ test("an answer on its way takes the rest: the done fence is judged at the worke
   } finally { w.close() }
 })
 
-/** SOURCE 14's correction for one `kind: choice` fence with no options, as it has read since it shipped
- *  (its shape line naming `why:` since 2026-11-23). */
+/** SOURCE 14's correction for one `kind: choice` fence with no options, as it has read since it shipped. */
 const QUESTION_FENCE_CORRECTION = (id: string) => [
   "⚠️ Your ```question fence could not register, so the human has NOT been asked:",
   "",
@@ -533,9 +532,8 @@ const QUESTION_FENCE_CORRECTION = (id: string) => [
   "Fix the fence and write it again in your next message; a fence that registers needs nothing else.",
   "The shape: `id:` (a slug of your own), `kind:` (`choice`, `multi`, `text` or `secret`), a one-line",
   "`question:`, and for `choice`/`multi` two or more `options:` — each `- label: …`, with optional",
-  "`description:`, `recommended: true` with a one-line `why:` under it, and an indented `detail: |` block.",
-  "Anything else the human needs goes below a `---` line as markdown. A fence with `id:` alone references",
-  "a question you already asked.",
+  "`description:`, `recommended: true` and an indented `detail: |` block. Anything else the human needs",
+  "goes below a `---` line as markdown. A fence with `id:` alone references a question you already asked.",
 ].join("\n")
 
 test("a question fence correction on a rest that did not close on a done fence reads as it always has", async () => {

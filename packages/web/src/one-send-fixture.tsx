@@ -64,7 +64,7 @@ const CHANGELOG: RegisteredQuestionView = {
   askedAt: ago(2),
   spec: { handle: "changelog", question: "What should the changelog entry say?", kind: "question" },
 }
-const DEPLOY_ASK = ["```question", "id: deploy-target", "kind: choice", `question: ${DEPLOY.spec.question}`, "options:", "  - label: Staging", "    recommended: true", "    why: It is the smaller change", "  - label: Production", "```"].join("\n")
+const DEPLOY_ASK = ["```question", "id: deploy-target", "kind: choice", `question: ${DEPLOY.spec.question}`, "options:", "  - label: Staging", "    recommended: true", "  - label: Production", "```"].join("\n")
 const CHANGELOG_ASK = ["```question", "id: changelog", "kind: text", `question: ${CHANGELOG.spec.question}`, "```"].join("\n")
 
 // THE LEGACY GRAMMAR: free-form fences, and one row the `ask` tool registered.

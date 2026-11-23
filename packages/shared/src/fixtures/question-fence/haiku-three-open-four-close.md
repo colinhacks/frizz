@@ -8,7 +8,6 @@ options:
   - label: Approve and run
     description: adds the nullable column and builds the index without blocking reads or writes
     recommended: true
-    why: Neither step blocks writes, and the rollback drops anything a failed build leaves
   - label: Decline
     description: nothing runs against prod
 ````

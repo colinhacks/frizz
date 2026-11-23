@@ -2244,8 +2244,8 @@ function signoffNudgeText(needsInput: boolean): string {
   "- `` ```question `` — you need the human's decision. Write each fence right under the paragraph it",
   "  decides, never stacked at the bottom: `id:` (a slug of your choosing), `kind:` (`choice`, `multi`,",
   "  `text` or `secret`), a one-line `question:`, and `options:` with one-line trade-offs, the recommended",
-  "  one first with a one-line `why:` saying what decides it over the others. Frizz registers it when the",
-  "  message lands, and a question asked at this rest is its sign-off: rest normally.",
+  "  one first. Frizz registers it when the message lands, and a question asked at this rest is its",
+  "  sign-off: rest normally.",
   "- `` ```done `` — genuinely FINISHED. A DISMISSAL: the card is filed away and nobody looks again, so",
   "  if anything is still owed, it is not done. Body: 1-3 sentences, then bullets, each opening with a",
   "  **bolded verb phrase**.",
@@ -3663,12 +3663,6 @@ export interface AskedOption {
    *  many as the worker would tick: one chip in a list the human ticks several of reads as "pick only
    *  this" (maintainer 2026-10-10: "weird that there's a recommended chip on only a single item"). */
   recommended?: boolean
-  /** WHY the worker recommends this option over the others: one line, drawn beside the option's
-   *  Recommended chip. A ```question fence must give one with every `recommended: true` — the chip alone
-   *  said which, and almost never why (maintainer 2026-11-23: "The model needs to justify its
-   *  recommendations. It can be succinct."). Optional here because a row stored before then, and the
-   *  server's own `ask` RPC, carry none; the fence reader is where it is required (question-fence.ts). */
-  why?: string
   /** RETIRED 2026-09-01 (it revealed markdown under the option only once picked — detail that should
    *  inform a choice arrived after the choice; maintainer: "you should just be rendering it as part of
    *  the answer before I click on it"). Still ACCEPTED, never refused: stored rows and in-flight
@@ -3727,9 +3721,6 @@ const AskedOptionSchema: z.ZodType<AskedOption> = z.lazy(() => z.object({
   // body — a diff, a drafted comment, a table — and a real diff exceeds 4000.
   description: z.string().trim().max(20000).optional(),
   recommended: z.boolean().optional(),
-  // One line, but room for a long one: the fence reads it to the end of its line and caps nothing else
-  // on a line but the label.
-  why: z.string().trim().max(2000).optional(),
   preview: z.string().max(4000).optional(),
   // No count cap, like `options` (2026-09-03); the tree is bounded by ASK_MAX_DEPTH instead.
   followUps: z.array(AskedQuestionSchema).optional(),

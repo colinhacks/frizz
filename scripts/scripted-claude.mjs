@@ -243,7 +243,7 @@ const questionFence = (turn) => [
   "options:",
   "  - label: Publish now",
   "    description: every gate passed on this commit",
-  "    recommended: true", "    why: It is the smaller change",
+  "    recommended: true",
   "  - label: Hold it",
   "    description: the changelog entry is still a draft",
   "```",

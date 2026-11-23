@@ -221,11 +221,11 @@ export function QuestionBlockCard({
               // answer before I click on it").
               bodyMd={parsed.optionBodies?.[i]}
               multi={isMulti}
-              // The recommendation renders INSIDE its option as a badge (not as a caption below), and
-              // its reason on a line of its own under the label, led by the badge. A `multi` may badge
-              // several options — the set worth ticking — each with its own reason.
+              // The recommendation renders INSIDE its option as a badge (not as a caption below);
+              // the inline `(recommended: why)` rationale (or a legacy rec line) rides the chip's title.
+              // A `multi` may badge several options — the set worth ticking; the note is the first's.
               recommended={recIdxs.includes(i)}
-              why={recIdxs.includes(i) ? parsed.optionWhys?.[i] : undefined}
+              recTitle={recIdxs[0] === i ? parsed.recommendedNote : undefined}
               // MULTI: selected == toggled in the set (coexists with freetext). SINGLE: selected while
               // the chip is the staged answer — re-clicking it toggles it off, and the free-text box
               // taking focus clears it (via onText). Text left in the box is an unselected draft, so it
@@ -499,7 +499,7 @@ function Chip({
   disabled,
   multi,
   recommended,
-  why,
+  recTitle,
   onClick,
 }: {
   /** The option line as the producer wrote it, identifier included ("2. SQLite — …"). */
@@ -517,9 +517,7 @@ function Chip({
   disabled: boolean
   multi?: boolean
   recommended?: boolean
-  /** Why the worker recommends this option (a fence's `why:`), drawn under the label, led by the
-   *  Recommended badge. Without one the badge floats at the label line's end, as it always did. */
-  why?: string
+  recTitle?: string
   /** `clicks` is the click's `detail`: 2 for the second click of a double-click, 0 from the keyboard. */
   onClick: (clicks: number) => void
 }) {
@@ -532,13 +530,11 @@ function Chip({
   const id = split.id ?? optionLetter(index).slice(0, -1)
   const labelHtml = useInlineMarkdownHtml(split.rest)
   const bodyHtml = useMarkdownHtml(bodyMd ?? "")
-  const reason = recommended ? why?.trim() || undefined : undefined
-  const whyHtml = useInlineMarkdownHtml(reason ?? "")
   const labelId = useId()
-  const whyId = useId()
   return (
     <div
       data-question-option
+      title={recTitle}
       // The div-level click exists for the body's ELEVATED, non-link content — a code block sits above
       // the stretched button so it can h-scroll when Wrap code is off (styles.css), which takes its
       // pixels out of the button's hit area, and a click on the code you are reading must still pick
@@ -572,7 +568,6 @@ function Chip({
         type="button"
         disabled={disabled}
         aria-labelledby={labelId}
-        aria-describedby={reason ? whyId : undefined}
         // WHICH OPTION IS PICKED was drawn (the selection border, the tick) and never said: the button
         // had a name and no state, so a screen reader read every option alike. A settled card says it
         // too, on the option that was sent. A TOGGLE button, for a single choice as well as a multi,
@@ -601,7 +596,7 @@ function Chip({
             narrows the text column. The badge must precede the label in source order for the float to
             take effect. */}
         <div id={labelId}>
-          {recommended && !reason && (
+          {recommended && (
             // Keep the pill inside the first answer line, not taller than it. In system sans,
             // leading-none gives a 13.5px pill; its border/text centers are within 0.2px of the
             // answer's cap band at desktop and phone widths (verify-control-chrome.mjs).
@@ -612,22 +607,6 @@ function Chip({
           )}
           <LinkedHtml as="span" className="md-inline" html={labelHtml} />
         </div>
-        {/* WHY IT IS RECOMMENDED, led by the badge that says it is (maintainer 2026-11-23: workers chipped
-            options "Recommended" and rarely said why). Its own line, at the body's size and tone, between
-            the label and any body: the reason is read against the label it argues for, before the detail.
-            The badge leads it rather than floating at the label's end, so the reason reads as the badge's
-            and not as one more line of the option's description. `align-[0.75px]` seats the badge on the
-            reason's cap band: its text 0.05px high and its border 0.05px low, in sans, both themes, at
-            1100 and 390 wide (verify-control-chrome.mjs, whose inline-long and legacy-fallback cases are
-            this line); `align-[1px]` left its text 0.30px high. */}
-        {reason && (
-          <div id={whyId} data-option-why className="mt-1 text-[11.5px] leading-snug opacity-90">
-            <span className="pointer-events-none mr-1.5 inline-block rounded-full border border-border-strong px-1.5 py-px align-[0.75px] text-[9.5px] leading-none uppercase tracking-wide text-muted">
-              Recommended
-            </span>
-            <LinkedHtml as="span" className="md-inline" html={whyHtml} />
-          </div>
-        )}
         {/* The body inherits the chip's colour state (selected/read-only/settled) and steps down HALF
             a size, not to the muted tone: it is the substance of the choice, not a caption on it. The
             size is `[data-question-option] .md-body` in styles.css — a utility here loses to `.md-body`. */}

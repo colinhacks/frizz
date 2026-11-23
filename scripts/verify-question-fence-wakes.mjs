@@ -157,7 +157,7 @@ async function until(what, probe, timeoutMs) {
 
 const fence = (...lines) => ["```question", ...lines, "```"].join("\n")
 const choice = (id, question, labels, extra = []) =>
-  fence(`id: ${id}`, "kind: choice", ...extra, `question: ${question}`, "options:", ...labels.flatMap((l, i) => [`  - label: ${l}`, ...(i === 0 ? ["    recommended: true", "    why: It is the smaller change"] : [])]))
+  fence(`id: ${id}`, "kind: choice", ...extra, `question: ${question}`, "options:", ...labels.flatMap((l, i) => [`  - label: ${l}`, ...(i === 0 ? ["    recommended: true"] : [])]))
 
 // ---- one case's context --------------------------------------------------------------------------------
 
@@ -286,7 +286,7 @@ const CASES = [
     title: "a broken fence is corrected, once, and the fix registers",
     async run(t) {
       const question = "Should the build cache live in Redis or on local disk?"
-      const broken = fence("id: cache-store", `question: ${question}`, "options:", "  - label: Redis", "    recommended: true", "    why: It is the smaller change", "  - label: Local disk")
+      const broken = fence("id: cache-store", `question: ${question}`, "options:", "  - label: Redis", "    recommended: true", "  - label: Local disk")
       const fixed = choice("cache-store", question, ["Redis", "Local disk"])
       const w = await t.worker("fix", [
         { name: "asks with a fence that has no kind", on: FIRST, tools: [{ command: 'command -v frizzctl; cat "$FRIZZ_SERVER_LOCK"', description: "Which frizzctl, and which server" }], text: `The build cache needs a home before the CI change can land.\n\n${broken}` },
@@ -792,7 +792,7 @@ const CASES = [
     key: "K",
     title: "the two other openers: a tilde fence and a capitalised info string both ask",
     async run(t) {
-      const options = ["options:", "  - label: Nightly", "    recommended: true", "    why: It is the smaller change", "  - label: Weekly"]
+      const options = ["options:", "  - label: Nightly", "    recommended: true", "  - label: Weekly"]
       const shapes = [
         { name: "tilde", opener: "~~~question", closer: "~~~", id: "backup-cadence", question: "Should backups run nightly or weekly?" },
         { name: "capital", opener: "```Question", closer: "```", id: "report-cadence", question: "Should the usage report go out nightly or weekly?" },

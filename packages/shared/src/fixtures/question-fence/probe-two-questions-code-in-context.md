@@ -8,7 +8,6 @@ options:
   - label: Run it
     description: adds a nullable column and builds the index without locking writes
     recommended: true
-    why: Neither step blocks writes, and the rollback drops anything a failed build leaves
   - label: Hold it
     description: nothing runs until the SQL is changed
 ---

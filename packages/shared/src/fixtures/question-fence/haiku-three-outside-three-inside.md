@@ -8,7 +8,6 @@ options:
   - label: Approve and run
     description: adds a nullable column (no table rewrite) and a concurrent index
     recommended: true
-    why: Neither step blocks writes, and the rollback drops anything a failed build leaves
   - label: Do not run
     description: leave the migration unapplied
 ---

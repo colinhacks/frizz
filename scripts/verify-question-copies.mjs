@@ -50,7 +50,7 @@ if (!(await api.waitForHealth(30_000))) throw new Error(`no stack answers on ${b
 
 const ask = (id, question, a, b) => [
   "```question", `id: ${id}`, "kind: choice", `question: ${question}`, "options:",
-  `  - label: ${a}`, "    recommended: true", "    why: It is the smaller change", `  - label: ${b}`, "```",
+  `  - label: ${a}`, "    recommended: true", `  - label: ${b}`, "```",
 ].join("\n")
 const ref = (id) => ["```question", `id: ${id}`, "```"].join("\n")
 

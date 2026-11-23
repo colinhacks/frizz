@@ -281,7 +281,7 @@ test("a child's question fence is refused toward its parent, and only a secret s
   const sightings = [{
     at,
     text: [
-      fence("id: flag-name\nkind: choice\nquestion: Which name should the flag take?\noptions:\n  - label: --child\n    recommended: true\n    why: It is the smaller change\n  - label: --report-to"),
+      fence("id: flag-name\nkind: choice\nquestion: Which name should the flag take?\noptions:\n  - label: --child\n    recommended: true\n  - label: --report-to"),
       fence("id: npm-otp\nkind: secret\nquestion: The npm one-time code"),
     ].join("\n\n"),
   }]

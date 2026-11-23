@@ -74,7 +74,7 @@ const assistant = (at, content, { id = `msg_${n}`, stop = "end_turn", extra = {}
 })
 const text = (t) => [{ type: "text", text: t }]
 const fence = (...lines) => ["```question", ...lines, "```"].join("\n")
-const choice = (id, question) => fence(`id: ${id}`, "kind: choice", `question: ${question}`, "options:", "  - label: SQLite", "    recommended: true", "    why: It is the smaller change", "  - label: JSON file")
+const choice = (id, question) => fence(`id: ${id}`, "kind: choice", `question: ${question}`, "options:", "  - label: SQLite", "    recommended: true", "  - label: JSON file")
 
 if (phase === "seed") {
   const api = createRpcClient(`http://127.0.0.1:${port}/`)

@@ -15,7 +15,7 @@ test("a choice question reads every field, and the body below --- is its context
     "options:",
     "  - label: SQLite",
     "    description: transactional, and one store to back up",
-    "    recommended: true", "    why: It is the smaller change",
+    "    recommended: true",
     "  - label: JSON file",
     "    description: no dependency, hand-editable",
     "---",
@@ -34,7 +34,7 @@ test("a choice question reads every field, and the body below --- is its context
     context: "Settings are read on every request.\n\n| Store | Crash-safe |\n|---|---|\n| SQLite | yes |",
     kind: "question",
     options: [
-      { label: "SQLite", description: "transactional, and one store to back up", recommended: true, why: "It is the smaller change" },
+      { label: "SQLite", description: "transactional, and one store to back up", recommended: true },
       { label: "JSON file", description: "no dependency, hand-editable" },
     ],
   })
@@ -66,7 +66,7 @@ test("an option's detail block is kept as markdown, a nested code fence included
     "options:",
     "  - label: Exponential",
     "    description: doubles from 100ms, capped at five tries",
-    "    recommended: true", "    why: It is the smaller change",
+    "    recommended: true",
     "    detail: |",
     "      ```diff",
     "      -  await sleep(100)",
@@ -90,7 +90,7 @@ test("an option's detail block is kept as markdown, a nested code fence included
 })
 
 test("the four kinds map onto the stored shape, and each refuses the options it cannot take", () => {
-  const multi = readQuestionFence("id: a\nkind: multi\nquestion: Which?\noptions:\n  - label: x\n    recommended: true\n    why: It is the smaller change\n  - label: y\n    recommended: true\n    why: It is the smaller change")
+  const multi = readQuestionFence("id: a\nkind: multi\nquestion: Which?\noptions:\n  - label: x\n    recommended: true\n  - label: y\n    recommended: true")
   assert.equal(multi.form === "ask" && multi.spec.kind, "multi")
   const text = readQuestionFence("id: b\nkind: text\nquestion: What scope?")
   assert.deepEqual(text.form === "ask" && text.spec, { handle: "b", question: "What scope?", kind: "question" })
@@ -102,46 +102,8 @@ test("the four kinds map onto the stored shape, and each refuses the options it 
   const choiceOfOne = readQuestionFence("id: d\nkind: choice\nquestion: Q?\noptions:\n  - only")
   assert.equal(choiceOfOne.form, "invalid")
   assert.match(choiceOfOne.form === "invalid" ? choiceOfOne.faults.join("\n") : "", /two or more options/)
-  const twoRecommended = readQuestionFence("id: e\nkind: choice\nquestion: Q?\noptions:\n  - label: x\n    recommended: true\n    why: It is the smaller change\n  - label: y\n    recommended: true\n    why: It is the smaller change")
+  const twoRecommended = readQuestionFence("id: e\nkind: choice\nquestion: Q?\noptions:\n  - label: x\n    recommended: true\n  - label: y\n    recommended: true")
   assert.match(twoRecommended.form === "invalid" ? twoRecommended.faults.join("\n") : "", /only ONE option/)
-})
-
-test("a recommendation carries its reason: `why:` is required beside `recommended: true`, and refused anywhere else", () => {
-  const ask = (options: string) => readQuestionFence(`id: store\nkind: choice\nquestion: SQLite or a JSON file?\noptions:\n${options}`)
-  const faultsOf = (options: string) => {
-    const r = ask(options)
-    return r.form === "invalid" ? r.faults : []
-  }
-
-  // The reason is stored on the option it argues for, one line however it was wrapped or quoted.
-  const read = ask('  - label: SQLite\n    recommended: true\n    why: "Every worker writes at once,\n      and only SQLite survives that"\n  - label: JSON file')
-  assert.deepEqual(read.form === "ask" && read.spec.options, [
-    { label: "SQLite", recommended: true, why: "Every worker writes at once, and only SQLite survives that" },
-    { label: "JSON file" },
-  ])
-  // A multi's recommendation is a set, and each member says why.
-  const multi = readQuestionFence("id: gates\nkind: multi\nquestion: Which checks block the release?\noptions:\n  - label: Unit tests\n    recommended: true\n    why: Four minutes\n  - label: E2E\n    recommended: true\n    why: The only run on a device\n  - label: Lint")
-  assert.deepEqual(multi.form === "ask" && multi.spec.options?.map((o) => o.why), ["Four minutes", "The only run on a device", undefined])
-
-  // Refused: a chip with no reason, the reason written into `recommended:` itself, an empty `why:`, and a
-  // reason beside an option nobody recommends — each by name, naming the option.
-  assert.deepEqual(faultsOf("  - label: SQLite\n    recommended: true\n  - label: JSON file"), [
-    "option 1: `recommended: true` needs a `why:` under it — one line saying why `SQLite` over the other options: the fact that decides it",
-  ])
-  assert.deepEqual(faultsOf("  - label: SQLite\n    recommended: yes, it survives a crash\n  - label: JSON file"), [
-    "option 1: `recommended: yes, it survives a crash` — write `recommended: true`, and the reason on its own line under it as `why: …`",
-  ])
-  assert.deepEqual(faultsOf("  - label: SQLite\n    recommended: true\n    why:\n  - label: JSON file"), [
-    "option 1: `recommended: true` needs a `why:` under it — one line saying why `SQLite` over the other options: the fact that decides it",
-  ])
-  assert.deepEqual(faultsOf("  - label: SQLite\n    why: It survives a crash\n  - label: JSON file"), [
-    "option 1: `why:` gives the reason an option is recommended, and `SQLite` is not — mark it `recommended: true`, or put its trade-off in `description:`",
-  ])
-  assert.deepEqual(faultsOf("  - label: SQLite\n    recommended: false\n    why: It survives a crash\n  - label: JSON file"), [
-    "option 1: `why:` gives the reason an option is recommended, and `SQLite` is not — mark it `recommended: true`, or put its trade-off in `description:`",
-  ])
-  // A question that recommends nothing needs no reason anywhere.
-  assert.equal(ask("  - label: SQLite\n  - label: JSON file").form, "ask")
 })
 
 test("an id alone is a reference, and the id is read lowercased", () => {
@@ -215,11 +177,11 @@ test("a follow-up whose option is missing is refused with its parent's real labe
 
 test("a fence that does not read still drafts its question for the page, and one that reads drafts nothing", () => {
   // Two recommended options: refused, and the draft keeps both options and the context.
-  const body = "id: e\nkind: choice\nquestion: Q?\noptions:\n  - label: x\n    recommended: true\n    why: It is the smaller change\n  - label: y\n    recommended: true\n    why: It is the smaller change\n---\nWhy it matters."
+  const body = "id: e\nkind: choice\nquestion: Q?\noptions:\n  - label: x\n    recommended: true\n  - label: y\n    recommended: true\n---\nWhy it matters."
   assert.equal(readQuestionFence(body).form, "invalid")
   assert.deepEqual(questionFenceDraft(body), {
     handle: "e", question: "Q?", context: "Why it matters.", kind: "question",
-    options: [{ label: "x", recommended: true, why: "It is the smaller change" }, { label: "y", recommended: true, why: "It is the smaller change" }],
+    options: [{ label: "x", recommended: true }, { label: "y", recommended: true }],
   })
   // The read itself is unchanged by the draft: the server registers from it, and nothing else.
   assert.deepEqual(Object.keys(readQuestionFence(body)).sort(), ["faults", "form", "id"])
@@ -364,8 +326,7 @@ test("the same id under two different parents is a collision, not a restatement"
 // ── A code block inside the fence ──────────────────────────────────────────────────────────────────────
 //
 // The models lane's real replies (fixtures/question-fence): Haiku wrote the outer fence too short in 4 of 6
-// runs, whatever the contract said. Verbatim but for one `why:` line each, added 2026-11-23 when a
-// recommendation without one stopped registering: what they test is the code block, not the reason. So a nested block that opens with an info string is stepped over
+// runs, whatever the contract said. So a nested block that opens with an info string is stepped over
 // (code-fences.ts questionFenceClose), and what cannot be read whole is refused by name.
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/question-fence/${name}.md`, import.meta.url), "utf8")
@@ -539,8 +500,8 @@ test("an option's keys are read as keys wherever they sit — never folded into 
     return r.form === "ask" ? r.spec.options : undefined
   }
   // A bare label, then its keys.
-  assert.deepEqual(optionsOf("  - SQLite\n    description: one store to back up\n    recommended: true\n    why: It is the smaller change\n  - JSON file"), [
-    { label: "SQLite", description: "one store to back up", recommended: true, why: "It is the smaller change" },
+  assert.deepEqual(optionsOf("  - SQLite\n    description: one store to back up\n    recommended: true\n  - JSON file"), [
+    { label: "SQLite", description: "one store to back up", recommended: true },
     { label: "JSON file" },
   ])
   // A wide gap after the dash puts the first key further right than the ones under it.
@@ -626,7 +587,7 @@ test("whatever the fence reads as an ask, the stored schema and the tree validat
         lines.push(`  - label: ${k}${value(400)}`)
         if (rnd() < 0.5) lines.push(`    description: ${value(20000)}`)
         if (rnd() < 0.3) lines.push("    detail: |", `      ${fill(pick([1, 19990, 20000, 20001]))}`)
-        if (rnd() < 0.2 && k === 0) lines.push("    recommended: true", "    why: It is the smaller change")
+        if (rnd() < 0.2 && k === 0) lines.push("    recommended: true")
       }
     }
     if (rnd() < 0.5) lines.push("---", fill(pick([0, 1, 19999, 20000, 20001])))
@@ -835,7 +796,7 @@ test("a bare label that opens on a capitalised word and a colon is refused once,
   }
   // The reported shape. It drew five faults (three kinds), none of which said what to write.
   assert.deepEqual(faultsOf("  - Yes: merge it\n  - No: leave it open"), [
-    'option 1: `- Yes: merge it` reads as a key named `Yes`, and an option\'s keys are `label`, `description`, `recommended`, `why`, `detail` — a label that holds a colon is written `- label: "Yes: merge it"`',
+    'option 1: `- Yes: merge it` reads as a key named `Yes`, and an option\'s keys are `label`, `description`, `recommended`, `detail` — a label that holds a colon is written `- label: "Yes: merge it"`',
     'option 2: `- No: leave it open` reads as a key named `No` too — write `- label: "No: leave it open"`',
   ])
   // THE FIX IS THE LINE: pasted in, each reads as exactly the label the worker wrote — quotes and
@@ -851,8 +812,8 @@ test("a bare label that opens on a capitalised word and a colon is refused once,
   }
   // The option's own keys under such a line are still read, and still faulted for what they are.
   assert.deepEqual(faultsOf("  - A: SQLite\n    description: one store\n    recomended: true\n  - B: JSON file"), [
-    'option 1: `- A: SQLite` reads as a key named `A`, and an option\'s keys are `label`, `description`, `recommended`, `why`, `detail` — a label that holds a colon is written `- label: "A: SQLite"`',
-    "option 1: unknown key `recomended:` — an option's keys are `label`, `description`, `recommended`, `why`, `detail`",
+    'option 1: `- A: SQLite` reads as a key named `A`, and an option\'s keys are `label`, `description`, `recommended`, `detail` — a label that holds a colon is written `- label: "A: SQLite"`',
+    "option 1: unknown key `recomended:` — an option's keys are `label`, `description`, `recommended`, `detail`",
     'option 2: `- B: JSON file` reads as a key named `B` too — write `- label: "B: JSON file"`',
   ])
   // A line too long to quote back is named by its opening, and the fix is described.
@@ -875,7 +836,7 @@ test("a misspelled option key is still a key: refused as unknown, with the label
   // A SINGLE LOWERCASE WORD IS A KEY. Read as a label, `lable: SQLite` would have registered an option
   // called "lable: SQLite" with nothing said; it is refused for the key it misspells.
   assert.deepEqual(faultsOf("  - lable: SQLite\n  - label: JSON file"), [
-    'option 1: unknown key `lable:` — an option\'s keys are `label`, `description`, `recommended`, `why`, `detail`; if `lable: SQLite` is the label itself, write `- label: "lable: SQLite"`',
+    'option 1: unknown key `lable:` — an option\'s keys are `label`, `description`, `recommended`, `detail`; if `lable: SQLite` is the label itself, write `- label: "lable: SQLite"`',
     "option 1: no `label:`",
     "`kind: choice` needs two or more options under `options:`",
   ])
@@ -884,7 +845,7 @@ test("a misspelled option key is still a key: refused as unknown, with the label
   }
   // Under an item's first line the same word is only ever a key: nothing there can be a label.
   assert.deepEqual(faultsOf("  - label: SQLite\n    note: fast\n    Note: fast\n  - JSON file"), [
-    "option 1: unknown key `note:` — an option's keys are `label`, `description`, `recommended`, `why`, `detail`",
-    "option 1: unknown key `Note:` — an option's keys are `label`, `description`, `recommended`, `why`, `detail`",
+    "option 1: unknown key `note:` — an option's keys are `label`, `description`, `recommended`, `detail`",
+    "option 1: unknown key `Note:` — an option's keys are `label`, `description`, `recommended`, `detail`",
   ])
 })

@@ -8,7 +8,6 @@
 //       - label: SQLite
 //         description: Transactional, and one store to back up
 //         recommended: true
-//         why: Every worker writes settings at once, and only SQLite survives a crash mid-write
 //       - label: JSON file
 //     ---
 //     Any markdown the human needs to answer cold: a table, a diff, a callout.
@@ -56,7 +55,7 @@ export type QuestionFenceKind = (typeof QUESTION_FENCE_KINDS)[number]
  *  described as the card's chip, and no surface has ever drawn it — so a worker that writes one is not
  *  faulted for it, and none is told to. */
 export const QUESTION_FENCE_KEYS = ["id", "kind", "question", "options", "danger", "header", "when"] as const
-export const QUESTION_FENCE_OPTION_KEYS = ["label", "description", "recommended", "why", "detail"] as const
+export const QUESTION_FENCE_OPTION_KEYS = ["label", "description", "recommended", "detail"] as const
 
 /** A worker's id: a lowercase slug, unique within its thread for the thread's life. `qst_` is reserved for
  *  the ids `frizzctl ask` minted, so a bare `qst_…` always names one of those. */
@@ -523,29 +522,9 @@ function readFence(body: string, fence: "`" | "~"): { read: QuestionFenceRead; d
     if (text.length > DESCRIPTION_MAX) faults.push(`${where}the description and detail run ${text.length} characters; the limit is ${DESCRIPTION_MAX}`)
     const openInOption = openFenceIn(text)
     if (openInOption) faults.push(openFenceFault(`${where}its detail`, openInOption, fence))
-    // A RECOMMENDATION CARRIES ITS REASON (maintainer 2026-11-23: workers chipped options "Recommended"
-    // and rarely said why — "The model needs to justify its recommendations. It can be succinct."). The
-    // chip says which; `why:` says what decides it over the others, and the card draws it beside the chip.
-    // One line, like `question:`: a justification that needs a table belongs in the context. A `why:` on
-    // an option nobody recommends is refused too, rather than drawn as a reason for nothing. And a reason
-    // written INTO `recommended:` is the likeliest slip, so that refusal says where the reason goes.
     const recommendedValue = o.get("recommended")
-    const whyValue = o.get("why")
-    const why = whyValue ? lineOf(whyValue) : ""
-    let recommended: boolean | undefined
-    if (recommendedValue) {
-      const said = lineOf(recommendedValue)
-      const word = said.toLowerCase()
-      if (word === "true" || word === "yes") recommended = true
-      else if (word === "false" || word === "no" || word === "") recommended = false
-      else faults.push(`${where}\`recommended: ${echoed(said)}\` — write \`recommended: true\`, and the reason on its own line under it as \`why: …\``)
-    }
-    if (recommended && !why) {
-      faults.push(`${where}\`recommended: true\` needs a \`why:\` under it — one line saying why \`${echoed(label)}\` over the other options: the fact that decides it`)
-    } else if (why && !recommended && !(recommendedValue && recommended === undefined)) {
-      faults.push(`${where}\`why:\` gives the reason an option is recommended, and \`${echoed(label)}\` is not — mark it \`recommended: true\`, or put its trade-off in \`description:\``)
-    }
-    options.push({ label, ...(text ? { description: text } : {}), ...(recommended ? { recommended: true } : {}), ...(recommended && why ? { why } : {}) })
+    const recommended = recommendedValue ? booleanOf(recommendedValue, "recommended", faults, where) : undefined
+    options.push({ label, ...(text ? { description: text } : {}), ...(recommended ? { recommended: true } : {}) })
   }
 
   // EXACT, not case-folded: an answer names the label it picked byte for byte, so `JsonValue` and

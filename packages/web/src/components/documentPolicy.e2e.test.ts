@@ -79,7 +79,6 @@ options:
   - label: SQLite
     description: Transactional
     recommended: true
-    why: It is the smaller change
   - label: JSON file
     description: Hand-editable
 \`\`\`

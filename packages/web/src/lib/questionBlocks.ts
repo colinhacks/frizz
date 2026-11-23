@@ -392,13 +392,9 @@ export interface ParsedQuestion {
   // matches an option. Empty → no chip; the free-form `recommendation` line (if any) renders as a
   // muted caption instead.
   recommendedIdxs: number[]
-  // WHY each recommended option is recommended, parallel to `options`, drawn beside that option's chip —
-  // a registered question's `why:` (required on every recommendation a fence makes since 2026-11-23), or a
-  // prose block's inline `(recommended: why)` text, or what follows the option's letter on a legacy
-  // "Recommendation: B — …" line. It was a TOOLTIP on the first chip until then, which nobody hovered
-  // (maintainer: workers rarely explained "why certain things are recommended or not"). Absent when no
-  // recommended option says why.
-  optionWhys?: (string | undefined)[]
+  // The rationale shown on the FIRST recommended chip's tooltip — the inline marker's
+  // `(recommended: why)` text, or the legacy "Recommendation: …" line when we fell back to letter-matching.
+  recommendedNote?: string
   // A legacy "Recommendation: …" line, kept ONLY to drive the muted-caption fallback when it names no
   // matching option. New-style questions mark the option inline and carry no such line.
   recommendation?: string
@@ -567,14 +563,14 @@ export function parseQuestionBlock(body: string, kind: QuestionKind, danger = fa
   // a `multi`, every flagged option, since several can be ticked.
   const options: string[] = []
   let recommendedIdxs: number[] = []
-  const optionWhys: (string | undefined)[] = []
+  let recommendedNote: string | undefined
   // Prose the run absorbed (a group heading) belongs to the option it introduces, so the chips can carry
   // it as a caption instead of it vanishing between them.
   const optionHeadings: (string | undefined)[] = []
   for (const [k, i] of optLines.entries()) {
     const { label, recommended, note } = stripRecommendedMarker(optionText(lines[i]))
     if (recommended && (kind === "multi" || recommendedIdxs.length === 0)) {
-      optionWhys[options.length] = note
+      if (recommendedIdxs.length === 0) recommendedNote = note
       recommendedIdxs.push(options.length)
     }
     options.push(label)
@@ -607,26 +603,14 @@ export function parseQuestionBlock(body: string, kind: QuestionKind, danger = fa
     const named = recommendedIndex(recommendation, options)
     if (named !== null) {
       recommendedIdxs = [named]
-      optionWhys[named] = recommendationReason(recommendation)
+      recommendedNote = recommendation
     }
   }
 
   return {
-    kind, danger, contextMd, options, recommendedIdxs, recommendation, trailingMd,
-    ...(optionWhys.some(Boolean) ? { optionWhys: options.map((_, i) => optionWhys[i]) } : {}),
+    kind, danger, contextMd, options, recommendedIdxs, recommendedNote, recommendation, trailingMd,
     ...(optionHeadings.some(Boolean) ? { optionHeadings } : {}),
   }
-}
-
-// The reason a legacy "Recommendation: B — cheaper" line gives, without the label and the letter the
-// chip already shows: "cheaper". Undefined when the line names the option and says nothing more.
-function recommendationReason(line: string): string | undefined {
-  const reason = line
-    .replace(/^\s*recommendation\s*:?\s*/i, "")
-    .replace(EMPHASIS_PREFIX, "")
-    .replace(/^([A-Za-z]|\d+)(?![A-Za-z0-9])[*_`~]*[.)]?\s*[—–:,;-]?\s*/, "")
-    .trim()
-  return reason || undefined
 }
 
 // Leading markdown emphasis/backticks a worker may wrap an identifier in (`**B**`, `_B_`, `` `B` ``).

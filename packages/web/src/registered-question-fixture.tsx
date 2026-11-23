@@ -68,7 +68,6 @@ const SETTINGS: RegisteredQuestionView = {
         label: "SQLite",
         // The NEW shape: a multi-line description IS the option's body — full markdown, inside the
         // chip, visible before anything is picked.
-        why: "Sessions already live in `ui.db`, so it stays one store to back up and migrate",
         description: "Transactional, and it is where sessions already live.\n\n```sql\nCREATE TABLE setting (\n  key   TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n);\n```\n\nMigrates with the rest of the schema; one more table in `ui.db`.",
         recommended: true,
       },
@@ -94,7 +93,6 @@ const TREE: RegisteredQuestionView = {
         label: "Land it",
         description: "the three CI legs are green and the diff is reviewed",
         recommended: true,
-        why: "Every gate is green, and nothing else is queued on `main`",
         followUps: [
           { question: "Tag a release at the same time?", kind: "question", options: [{ label: "Tag 0.9.0" }, { label: "Leave it unreleased" }] },
           { question: "Anything the release notes must say?", kind: "question" },
@@ -114,7 +112,6 @@ const GATE: RegisteredQuestionView = {
     danger: true,
     options: [
       { label: "Force-push", description: "the three commits are the rebase of the same work — they are not lost" },
-      // No `why`: a row stored before a recommendation had to say why keeps its badge at the label's end.
       { label: "Stop and leave the remote alone", recommended: true, description: "somebody else may have pulled them" },
     ],
   },
@@ -127,11 +124,7 @@ const GATES: RegisteredQuestionView = {
     question: "Which gates should run before every commit?",
     kind: "multi",
     // TWO recommended on a `multi`: the recommendation there is the set worth ticking, so each wears the badge.
-    options: [
-      { label: "Typecheck", recommended: true, why: "Thirty seconds, and it catches most breaks" },
-      { label: "Unit tests", recommended: true, why: "Two minutes, and the suite is green today" },
-      { label: "The browser e2e pass", description: "slow — about 90s" },
-    ],
+    options: [{ label: "Typecheck", recommended: true }, { label: "Unit tests", recommended: true }, { label: "The browser e2e pass", description: "slow — about 90s" }],
   },
 }
 
@@ -168,7 +161,6 @@ const TABLE: RegisteredQuestionView = {
       {
         label: "Fix it — judge the wait per package",
         recommended: true,
-        why: "The warning fires on every add, and the gate's own criteria stay the same",
         description: [
           "Kills the false warning, but a curated package would start building in a case where it is currently skipped — a real loosening of the supply-chain gate.",
           "",
@@ -207,7 +199,6 @@ const FENCED: RegisteredQuestionView = {
         label: "SQLite",
         description: "transactional, and one store to back up",
         recommended: true,
-        why: "Every worker writes settings at once, and only SQLite survives a crash mid-write",
         followUps: [{ handle: "sqlite-path", question: "Where should the database file live?", kind: "question", options: [{ label: "Beside the sessions database" }, { label: "In the project's `.frizz/`" }] }],
       },
       { label: "JSON file", description: "no dependency, hand-editable" },
@@ -227,7 +218,7 @@ const FENCED: RegisteredQuestionView = {
 }
 // ?fence=settled's second card: a `multi`, asked by fence in the same handoff and answered.
 const FENCED_GATES: RegisteredQuestionView = { ...GATES, id: "qst_f3nc3d0002", askedAt: ago(1), spec: { ...GATES.spec, handle: "commit-gates" } }
-const GATES_ASK = ["```question", "id: commit-gates", "kind: multi", `question: ${GATES.spec.question}`, "options:", "  - label: Typecheck", "    recommended: true", "    why: Thirty seconds, and it catches most breaks", "  - label: Unit tests", "    recommended: true", "    why: Two minutes, and the suite is green today", "  - label: The browser e2e pass", "    description: slow — about 90s", "```"].join("\n")
+const GATES_ASK = ["```question", "id: commit-gates", "kind: multi", `question: ${GATES.spec.question}`, "options:", "  - label: Typecheck", "    recommended: true", "  - label: Unit tests", "    recommended: true", "  - label: The browser e2e pass", "    description: slow — about 90s", "```"].join("\n")
 const SETTLED_GATES = { ...FENCED_GATES, settledAt: ago(0.5), answer: { questionId: FENCED_GATES.id, question: GATES.spec.question, chosen: ["Typecheck", "Unit tests"] } }
 const FENCE_ASK = [
   "```question",
@@ -237,7 +228,7 @@ const FENCE_ASK = [
   "options:",
   "  - label: SQLite",
   "    description: transactional, and one store to back up",
-  "    recommended: true", "    why: Every worker writes settings at once, and only SQLite survives a crash mid-write",
+  "    recommended: true",
   "  - label: JSON file",
   "    description: no dependency, hand-editable",
   "---",

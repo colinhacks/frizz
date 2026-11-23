@@ -234,24 +234,6 @@ test("a multi carries EVERY recommended option, and its settled card keeps the o
   assert.deepEqual(node.question.recommendedIdxs, [1])
 })
 
-test("each recommended option's reason rides beside its chip, and a reason on an option nobody recommends is not drawn", () => {
-  const gates: AskedQuestion = {
-    question: "Which gates?",
-    kind: "multi",
-    options: [
-      { label: "Typecheck", recommended: true, why: "Thirty seconds, and it catches most breaks" },
-      { label: "Lint", why: "stray" },
-      { label: "Unit tests", recommended: true, why: " Green today " },
-    ],
-  }
-  assert.deepEqual(toParsedQuestion(gates).question.optionWhys, ["Thirty seconds, and it catches most breaks", undefined, "Green today"])
-  // The settled card keeps the reasons of the options that were picked, re-indexed with them.
-  const answer = registeredAnswer({ id: "qst_a", spec: gates }, new Map([[ROOT_PATH, { chosen: null, chosenSet: [1, 2], text: "" }]]))!
-  assert.deepEqual(settledQuestionNodes(gates, answer)[0].question.optionWhys, [undefined, "Green today"])
-  // A row stored before reasons were required draws its chip as it always did, with no reason line.
-  assert.equal(toParsedQuestion({ question: "Q?", kind: "question", options: [{ label: "A", recommended: true }, { label: "B" }] }).question.optionWhys, undefined)
-})
-
 test("free text settles as text with no option chips, and a multi keeps every toggle plus its note", () => {
   const free = settledQuestionNodes(STORE, registeredAnswer({ id: "qst_a", spec: STORE }, new Map([[ROOT_PATH, typed("Postgres")]]))!)
   assert.deepEqual([free[0].question.options, free[0].settled], [[], { chosenIdxs: [], text: "Postgres" }])
