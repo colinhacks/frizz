@@ -213,7 +213,7 @@ import { monitorEndedLabel, monitorOutputPath, monitorStatusOf } from "./command
 import { listAcpAgents, resolveAcpAgent } from "./backend/acp-agents.ts"
 import { hasLaunchPrefix } from "./backend/launch-prefix.ts"
 import { withDefaultAgentProfile } from "./dispatch-preferences.ts"
-import { runtimeDownloads, runtimeDownloadStates } from "./runtime-deferral.ts"
+import { isRuntimeDeferred, runtimeDownloads, runtimeDownloadStates } from "./runtime-deferral.ts"
 import { runtimeDownloadChips } from "./boot-view.ts"
 import { sessionTitleLocked } from "./storage.ts"
 import { mayHaveLiveBackgroundWork, needsFreshProcessForLimit } from "./backend/usage-limit.ts"
@@ -3724,10 +3724,29 @@ export function createRouter(ctx: AppContext) {
     // and enable state, and a frizz-side scan could only drift from what the session actually loaded.
     // Unavailability (no live daemon, a legacy row, an old broker) THROWS with a reason; the web treats
     // any failure as "no suggestions" rather than surfacing an error.
+    //
+    // The new-thread box names a BACKEND instead (colinhacks/frizz#79): there is no thread to ask, so it
+    // asks what a new thread of that agent in this project would get. Claude's skills probe is a session
+    // started the way a worker is, Codex's `skills/list` takes the project's directory. The other agents
+    // list commands only for a live session, so the box gets nothing rather than another thread's list,
+    // which could name what this agent does not have.
     threadSkills: query({
       input: ThreadSkillsInput,
       output: ThreadSkillsResult,
       handler: async ({ input }) => {
+        if ("backend" in input) {
+          let skills: ThreadSkill[] = []
+          if (input.backend === "claude") {
+            // Nor is it a reason to fetch a runtime still waiting for its first thread (as Codex's).
+            if (isRuntimeDeferred("claude")) return { skills: [] }
+            if (!ctx.claudeSkillsProbe) throw new Error("This server has no Claude skills probe")
+            skills = await ctx.claudeSkillsProbe().skills()
+          } else if (input.backend === "codex") {
+            if (!ctx.codexAppServer) throw new Error("This server has no Codex app-server to ask for skills")
+            skills = await ctx.codexAppServer.listSkillsForCwd(ctx.project.dir)
+          }
+          return { skills: skills.sort((a, b) => a.name.localeCompare(b.name)) }
+        }
         const row = ctx.storage.getSession(input.slug)
         if (!row) throw new Error(`thread ${input.slug} has no session to ask for skills`)
         let skills: ThreadSkill[]

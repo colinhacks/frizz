@@ -6407,7 +6407,13 @@ export const ThreadSkill = z.object({
 }).strict()
 export type ThreadSkill = z.infer<typeof ThreadSkill>
 
-export const ThreadSkillsInput = z.object({ slug: ThreadSlug }).strict()
+// A TARGET, like the MCP menu's below: a thread (`slug`), or for the new-thread box, which has no thread
+// yet, the agent its model chip picks (`backend`). The second is answered by what a new thread of that
+// agent in this project would get, and by nothing where that cannot be known without a session.
+export const ThreadSkillsInput = z.union([
+  z.object({ slug: ThreadSlug }).strict(),
+  z.object({ backend: Backend }).strict(),
+])
 export type ThreadSkillsInput = z.infer<typeof ThreadSkillsInput>
 export const ThreadSkillsResult = z.object({ skills: z.array(ThreadSkill).max(1024) }).strict()
 export type ThreadSkillsResult = z.infer<typeof ThreadSkillsResult>

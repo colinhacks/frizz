@@ -1856,6 +1856,29 @@ function codexSkillSource(scope: string | undefined): ThreadSkillSource | undefi
   if (scope === "system") return "builtin"
   return undefined
 }
+
+type CodexSkillListing = Array<{ name: string; description: string; source: ThreadSkillSource | undefined }>
+
+async function requestSkills(connection: JsonlRpcConnection, cwd: string): Promise<CodexSkillListing> {
+  const response = SkillsListResponse.parse(await connection.request("skills/list", { cwds: [cwd] }))
+  const skills: CodexSkillListing = []
+  const seen = new Set<string>()
+  for (const entry of response.data ?? []) {
+    for (const skill of entry.skills ?? []) {
+      // `enabled: false` is the server saying the skill exists but is switched off — not invocable.
+      if (skill.enabled === false) continue
+      if (skills.length >= 1024) return skills
+      if (seen.has(skill.name)) continue
+      seen.add(skill.name)
+      skills.push({
+        name: skill.name.slice(0, 512),
+        description: (skill.description ?? "").slice(0, 1024),
+        source: codexSkillSource(skill.scope),
+      })
+    }
+  }
+  return skills
+}
 // `thread/resume` reports the thread's EFFECTIVE sandbox back as a tagged SandboxPolicy — the one
 // authoritative read of live server state frizz gets, and what keeps the binding's sandbox cache honest
 // whether the resume was cold (our override applied) or a live rejoin (our override was ignored).
@@ -2613,7 +2636,7 @@ export class CodexAppServerBridge {
   async listSkills(
     threadSlug: string,
     sessionId: string,
-  ): Promise<Array<{ name: string; description: string; source: ThreadSkillSource | undefined }>> {
+  ): Promise<CodexSkillListing> {
     // A typeahead is no reason to fetch a runtime still waiting for its first thread.
     if (isRuntimeDeferred("codex")) return []
     const releaseOperation = this.beginOperation()
@@ -2621,24 +2644,20 @@ export class CodexAppServerBridge {
       const connection = await this.ensureConnected()
       const binding = this.bindingForScope(threadSlug, sessionId)
       if (!binding) throw new Error("Codex app-server skill listing requires a bridge-owned session")
-      const response = SkillsListResponse.parse(await connection.request("skills/list", { cwds: [binding.cwd] }))
-      const skills: Array<{ name: string; description: string; source: ThreadSkillSource | undefined }> = []
-      const seen = new Set<string>()
-      for (const entry of response.data ?? []) {
-        for (const skill of entry.skills ?? []) {
-          // `enabled: false` is the server saying the skill exists but is switched off — not invocable.
-          if (skill.enabled === false) continue
-          if (skills.length >= 1024) return skills
-          if (seen.has(skill.name)) continue
-          seen.add(skill.name)
-          skills.push({
-            name: skill.name.slice(0, 512),
-            description: (skill.description ?? "").slice(0, 1024),
-            source: codexSkillSource(skill.scope),
-          })
-        }
-      }
-      return skills
+      return await requestSkills(connection, binding.cwd)
+    } finally {
+      releaseOperation()
+    }
+  }
+
+  // The skills a thread started in `cwd` would have: the new-thread box's `/` menu, before there is a
+  // thread to ask. `skills/list` takes a directory and no thread, so this is the answer listSkills gives
+  // a running thread in that directory.
+  async listSkillsForCwd(cwd: string): Promise<CodexSkillListing> {
+    if (isRuntimeDeferred("codex")) return []
+    const releaseOperation = this.beginOperation()
+    try {
+      return await requestSkills(await this.ensureConnected(), cwd)
     } finally {
       releaseOperation()
     }

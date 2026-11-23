@@ -1487,6 +1487,17 @@ test("listSkills asks the app-server for the session cwd's skills and drops disa
   await h.close()
 })
 
+test("listSkillsForCwd answers for a directory with no thread, as the new-thread box asks", async () => {
+  const h = harness()
+  const skills = await h.bridge.listSkillsForCwd(h.dir)
+  assert.deepEqual(skills.map((skill) => skill.name), ["frizz-stack", "agent-browser", "imagegen", "from-the-future"])
+  const request = h.processes[0]!.clientRequests.find((message) => message.method === "skills/list")!
+  assert.deepEqual(request.params, { cwds: [h.dir] })
+  // No session was started to ask it.
+  assert.equal(h.processes[0]!.clientRequests.some((message) => message.method === "thread/start"), false)
+  await h.close()
+})
+
 test("steerTurn injects into the active turn; interruptTurn cancels it and is a no-op when idle", async () => {
   const h = harness()
   const binding = await h.bridge.startDisposableSession({ threadSlug: "steer-thread", sessionId: "steer-session", cwd: h.dir })

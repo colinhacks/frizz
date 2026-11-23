@@ -260,6 +260,25 @@ function handleHostControl(message) {
     respond(message.request_id, { authUrl: "https://mcp.notion.com/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A61234%2Fcallback", requiresUserAction: true, callbackPort: 61234 })
     return
   }
+  // A skill re-read, the way real claude 2.1.328 answered a session that had never run a turn: the
+  // refreshed command list pushed as `commands_changed` (what the SDK's `supportedCommands()` then
+  // returns), and the skills themselves. "fresh" stands in for a skill written after the session started;
+  // "keys-help" for a model-only skill, which is not a slash command; "compact" is a command and no skill.
+  if (request.subtype === "reload_skills") {
+    record({ kind: "reload-skills" })
+    if (scenario === "reload-skills-failure") return respondError(message.request_id, "skills could not be reloaded")
+    const commands = [...initializationPayload().commands, { name: "fresh", description: "Added later", argumentHint: "", aliases: [] }]
+    send({ type: "system", subtype: "commands_changed", commands, uuid: "40000000-0000-4000-8000-00000000000b", session_id: sessionId })
+    respond(message.request_id, {
+      skills: [
+        { name: "review", description: "Review changes (project)", argumentHint: "<path>" },
+        { name: "explore", description: "Explore the repository (dynamic workflow)", argumentHint: "" },
+        { name: "fresh", description: "Added later", argumentHint: "" },
+        { name: "keys-help", description: "Help with key bindings", argumentHint: "" },
+      ],
+    })
+    return
+  }
   // An MCP reload's set, answered the way real claude 2.1.323 answered the live probe: every name it
   // adopted or connected in `added`, a server that would not connect named in `errors`.
   if (request.subtype === "mcp_set_servers") {

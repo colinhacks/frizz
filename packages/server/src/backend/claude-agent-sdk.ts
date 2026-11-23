@@ -209,6 +209,13 @@ export interface ClaudeQueryHandle extends AsyncIterable<ClaudeQueryEvent> {
    * a frizz-side re-implementation could only ever drift from it.
    */
   listSkills(): Promise<ClaudeSkillInfo[]>
+  /**
+   * The same listing for a session that has NOT run a turn, re-read from disk on every call — what the
+   * new-thread box's skills probe asks (claude-skills-probe.ts). listSkills needs the init frame, which
+   * real claude emits only once a turn starts; this asks `reload_skills` instead, which answers on the
+   * control channel alone.
+   */
+  reloadSkills(): Promise<ClaudeSkillInfo[]>
   setPermissionMode(mode: ClaudePermissionMode): Promise<void>
   // Ask the provider to name the session from `description` and PERSIST the name as the `ai-title`
   // record frizz's tailer reads. See CLAUDE_TITLE_NEEDS_EXPLICIT_REQUEST below for why the broker has
@@ -649,6 +656,46 @@ class RealClaudeQueryHandle implements ClaudeQueryHandle {
   private skillSources(): Promise<Map<string, ThreadSkillSource>> {
     this.skillSourcesPromise ??= this.fetchSkillSources().catch(() => new Map<string, ThreadSkillSource>())
     return this.skillSourcesPromise
+  }
+
+  // A session that never runs a turn has no init frame, so the init `skills` array listSkills leans on
+  // never arrives. `reload_skills` is the harness's own skill list without one: it re-reads the skill
+  // roots from disk and answers with every skill command, descriptions included. Measured against claude
+  // 2.1.328 on 2026-11-22, in a session that never ran a turn:
+  //  - it answered in ~240ms, ~500ms after the CLI started;
+  //  - a skill written to disk after the session started was in the next answer, a deleted one gone;
+  //  - its names were exactly `getContextUsage().skills.skillFrontmatter`'s, plus one entry that is not
+  //    a slash command (`keybindings-help`, model-only). Intersecting with the command list drops it,
+  //    since this list is for what `/name` invokes. `supportedCommands()` is the SDK's latest
+  //    `commands_changed` push, which the CLI sends with the reload, so a new skill is in both.
+  // It is not the init frame's list: it also names built-in prompt commands (`init`,
+  // `security-review`) and claude.ai-synced skills by their bare names, and leaves out the CLI's bundled
+  // skills (`verify`, `debug`). Each of those is still invocable by the name shown.
+  async reloadSkills(): Promise<ClaudeSkillInfo[]> {
+    this.assertOpen()
+    const reloaded = await this.awaitOpenControl(this.sdkQuery.reloadSkills())
+    const [commands, sources] = await Promise.all([
+      this.awaitOpenControl(this.sdkQuery.supportedCommands()),
+      // Not memoized, unlike listSkills': the probe session lives for many listings and a skill added
+      // between them needs its label too.
+      this.fetchSkillSources().catch(() => new Map<string, ThreadSkillSource>()),
+    ])
+    const commandNames = new Set(boundedArray(commands, "supportedCommands", 1024).map((entry) => {
+      const command = entry && typeof entry === "object" ? entry as { name?: unknown } : {}
+      return typeof command.name === "string" ? command.name : ""
+    }))
+    const skills: ClaudeSkillInfo[] = []
+    for (const [index, entry] of boundedArray(reloaded?.skills, "reloadSkills.skills", 1024).entries()) {
+      try {
+        const row = objectValue(entry, `reloadSkills.skills[${index}]`)
+        const name = safeText(row.name, `reloadSkills.skills[${index}].name`, 512)
+        if (!name || !commandNames.has(name)) continue
+        const source = sources.get(name)
+        const description = safeText(row.description ?? "", `reloadSkills.skills[${index}].description`, 4 * 1024)
+        skills.push({ name, description: withoutRedundantSource(description, source).slice(0, 1024), source })
+      } catch { continue }
+    }
+    return skills
   }
 
   private async fetchSkillSources(): Promise<Map<string, ThreadSkillSource>> {

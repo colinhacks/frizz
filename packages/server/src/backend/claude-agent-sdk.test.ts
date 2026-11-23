@@ -275,6 +275,48 @@ test("listSkills still answers when the harness cannot report where its skills c
   }
 })
 
+test("reloadSkills lists a session's slash-invocable skills without a turn, and re-reads them every time", { timeout: 10_000 }, async () => {
+  const harness = startHarness("basic")
+  try {
+    // No ready(): the new-thread box's probe session never runs a turn, so this must not wait on one.
+    const skills = await withTimeout(harness.handle.reloadSkills(), "skill reload")
+    assert.deepEqual(skills, [
+      { name: "review", description: "Review changes", source: "project" },
+      { name: "explore", description: "Explore the repository (dynamic workflow)", source: undefined },
+      // Not in the initialize command list: it is a slash command only through the reload's push.
+      { name: "fresh", description: "Added later", source: undefined },
+      // "keys-help" is a skill the reload names but no slash command, so `/keys-help` would invoke nothing.
+    ])
+    // Unlike listSkills, nothing is memoized: a probe session answers many listings, and each one is
+    // asked of the disk and labelled afresh.
+    await withTimeout(harness.handle.reloadSkills(), "second skill reload")
+    const rows = readCapture(harness.capturePath)
+    assert.equal(rows.filter((row) => row.kind === "reload-skills").length, 2)
+    assert.equal(rows.filter((row) => row.kind === "context-usage").length, 2)
+  } finally {
+    await harness.close()
+  }
+})
+
+test("reloadSkills fails when the harness cannot reload, and keeps the listing when only the labels fail", { timeout: 10_000 }, async () => {
+  const failing = startHarness("reload-skills-failure")
+  try {
+    await assert.rejects(withTimeout(failing.handle.reloadSkills(), "skill reload"), /could not be reloaded/)
+  } finally {
+    await failing.close()
+  }
+  const unlabelled = startHarness("context-usage-failure")
+  try {
+    assert.deepEqual((await withTimeout(unlabelled.handle.reloadSkills(), "skill reload")).map((skill) => [skill.name, skill.source]), [
+      ["review", undefined],
+      ["explore", undefined],
+      ["fresh", undefined],
+    ])
+  } finally {
+    await unlabelled.close()
+  }
+})
+
 test("stopTask reaches the provider control channel with the exact runtime task id", { timeout: 10_000 }, async () => {
   const harness = startHarness("basic")
   try {

@@ -85,6 +85,7 @@ import { startRelocationSweeper } from "./project-relocation.ts"
 import { liveBrokerRecords, resolveClaudeExecutableAbsolute } from "./backend/claude-broker-host.ts"
 import { liveAcpDaemonRecord, liveAcpDaemonSessionIds } from "./backend/acp-host.ts"
 import { createClaudeMcpProbe, type ClaudeMcpProbe } from "./backend/claude-mcp-probe.ts"
+import { createClaudeSkillsProbe, type ClaudeSkillsProbe } from "./backend/claude-skills-probe.ts"
 import { inheritWorkerEnvironment } from "./backend/worker-env.ts"
 import { acpAgentSpecs } from "./backend/acp-agents.ts"
 import { createMcpService, type McpService } from "./mcp-status.ts"
@@ -202,6 +203,9 @@ export interface AppContext {
   /** The prompt box's MCP menu: readings and sign-ins (mcp-status.ts). Optional so a hand-built test
    *  context need not carry one. */
   mcp?: McpService
+  /** The new-thread box's `/` menu for a Claude thread that does not exist yet (claude-skills-probe.ts),
+   *  made on first use. Optional so a hand-built test context need not carry one. */
+  claudeSkillsProbe?: () => ClaudeSkillsProbe
   board: BoardManager
   tailer: Tailer
   /** What each thread's latest question-fence sync refused — written by every sync (the registrar, the
@@ -1065,6 +1069,22 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     acpAgentLabel: (id) => acpAgentSpecs(getSettings(storage, home).acpAgents).find((agent) => agent.id === id)?.label,
   })
   contextUnsubscribers.push(() => { void mcp.close(); void claudeMcpProbe?.close() })
+
+  // The new-thread box's `/` menu (router `threadSkills` with a backend). A real Claude Code process too,
+  // started the way this project's workers are, so made on the first `/` and closed with the project.
+  let claudeSkillsProbeInstance: ClaudeSkillsProbe | undefined
+  const claudeSkillsProbe = (): ClaudeSkillsProbe => claudeSkillsProbeInstance ??= createClaudeSkillsProbe({
+    projectDir: project.dir,
+    executablePath: resolveClaudeExecutableAbsolute(opts.claudeBin ?? "claude"),
+    env: inheritWorkerEnvironment(projectScopedEnvironment(process.env, {
+      projectId: project.id,
+      projectDir: project.dir,
+      stateDir: project.stateDir,
+      ...(project.identityScope ? { identityScope: project.identityScope } : {}),
+    })),
+    pluginDir: workerPluginDir(),
+  })
+  contextUnsubscribers.push(() => { void claudeSkillsProbeInstance?.close() })
   if (claudeBroker) {
     contextUnsubscribers.push(storage.subscribeSessionLifecycle((event) => {
       claudeBroker.releaseSession(
@@ -1448,6 +1468,7 @@ function createContextUnchecked(opts: ContextOptions, resources: PartialContextR
     antigravityBridge,
     claudeBroker,
     mcp,
+    claudeSkillsProbe,
     board,
     tailer,
     questionFaults,
