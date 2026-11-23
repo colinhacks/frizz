@@ -612,7 +612,7 @@ export function StartingRow({ entry, leading }: { entry: PendingDispatchEntry; l
           <span className="flex min-w-0 items-baseline gap-3">
             <span className="min-w-0 flex-1 break-words text-[13px] leading-[19px] text-provisional">
               <TitleWithTrailers title={SPINNING_UP_TITLE}>
-                <ProviderMark backend={entry.backend} model={entry.model} className="ml-1" />
+                <ProviderMark backend={entry.backend} model={entry.model} className="ml-1 sidebar-provider-mark" />
               </TitleWithTrailers>
             </span>
           </span>
@@ -942,7 +942,7 @@ export const ThreadRow = memo(function ThreadRow({
           <span className="flex min-w-0 items-baseline gap-3">
             <span className={`min-w-0 flex-1 break-words text-[13px] leading-[19px] ${dimLabel ? "text-provisional" : dim ? "text-fg/75" : "text-fg/90"}`}>
               <TitleWithTrailers title={title}>
-                {!legacy && <ProviderMark backend={t.backend} model={t.model} className="ml-1" />}
+                {!legacy && <ProviderMark backend={t.backend} model={t.model} className="ml-1 sidebar-provider-mark" />}
                 {/* MEASURED 2026-08-19, the first time this tag ever rendered (it was written for a
                     foreign row and no foreign row reached the rail until the External band). Readings
                     on the real rail at dsf 4, `scripts/ink-gaps.mjs` + the visual-review cap-band probe:

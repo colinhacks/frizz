@@ -1,14 +1,41 @@
 import { createRoot } from "react-dom/client"
-import { ProviderMark } from "./components/ProviderMark.tsx"
+import type { ThreadView } from "@frizz/shared"
+import { ThreadRow } from "./components/Sidebar.tsx"
+import { TooltipProvider } from "./components/Tooltip.tsx"
 import "./styles.css"
 
 function SidebarTitle({ backend, model, children }: { backend: "claude" | "codex" | "acp"; model?: string; children: string }) {
-  return (
-    <div className="break-words text-[13px] leading-[19px] text-fg/90">
-      {children}
-      <ProviderMark backend={backend} model={model} className="ml-1" />
-    </div>
-  )
+  const thread: ThreadView = {
+    id: model ?? backend,
+    kind: "session",
+    title: children,
+    titleLocked: true,
+    backend,
+    model,
+    runtime: "turn-idle",
+    status: "active",
+    statusText: "Active",
+    mechanism: null,
+    humanBlocked: false,
+    needsYou: false,
+    ready: false,
+    dependsOn: [],
+    externalDeps: [],
+    agents: [],
+    errors: [],
+    warnings: [],
+    unread: false,
+    archived: false,
+    hasPlan: false,
+    pendingQuestion: false,
+    foreign: false,
+    state: "open",
+    subAgents: [],
+    bgShells: [],
+    watches: [],
+    questions: [],
+  }
+  return <ThreadRow t={thread} />
 }
 
 function Fixture() {
@@ -40,4 +67,4 @@ function Fixture() {
   )
 }
 
-createRoot(document.getElementById("root")!).render(<Fixture />)
+createRoot(document.getElementById("root")!).render(<TooltipProvider><Fixture /></TooltipProvider>)
