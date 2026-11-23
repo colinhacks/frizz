@@ -75,6 +75,12 @@ relay      ◀── reads the config ──────────
 
 The route is gated by the owner token, as `/_frizz/control/launch` is. A server that predates it gets today's menu, frozen and never edited again, the same fallback launch routing uses. The shell keeps the relay transport (`relay-connection.ts`, `relay-agent.ts`), the public listener and its session check, and applying a config to the running board.
 
+Those stay because a phone away from the machine has to reach a broken server through them. A full-control session can restart or update a wedged board from the supervisor's page ([`restart-supervisor.ts`](../packages/server/src/restart-supervisor.ts)). The launcher rolls back a crashing update while that phone stays connected. With the relay in the server, a broken server would cut off the only way back in.
+
+Setup can move because nothing it does matters while the server is down. It runs at launch, on a keypress, or once a day to renew the name. The relay reconnects with the name and key already on disk. Signing devices out goes through the supervisor's own sessions route, which `frizz --sign-out` already uses.
+
+One property changes. Today only the R menu and the saved setup can change what a relayed session may do (`setRelayAccess`), and no route reaches it. After the move, the owner-token route can change it too. That route is loopback-only, like `/_frizz/control/launch`.
+
 ## Not doing
 
 - **Running the whole launcher from the server package.** §9 of [`server-side-launch-routing.md`](server-side-launch-routing.md) still holds. A fix like 0.13.15's sign-in bypass would then wait for each user's Update click.
