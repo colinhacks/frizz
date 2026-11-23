@@ -1000,7 +1000,7 @@ export const ThreadRow = memo(function ThreadRow({
               12px is a gutter, and it costs the title 4px it does not miss. */}
           <span className="flex min-w-0 items-baseline gap-3">
             <span className={`min-w-0 flex-1 break-words text-[13px] leading-[19px] ${dimLabel ? "text-provisional" : dim ? "text-fg/75" : "text-fg/90"}`}>
-              {editing ? <RowTitleEditor rename={rename} trailers={<ProviderMark backend={t.backend} model={t.model} className="ml-1" />} /> : (
+              {editing ? <RowTitleEditor rename={rename} trailers={<ProviderMark backend={t.backend} model={t.model} className="ml-1 sidebar-provider-mark" />} /> : (
               <TitleWithTrailers title={title}>
                 {!legacy && <ProviderMark backend={t.backend} model={t.model} className="ml-1 sidebar-provider-mark" />}
                 {/* MEASURED 2026-08-19, the first time this tag ever rendered (it was written for a
