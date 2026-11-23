@@ -41,6 +41,16 @@ export function createRemoteMenu(options: RemoteMenuOptions): Pane {
     return controller;
   };
   const current = () => options.remote()?.current() ?? null;
+  // One change at a time. The menu's busy screen used to make that so, but a menu that loses the server
+  // mid-change can now be closed and R pressed again while the change still runs, and two applies at
+  // once would leave two transports up and the saved setup disagreeing with the served one.
+  let changing: Promise<unknown> = Promise.resolve();
+  const oneAtATime = <T>(change: () => T | Promise<T>): Promise<T> => {
+    const next = changing.then(change);
+    changing = next.catch(() => {});
+    return next;
+  };
+  const apply = (next: CloudConfig | null, applyOptions?: { justClaimed?: boolean }) => oneAtATime(() => remote().apply(next, applyOptions));
   return createRemoteSetupClient({
     port,
     token: options.token,
@@ -48,8 +58,8 @@ export function createRemoteMenu(options: RemoteMenuOptions): Pane {
     acts: {
       current,
       devices: () => supervisor.signedInDeviceList(),
-      apply: (next, applyOptions) => remote().apply(next, applyOptions),
-      setRelayAccess: (access) => remote().setRelayAccess(access),
+      apply,
+      setRelayAccess: (access) => oneAtATime(() => remote().setRelayAccess(access)),
       issueLink: () => supervisor.issueAccessLink(),
       signOut: (id) => supervisor.signOutDevice(id),
       signOutAll: () => supervisor.signOutAllDevices(),
@@ -60,7 +70,7 @@ export function createRemoteMenu(options: RemoteMenuOptions): Pane {
       createRemotePane({
         port,
         current,
-        apply: (next, applyOptions) => remote().apply(next, applyOptions),
+        apply,
         setRelayAccess: (access) => remote().setRelayAccess(access),
         claim: (name, progress) =>
           establishCloudConfig(name, port, undefined, undefined, frizzGithubSignIn(), {

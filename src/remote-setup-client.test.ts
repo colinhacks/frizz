@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { createRemoteSetupRoute } from "../packages/server/src/remote-setup/route.ts";
 import type { CloudConfig } from "./cloud.ts";
@@ -10,6 +13,13 @@ import { createRemoteSetupClient, type RemoteSetupClientOptions } from "./remote
 // draw the menu, where R opens the shell's own.
 
 delete process.env.FRIZZ_CUSTOM_NAMES;
+for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) delete process.env[name];
+
+/** The routes here claim nothing, but read the state root's fresh claims on every serve: a home of their own. */
+const home = mkdtempSync(join(tmpdir(), "frizz-remote-setup-client-"));
+test.after(() => rmSync(home, { recursive: true, force: true }));
+const realRoute = (waitMs?: number) =>
+  createRemoteSetupRoute({ probes: { cloudflared: async () => ({ version: null }), tailscale: async () => ({ installed: false, dnsName: null }) }, githubLogin: () => null, home, ...(waitMs ? { waitMs } : {}) });
 
 const ALT_ON = "\x1b[?1049h";
 const ALT_OFF = "\x1b[?1049l";
@@ -53,17 +63,14 @@ function shellMenu() {
   return { pane, keys, opened: () => opened, closed: () => closed };
 }
 
-function build(overrides: Partial<RemoteSetupClientOptions> = {}) {
+function build(overrides: Partial<RemoteSetupClientOptions> & { applyWaits?: (config: CloudConfig | null) => Promise<void> } = {}) {
   const out = terminal();
   let current: CloudConfig | null = null;
   const applied: Array<{ config: CloudConfig | null; justClaimed: boolean }> = [];
   const changed: Array<CloudConfig | null> = [];
   const told: Array<CloudConfig | null> = [];
   const opened: string[] = [];
-  const route = createRemoteSetupRoute({
-    probes: { cloudflared: async () => ({ version: null }), tailscale: async () => ({ installed: false, dnsName: null }) },
-    githubLogin: () => null,
-  });
+  const route = realRoute();
   const fallback = shellMenu();
   const pane = createRemoteSetupClient({
     port: 9393,
@@ -72,7 +79,11 @@ function build(overrides: Partial<RemoteSetupClientOptions> = {}) {
     acts: {
       current: () => current,
       devices: () => [],
-      apply: async (config, options) => { applied.push({ config, justClaimed: options?.justClaimed === true }); current = config; },
+      apply: async (config, options) => {
+        await overrides.applyWaits?.(config);
+        applied.push({ config, justClaimed: options?.justClaimed === true });
+        current = config;
+      },
       setRelayAccess: () => {},
       issueLink: () => (current ? { code: "c0de", url: `https://${current.hostname}/?frizz_code=c0de`, expiresAt: Date.now() + 300_000 } : null),
       signOut: () => false,
@@ -126,7 +137,7 @@ test("an origin typed fast arrives whole, the shell serves it, and the readout h
 test("keys pressed before the server's first screen are not lost", async () => {
   let release!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
-  const route = createRemoteSetupRoute({ probes: { cloudflared: async () => ({ version: null }), tailscale: async () => ({ installed: false, dnsName: null }) }, githubLogin: () => null });
+  const route = realRoute();
   const { out, open, pane } = build({
     fetcher: fetcherFor(async (body) => {
       if ((body as { event: { type: string } }).event.type === "open") await held;
@@ -175,7 +186,7 @@ test("with no token R opens the shell's own menu without asking the server", () 
 });
 
 test("a server that stops answering mid-menu says so, and any key then hands the terminal back", async () => {
-  const route = createRemoteSetupRoute({ probes: { cloudflared: async () => ({ version: null }), tailscale: async () => ({ installed: false, dnsName: null }) }, githubLogin: () => null });
+  const route = realRoute();
   let restarted = false;
   const { out, open, pane } = build({
     fetcher: fetcherFor(async (body) => (restarted ? { status: 404, body: { error: "unknown-session" } } : route.handle(body))),
@@ -217,4 +228,100 @@ test("a setup the server asks for that this shell cannot read is refused, not se
   open();
   await until("the refusal", () => /said: the server asked for a setup this launcher cannot read/.test(lastScreen(out.text())));
   assert.deepEqual(applied, []);
+});
+
+/** A gate a test opens when it chooses. */
+function gate() {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return { opened, open };
+}
+
+test("keys still on their way to a menu that was closed never reach the menu opened after it", async () => {
+  const route = realRoute();
+  const held = gate();
+  const sessionsKeyed: string[] = [];
+  let first: string | undefined;
+  const { out, open, pane } = build({
+    fetcher: fetcherFor(async (body) => {
+      const request = body as { session?: string; event: { type: string } };
+      if (request.event.type === "key") {
+        sessionsKeyed.push(request.session ?? "");
+        if (request.session === first) await held.opened;
+      }
+      const answered = await route.handle(body);
+      first ??= (answered.body as { session?: string }).session;
+      return answered;
+    }),
+  });
+  open();
+  await until("the first menu", () => /❯ ✓ Off/.test(lastScreen(out.text())));
+  pane.key("j"); // held by the server
+  await until("the first key in flight", () => sessionsKeyed.length === 1);
+  pane.key("j"); // queued behind it
+  pane.close();
+  open();
+  await until("the second menu", () => /❯ ✓ Off/.test(lastScreen(out.text())));
+  held.open();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.match(lastScreen(out.text()), /❯ ✓ Off/, "the cursor in the new menu did not move");
+  assert.deepEqual(sessionsKeyed, [first], "only the key already sent went, and to its own menu");
+});
+
+test("a change that finishes after its menu was reopened answers nothing in the new one", async () => {
+  const route = realRoute();
+  const gates = new Map<string, ReturnType<typeof gate>>();
+  const answered: Array<{ session?: string; id: number; ok: boolean }> = [];
+  const { out, open, pane, applied } = build({
+    applyWaits: (config) => {
+      const waiting = gate();
+      gates.set(config!.hostname, waiting);
+      return waiting.opened;
+    },
+    fetcher: fetcherFor(async (body) => {
+      const request = body as { session?: string; event: { type: string; id?: number; ok?: boolean } };
+      if (request.event.type === "effect") answered.push({ session: request.session, id: request.event.id!, ok: request.event.ok! });
+      return route.handle(body);
+    }),
+  });
+  const serve = async (origin: string) => {
+    open();
+    await until("a menu", () => /❯ ✓ Off/.test(lastScreen(out.text())));
+    for (const key of ["6", "\r", ...origin, "\r"]) pane.key(key);
+    await until(`the apply of ${origin}`, () => gates.has(origin));
+  };
+  await serve("a.example.com");
+  pane.close();
+  await serve("b.example.com");
+  // Both effects are id 1 in their own sessions. The first menu's finishing now must not settle the second's.
+  gates.get("a.example.com")!.open();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(answered.length, 0, "the closed menu's answer went nowhere");
+  assert.ok(lastScreen(out.text()).includes("serving b.example.com…"), "the open menu still waits on its own change");
+  gates.get("b.example.com")!.open();
+  await until("b served", () => /Serving https:\/\/b\.example\.com/.test(lastScreen(out.text())));
+  assert.equal(answered.length >= 1 && answered.every((effect) => effect.ok), true);
+  assert.deepEqual(applied.map((change) => change.config?.hostname), ["a.example.com", "b.example.com"]);
+});
+
+test("a change that finishes after a lost menu was closed is still told to the readout", async () => {
+  const route = realRoute(100);
+  const finish = gate();
+  let gone = false;
+  const { out, open, pane, told } = build({
+    applyWaits: () => finish.opened,
+    fetcher: fetcherFor(async (body) => (gone ? { status: 503, body: "restarting" } : route.handle(body))),
+  });
+  open();
+  await until("the menu", () => /❯ ✓ Off/.test(lastScreen(out.text())));
+  for (const key of ["6", "\r", ..."board.example.com", "\r"]) pane.key(key);
+  await until("the change under way", () => lastScreen(out.text()).includes("serving board.example.com…"));
+  gone = true;
+  await until("the menu lost", () => /stopped answering this menu \(it answered 503\)/.test(lastScreen(out.text())));
+  assert.equal(pane.key("x"), "close");
+  pane.close();
+  assert.equal(told.length, 0, "nothing has changed yet");
+  finish.open();
+  await until("the readout told", () => told.length === 1);
+  assert.equal(told[0]?.hostname, "board.example.com");
 });

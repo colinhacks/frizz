@@ -1,6 +1,10 @@
 import assert from "node:assert/strict"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import type { RemoteSetupAnswer, RemoteSetupConfig, RemoteSetupContext, RemoteSetupEvent } from "../remote-setup-protocol.ts"
+import { freshClaims } from "./claim.ts"
 import { createRemoteSetupRoute, type RemoteSetupRouteOptions } from "./route.ts"
 
 // The route between the shell and the server's R menu (route.ts): sessions, the effects the menu asks the
@@ -8,6 +12,11 @@ import { createRemoteSetupRoute, type RemoteSetupRouteOptions } from "./route.ts
 // end is src/remote-setup-client.test.ts's, which drives this same route.
 
 delete process.env.FRIZZ_CUSTOM_NAMES
+for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) delete process.env[name]
+
+/** A home of its own for every route here: a claim writes into the state root. */
+const home = mkdtempSync(join(tmpdir(), "frizz-remote-setup-route-"))
+test.after(() => rmSync(home, { recursive: true, force: true }))
 
 const plain = (screen: string) => screen.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
 
@@ -15,6 +24,7 @@ function shell(options: RemoteSetupRouteOptions = {}) {
   const route = createRemoteSetupRoute({
     probes: { cloudflared: async () => ({ version: "2025.8.1" }), tailscale: async () => ({ installed: true, dnsName: "mac.ts.net" }) },
     githubLogin: () => null,
+    home,
     ...options,
   })
   const context: RemoteSetupContext = { port: 9393, columns: 80, rows: 40, current: null, devices: [], sandbox: false }
@@ -96,29 +106,44 @@ test("a screen drawn later reaches a waiting shell, and a wait with nothing new 
   assert.match(plain(probed.screen), /cloudflared {3}found, 2025\.8\.1 ✓/)
 })
 
-test("a name claimed afresh signs out what was signed in under it before it is served", async () => {
+test("a name claimed afresh is served with its earlier sessions signed out, even after a menu lost in between", async () => {
   const progress: string[] = []
   const claimed: RemoteSetupConfig = { hostname: "abcdefghjkmnpqrstuvw.frizz.sh", claim: "abcdefghjkmnpqrstuvw", serve: "relay" }
-  const { send, keys } = shell({
-    claim: async (name, port, say) => {
-      progress.push(`${name}:${port}`)
-      say("  claiming a frizz.sh subdomain — no account needed")
-      return { config: claimed, fresh: true }
-    },
-  })
-  await send({ type: "open" })
-  await keys("2", "\r", "\r")
-  const asked = await keys("\r")
-  await new Promise((resolve) => setImmediate(resolve))
-  const waited = asked.effect ? asked : await send({ type: "wait", after: asked.frame })
+  let fresh = true
+  const claim: RemoteSetupRouteOptions["claim"] = async (name, port, say) => {
+    progress.push(`${name}:${port}`)
+    say("  claiming a frizz.sh subdomain — no account needed")
+    // The registrar creates the name once; every later claim of it is a renewal.
+    const answer = { config: claimed, fresh }
+    fresh = false
+    return answer
+  }
+  const claimToApply = async (menu: ReturnType<typeof shell>) => {
+    await menu.send({ type: "open" })
+    await menu.keys("2", "\r", "\r")
+    const asked = await menu.keys("\r")
+    await new Promise((resolve) => setImmediate(resolve))
+    return asked.effect ? asked : await menu.send({ type: "wait", after: asked.frame })
+  }
+
+  // The first menu is lost before the launcher serves the name: its apply is refused, as a closed menu's is.
+  const first = shell({ claim })
+  const lost = await claimToApply(first)
   assert.deepEqual(progress, [":9393"], "an empty name, with the board's port")
-  assert.deepEqual(waited.effect, { id: 1, kind: "forget-sessions", hostname: claimed.hostname })
-  const forgotten = await send({ type: "effect", id: 1, ok: true })
-  assert.deepEqual(forgotten.effect, { id: 2, kind: "apply", config: { ...claimed, relayAccess: "full" }, justClaimed: true })
+  assert.deepEqual(lost.effect, { id: 1, kind: "apply", config: { ...claimed, relayAccess: "full" }, justClaimed: true, forgetSessions: true })
+  await first.send({ type: "close" })
+  assert.deepEqual([...freshClaims(home)], [claimed.hostname], "the sign-out is still owed")
+
+  // The next claim of the name is a renewal, and its serve still carries the sign-out.
+  const second = shell({ claim })
+  const served = await claimToApply(second)
+  assert.deepEqual(served.effect, { id: 1, kind: "apply", config: { ...claimed, relayAccess: "full" }, justClaimed: true, forgetSessions: true })
+  await second.send({ type: "effect", id: 1, ok: true })
+  assert.deepEqual([...freshClaims(home)], [], "and once served, it is owed no more")
 })
 
 test("an open past the limit closes the oldest menu, and its waiting shell is told", async () => {
-  const route = createRemoteSetupRoute({ probes: { cloudflared: async () => ({ version: null }), tailscale: async () => ({ installed: false, dnsName: null }) }, githubLogin: () => null, waitMs: 5_000 })
+  const route = createRemoteSetupRoute({ probes: { cloudflared: async () => ({ version: null }), tailscale: async () => ({ installed: false, dnsName: null }) }, githubLogin: () => null, waitMs: 5_000, home })
   const context: RemoteSetupContext = { port: 9393, columns: 80, rows: 40, current: null, devices: [], sandbox: false }
   const open = async () => (await route.handle({ protocol: 1, event: { type: "open" }, context })).body as RemoteSetupAnswer
   const first = await open()
@@ -131,7 +156,7 @@ test("an open past the limit closes the oldest menu, and its waiting shell is to
 })
 
 test("what the shell sends is checked before anything reads it", async () => {
-  const route = createRemoteSetupRoute()
+  const route = createRemoteSetupRoute({ home })
   const context = { port: 9393, columns: 80, rows: 24, current: null, devices: [], sandbox: false }
   for (const body of [
     null,

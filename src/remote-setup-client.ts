@@ -33,7 +33,7 @@ export interface RemoteSetupShellActs {
   current(): CloudConfig | null;
   devices(): Array<{ id: string; label: string; createdAt: number }>;
   apply(next: CloudConfig | null, options?: { justClaimed?: boolean }): Promise<void>;
-  setRelayAccess(access: RelayAccess): void;
+  setRelayAccess(access: RelayAccess): void | Promise<void>;
   issueLink(): AccessLink | null;
   signOut(id: string): boolean;
   signOutAll(): number;
@@ -102,6 +102,7 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
   let keys: Promise<void> = Promise.resolve();
   /** Effects already run for this menu: each answer repeats the pending one until it is answered. */
   const started = new Set<number>();
+  /** A change made while the menu is up, for the readout once it closes. */
   let changed: { config: CloudConfig | null } | null = null;
   let serverClosed = false;
   let fallback: Pane | undefined;
@@ -139,8 +140,13 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
     output.write(`\n  The Frizz server stopped answering this menu (${reason}).\n\n  ${DIM}press any key to return, then R to open it again${RESET}`);
   };
 
-  const send = async (event: RemoteSetupEvent, timeoutMs = REQUEST_TIMEOUT_MS): Promise<RemoteSetupAnswer | undefined> => {
-    const at = generation;
+  /**
+   * Send `event` for the menu of generation `at`, the one the key or effect behind it belonged to. A menu
+   * closed or reopened since then hears nothing: its session is not this one, and an effect id or a key
+   * meant for the old menu would land on the new one's.
+   */
+  const send = async (event: RemoteSetupEvent, at: number, timeoutMs = REQUEST_TIMEOUT_MS): Promise<RemoteSetupAnswer | undefined> => {
+    if (at !== generation || mode !== "server") return undefined;
     let reply: { status: number; body: unknown };
     try {
       reply = await post(event, timeoutMs);
@@ -154,11 +160,11 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
       lose(reply.status === 404 ? "it restarted" : `it answered ${reply.status}`);
       return undefined;
     }
-    receive(answer);
+    receive(answer, at);
     return answer;
   };
 
-  const receive = (answer: RemoteSetupAnswer) => {
+  const receive = (answer: RemoteSetupAnswer, at: number) => {
     if (answer.frame > painted) {
       painted = answer.frame;
       output.write(CLEAR);
@@ -171,19 +177,19 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
     }
     if (answer.effect && !started.has(answer.effect.id)) {
       started.add(answer.effect.id);
-      void run(answer.effect);
+      void run(answer.effect, at);
     }
   };
 
-  /** Do what the server asked, and tell it how that went. */
-  const run = async (effect: RemoteSetupEffect) => {
+  /** Do what the server asked, and tell it how that went, if the menu that asked is still the one up. */
+  const run = async (effect: RemoteSetupEffect, at: number) => {
     let outcome: { ok: true; value?: unknown } | { ok: false; error: string };
     try {
       outcome = { ok: true, value: await perform(effect) };
     } catch (error) {
       outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
-    await send({ type: "effect", id: effect.id, ...outcome } as RemoteSetupEvent);
+    await send({ type: "effect", id: effect.id, ...outcome } as RemoteSetupEvent, at);
   };
 
   const perform = async (effect: RemoteSetupEffect): Promise<unknown> => {
@@ -192,14 +198,20 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
         // Read as cloud.json is: the server's word is not taken for what this shell is about to serve.
         const config = effect.config === null ? null : parseCloudConfig(effect.config);
         if (effect.config !== null && config === null) throw new Error("the server asked for a setup this launcher cannot read");
+        // A name claimed afresh signs out what was signed in under it before, before it is served:
+        // someone else may have served it in between and collected those cookies (cloud.ts, onFreshClaim).
+        if (config && effect.forgetSessions === true) options.acts.forgetSessionsFor(config.hostname);
         await options.acts.apply(config, effect.justClaimed === true ? { justClaimed: true } : undefined);
-        changed = { config };
         options.onChanged?.(config);
+        // The readout hears once the terminal is back on it: when the menu up now closes, or at once when
+        // none is (a change can finish after a lost menu was closed).
+        if (mode === "closed") options.onClosedAfterChange?.(config);
+        else changed = { config };
         return undefined;
       }
       case "relay-access":
         if (!RELAY_ACCESS.has(effect.access)) throw new Error(`this launcher does not know the access level ${String(effect.access)}`);
-        options.acts.setRelayAccess(effect.access);
+        await options.acts.setRelayAccess(effect.access);
         return undefined;
       case "issue-link":
         return options.acts.issueLink();
@@ -208,10 +220,6 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
         return options.acts.signOut(effect.device);
       case "sign-out-all":
         return options.acts.signOutAll();
-      case "forget-sessions":
-        if (typeof effect.hostname !== "string") throw new Error("the server did not say which name");
-        options.acts.forgetSessionsFor(effect.hostname);
-        return undefined;
       default:
         // A server newer than this shell may ask for something it cannot do; the menu says so.
         throw new Error(`this launcher cannot do that yet (${String((effect as { kind: unknown }).kind)}); update Frizz to use it`);
@@ -222,7 +230,7 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
   const watch = async (at: number) => {
     while (at === generation && mode === "server") {
       const before = painted;
-      const answer = await send({ type: "wait", after: painted }, WAIT_TIMEOUT_MS);
+      const answer = await send({ type: "wait", after: painted }, at, WAIT_TIMEOUT_MS);
       // A wait answered at once with nothing new would spin; a breath stops that without slowing a real change.
       if (answer && answer.frame <= before) await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -253,10 +261,11 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
     return true;
   };
 
-  /** Keys go to the server one at a time, each after the answer to the one before. */
+  /** Keys go to the server one at a time, each after the answer to the one before, and only to their own menu. */
   const sendKey = (key: string) => {
+    const at = generation;
     keys = keys.then(async () => {
-      await send({ type: "key", key });
+      await send({ type: "key", key }, at);
     });
   };
 
@@ -282,7 +291,7 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
     session = answer.session;
     mode = "server";
     options.onOpened?.("server");
-    receive(answer);
+    receive(answer, at);
     for (const key of queued.splice(0)) sendKey(key);
     void watch(at);
   };
@@ -326,6 +335,9 @@ export function createRemoteSetupClient(options: RemoteSetupClientOptions): Pane
       generation += 1;
       if (was === "shell") {
         fallback?.close();
+        // A change the server's menu finished while this shell's own menu was up.
+        if (changed) options.onClosedAfterChange?.(changed.config);
+        changed = null;
         return;
       }
       if (was === "server" && session && !serverClosed) void post({ type: "close" }, 2_000).catch(() => {});

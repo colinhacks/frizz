@@ -78,15 +78,17 @@ export interface RemoteSetupRequest {
  * `sign-out-all` with how many were.
  */
 export type RemoteSetupEffect =
-  /** Serve `config`, or go back to localhost only with null. `justClaimed` skips the renewal a fresh claim just made. */
-  | { id: number; kind: "apply"; config: RemoteSetupConfig | null; justClaimed?: boolean }
+  /**
+   * Serve `config`, or go back to localhost only with null. `justClaimed` skips the renewal a claim just
+   * made. `forgetSessions` says the name was claimed afresh, so the devices signed in under it before are
+   * signed out first (src/cloud.ts, onFreshClaim).
+   */
+  | { id: number; kind: "apply"; config: RemoteSetupConfig | null; justClaimed?: boolean; forgetSessions?: boolean }
   /** What a device signed in through the relay may do. */
   | { id: number; kind: "relay-access"; access: "full" | "read-and-answer" }
   | { id: number; kind: "issue-link" }
   | { id: number; kind: "sign-out"; device: string }
   | { id: number; kind: "sign-out-all" }
-  /** A name was claimed afresh: sign out the devices signed in under it before (src/cloud.ts, onFreshClaim). */
-  | { id: number; kind: "forget-sessions"; hostname: string }
 
 export interface RemoteSetupAnswer {
   protocol: typeof REMOTE_SETUP_PROTOCOL

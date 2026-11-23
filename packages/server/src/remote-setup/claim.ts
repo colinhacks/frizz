@@ -73,6 +73,46 @@ function writeTunnelToken(token: string, home = homedir()): void {
   writeFileSync(path, `${token}\n`, { mode: 0o600 })
 }
 
+/**
+ * Names claimed afresh that the launcher has not yet served with their earlier sessions signed out. A
+ * fresh claim means someone else may have held the name in between and collected the cookies of devices
+ * signed in under it, so those are signed out before the name is served (src/cloud.ts, onFreshClaim). The
+ * claim and the serve are two steps here — the claim in the server, the serve in the launcher — and a menu
+ * lost between them would otherwise lose the sign-out for good: the next claim of the name is a renewal,
+ * which is not fresh. So the name is written down at the claim and crossed off once it is served.
+ */
+export function freshClaimsPath(home = homedir()): string {
+  return join(frizzPaths({ home }).state, "fresh-claims.json")
+}
+
+export function freshClaims(home = homedir()): Set<string> {
+  try {
+    const names: unknown = JSON.parse(readFileSync(freshClaimsPath(home), "utf8"))
+    return new Set(Array.isArray(names) ? names.filter((name): name is string => typeof name === "string") : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeFreshClaims(names: Set<string>, home: string): void {
+  const path = freshClaimsPath(home)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify([...names])}\n`)
+}
+
+export function rememberFreshClaim(hostname: string, home = homedir()): void {
+  const names = freshClaims(home)
+  if (names.has(hostname)) return
+  names.add(hostname)
+  writeFreshClaims(names, home)
+}
+
+export function settleFreshClaim(hostname: string, home = homedir()): void {
+  const names = freshClaims(home)
+  if (!names.delete(hostname)) return
+  writeFreshClaims(names, home)
+}
+
 // ── The registrar ────────────────────────────────────────────────────────────────────────────────────
 
 export const DEFAULT_REGISTRAR = "https://registrar.frizz.sh"

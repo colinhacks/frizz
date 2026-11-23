@@ -9,7 +9,7 @@ import {
   type RemoteSetupEvent,
   type RemoteSetupRequest,
 } from "../remote-setup-protocol.ts"
-import { claimFrizzName } from "./claim.ts"
+import { claimFrizzName, freshClaims, rememberFreshClaim, settleFreshClaim } from "./claim.ts"
 import { type AccessLink, createRemoteSetupPane, type RemoteSetupPane, type RemoteSetupPaneOptions } from "./pane.ts"
 import { probeCloudflared, probeTailscale } from "./probes.ts"
 import { frizzGithubLogin } from "./setup.ts"
@@ -32,8 +32,9 @@ export const REMOTE_SETUP_WAIT_MS = 25_000
 /** A shell holds one menu at a time; a few more covers a menu the shell never closed, and no more. */
 const MAX_SESSIONS = 4
 
-const MAX_KEY_LENGTH = 4096
-const MAX_DEVICES = 500
+/** A paste arrives as one key. Bounds only, set far past anything real: a refusal loses the menu. */
+const MAX_KEY_LENGTH = 65_536
+const MAX_DEVICES = 10_000
 
 export interface RemoteSetupRouteOptions {
   /** Test seams; each defaults to the real thing. */
@@ -41,6 +42,8 @@ export interface RemoteSetupRouteOptions {
   probes?: RemoteSetupPaneOptions["probes"]
   githubLogin?: () => string | null
   waitMs?: number
+  /** The home whose state root holds the claim key and the fresh claims (claim.ts). */
+  home?: string
 }
 
 export interface RemoteSetupRoute {
@@ -75,7 +78,8 @@ class ShellRefused extends Error {}
 export function createRemoteSetupRoute(options: RemoteSetupRouteOptions = {}): RemoteSetupRoute {
   const sessions = new Map<string, Session>()
   const waitMs = options.waitMs ?? REMOTE_SETUP_WAIT_MS
-  const claim = options.claim ?? ((name, port, progress) => claimFrizzName(name, port, { say: progress }))
+  const home = options.home
+  const claim = options.claim ?? ((name, port, progress) => claimFrizzName(name, port, { say: progress, ...(home ? { home } : {}) }))
   const probes = options.probes ?? { cloudflared: probeCloudflared, tailscale: probeTailscale }
   const githubLogin = options.githubLogin ?? frizzGithubLogin
 
@@ -114,7 +118,10 @@ export function createRemoteSetupRoute(options: RemoteSetupRouteOptions = {}): R
       context: () => session.context,
       act: {
         apply: async (config, applyOptions) => {
-          await ask(session, { kind: "apply", config, ...(applyOptions?.justClaimed ? { justClaimed: true } : {}) })
+          // Any serve of a name still owed its sign-out carries it, whichever row of the menu serves it.
+          const owed = config !== null && freshClaims(home).has(config.hostname)
+          await ask(session, { kind: "apply", config, ...(applyOptions?.justClaimed ? { justClaimed: true } : {}), ...(owed ? { forgetSessions: true } : {}) })
+          if (owed) settleFreshClaim(config!.hostname, home)
         },
         setRelayAccess: async (access) => {
           await ask(session, { kind: "relay-access", access })
@@ -133,8 +140,7 @@ export function createRemoteSetupRoute(options: RemoteSetupRouteOptions = {}): R
       },
       claim: async (name, progress) => {
         const { config, fresh } = await claim(name, session.context.port, progress)
-        // A name claimed afresh signs out what was signed in under it before (src/cloud.ts, onFreshClaim).
-        if (fresh) await ask(session, { kind: "forget-sessions", hostname: config.hostname })
+        if (fresh) rememberFreshClaim(config.hostname, home)
         return config
       },
       githubLogin,
