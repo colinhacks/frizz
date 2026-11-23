@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useCallback, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { Composer } from "./components/Composer.tsx"
 import type { ThreadSkill } from "@frizz/shared"
@@ -28,6 +28,12 @@ const SKILLS: ThreadSkill[] = [
   { name: "visual-review", description: "Judge and dial in the visual correctness of a UI change by measuring glyph ink" },
 ]
 
+// A second agent's list, for the new-thread box's model chip moving from one agent to another: the
+// composer is handed a new `slashSuggest`, and its next `/` must show this list, not the first one.
+const OTHER_AGENT_SKILLS: ThreadSkill[] = [
+  { name: "codex-local", description: "A repo skill only the other agent reads", source: "project" },
+]
+
 // Test hooks: how many times the composer asked for the list (must stay 1 across re-triggers), and
 // every draft that reached submit (the popup's Enter must complete, not send).
 const hooks = { fetches: 0, submitted: [] as string[], value: "" }
@@ -35,7 +41,13 @@ const hooks = { fetches: 0, submitted: [] as string[], value: "" }
 
 function Fixture() {
   const [value, setValue] = useState("")
+  const [agent, setAgent] = useState<"first" | "other">("first")
   hooks.value = value
+  // Memoized on the agent, as both real callers memoize theirs: a new function is a new list.
+  const slashSuggest = useCallback(() => {
+    hooks.fetches += 1
+    return Promise.resolve(agent === "first" ? SKILLS : OTHER_AGENT_SKILLS)
+  }, [agent])
   return (
     <div className="flex min-h-screen flex-col justify-end bg-bg p-10 text-fg">
       <div className="w-full max-w-[520px]">
@@ -48,11 +60,11 @@ function Fixture() {
             setValue("")
           }}
           placeholder="Reply…"
-          slashSuggest={() => {
-            hooks.fetches += 1
-            return Promise.resolve(SKILLS)
-          }}
+          slashSuggest={slashSuggest}
         />
+        <button type="button" data-switch-agent onClick={() => setAgent("other")} className="mt-3 text-[12px] text-muted">
+          Switch agent
+        </button>
       </div>
     </div>
   )

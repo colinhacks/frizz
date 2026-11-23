@@ -54,9 +54,7 @@ test("the probe is one session started the way a worker is, asked afresh for eve
     assert.equal(options.strictMcpConfig, true)
     assert.equal(options.mcpServers, undefined, "no MCP server is mounted")
     // The CLI runs SessionStart hooks even without a turn; the worker plugin's must not take it for a worker.
-    assert.equal(options.env.FRIZZ_SCRATCHPAD_HOOK, "off")
-    assert.equal("FRIZZ_THREAD" in options.env, false)
-    assert.equal(options.env.HOME, "/home/x")
+    assert.deepEqual(options.env, { HOME: "/home/x", FRIZZ_SCRATCHPAD_HOOK: "off" })
   } finally {
     await probe.close()
   }

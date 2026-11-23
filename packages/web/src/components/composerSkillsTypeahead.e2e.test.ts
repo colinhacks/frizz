@@ -106,6 +106,30 @@ test("typing `/` opens the menu once fetched, filters as the name grows, and a s
   assert.deepEqual(errors, [], `no page errors: ${errors.join(" | ")}`)
 })
 
+// The new-thread box hands the composer a new source when its model chip moves to another agent
+// (colinhacks/frizz#79). A list fetched for the first agent must not survive the switch: the next `/`
+// asks the new source, once, and shows only what it answered.
+test("a new suggestion source is asked again, and its list replaces the old one", {
+  skip: !baseUrl,
+  timeout: 150_000,
+}, async () => {
+  await open()
+  await page!.type(BOX, "/")
+  await page!.waitForSelector(MENU)
+  assert.equal((await menuRows()).length, 7)
+  await page!.keyboard.press("Backspace")
+  await page!.click("[data-switch-agent]")
+  await page!.click(BOX)
+  await page!.type(BOX, "/")
+  await page!.waitForFunction((sel) => document.querySelectorAll(`${sel} button`).length === 1, {}, MENU)
+  assert.deepEqual(await menuRows(), ["/codex-local"])
+  await page!.keyboard.press("Backspace")
+  await page!.type(BOX, "/")
+  await page!.waitForSelector(MENU)
+  assert.equal((await hooks()).fetches, 2, "one fetch per source, however often the menu reopens")
+  assert.deepEqual(errors, [], `no page errors: ${errors.join(" | ")}`)
+})
+
 // Where a skill came FROM, which the harness reports and frizz normalizes to one vocabulary. The
 // column has to be ONE width across every row — including the row whose source is unknown — or an
 // unlabelled row's description truncates ~50px further right than its neighbours' and the list reads

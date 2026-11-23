@@ -1,7 +1,7 @@
 import * as RadixDialog from "@radix-ui/react-dialog"
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { type AccountBackend, type DispatchInput, type PermissionMode, type Settings } from "@frizz/shared"
+import { type AccountBackend, type Backend, type DispatchInput, type PermissionMode, type Settings, type ThreadSkill } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
 import { useReadAndAnswerHost } from "../api/supervisorStatus.ts"
 import { ReadAndAnswerNote } from "./ReadAndAnswerNote.tsx"
@@ -33,6 +33,32 @@ import { openStartedThread, screenNow } from "../lib/openStartedThread.ts"
 import { rememberDispatchedPrompt } from "../lib/dispatchedPrompt.ts"
 import { useConsoleDispatchTarget } from "./ConsoleProjectChip.tsx"
 import { Z_MODAL } from "../lib/layers.ts"
+
+// THE NEW-THREAD BOX'S `/` MENU (colinhacks/frizz#79). A thread's box asks its live session; this box has
+// no thread yet, so it asks the server what a new thread of the agent its model chip picks would get in
+// this project: Claude's skills probe, a session started the way a worker is, and Codex's skill list for
+// the project's directory. Antigravity, ACP agents and OpenCode list commands only for a live session, so
+// for them the box offers nothing rather than another thread's list, which could name what this agent
+// does not have.
+//
+// Cached per project and agent for a short while, so reopening the dialog does not ask again. A failure
+// is not cached and reads as "no suggestions", as the thread menu's does.
+const DISPATCH_SKILLS_FRESH_MS = 15_000
+const dispatchSkillsCache = new Map<string, { at: number; skills: Promise<ThreadSkill[]> }>()
+function fetchDispatchSkills(project: string | undefined, backend: Backend): Promise<ThreadSkill[]> {
+  const key = `${project ?? ""}\n${backend}`
+  const cached = dispatchSkillsCache.get(key)
+  if (cached && Date.now() - cached.at < DISPATCH_SKILLS_FRESH_MS) return cached.skills
+  const skills: Promise<ThreadSkill[]> = rpcFor(project).threadSkills({ backend }).then(
+    (result) => result.skills,
+    () => {
+      if (dispatchSkillsCache.get(key)?.skills === skills) dispatchSkillsCache.delete(key)
+      return []
+    },
+  )
+  dispatchSkillsCache.set(key, { at: Date.now(), skills })
+  return skills
+}
 
 // One element for every desktop form, so it never invalidates the footer's memo below.
 const NEW_THREAD_MARKS = <NewThreadAgentMarks />
@@ -97,6 +123,17 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
   const [signInFor, setSignInFor] = useState<AccountBackend | null>(null)
   const [logoutFor, setLogoutFor] = useState<AccountBackend | null>(null)
   const gatedInputRef = useRef<DispatchInput | null>(null)
+
+  // The `/` menu's source (fetchDispatchSkills above). A new function when the agent changes, which makes
+  // the box ask again, and after each dispatch, so a box that stays on screen all day picks up a skill
+  // written since its last list. Only Claude and Codex can answer without a session.
+  const [dispatches, setDispatches] = useState(0)
+  const skillsBackend = resolved?.backend === "claude" || resolved?.backend === "codex" ? resolved.backend : undefined
+  const slashSuggest = useMemo(
+    () => skillsBackend ? () => fetchDispatchSkills(project, skillsBackend) : undefined,
+    // `dispatches` is a dependency on purpose: it is what retires the list a dispatch ago.
+    [project, skillsBackend, dispatches],
+  )
 
   // The thread a dispatch starts OPENS, where a click on its row would open it, as soon as the board
   // holds it (lib/openStartedThread). Until then the rail draws it as the Running row it is about to
@@ -167,6 +204,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
   // on a clean submit and after the sign-in gate is cleared, so the prompt is only cleared once the
   // thread is actually being started — a gated submit leaves the draft intact.
   function runDispatch(input: DispatchInput) {
+    setDispatches((count) => count + 1)
     submittedDraftRef.current = prompt
     clearPrompt()
     setPendingDispatch(input.prompt)
@@ -340,6 +378,7 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
     error: dispatch.isError ? (dispatch.error as Error).message : null,
     pendingDispatch,
     accountModals,
+    slashSuggest,
   }
 }
 
@@ -377,6 +416,7 @@ function LocalDispatchForm({
         onChange={form.setPrompt}
         onSubmit={form.submit}
         placeholder="Describe the task…"
+        slashSuggest={form.slashSuggest}
         minHeight={96}
         maxHeight={277}
         busy={form.busy}
@@ -472,6 +512,7 @@ function LocalPhoneNewThreadPage({ onDispatched, projectPicker, project }: { onD
         onChange={form.setPrompt}
         onSubmit={form.submit}
         placeholder="Describe the task…"
+        slashSuggest={form.slashSuggest}
         minHeight={120}
         maxHeight={100_000}
         busy={form.busy}

@@ -208,10 +208,13 @@ export function Composer({
   // (ThreadComposerBox). It owns its own popover; this component only places it.
   railLead?: React.ReactNode
   // SKILLS TYPEAHEAD. When set, a draft that is exactly one `/`-led token opens a suggestion menu of
-  // the thread's invocable skills above the box (fetched lazily, once, on first trigger). The list is
-  // whatever the thread's own harness reports — the caller owns sourcing entirely; this component only
-  // renders and completes. Surfaces without a session to ask (the dispatch composer) omit it and the
-  // whole affordance is inert.
+  // the invocable skills above the box (fetched lazily, once per function, on the first trigger). The
+  // list is whatever the agent's own harness reports — the caller owns sourcing entirely; this
+  // component only renders and completes. Omitted, the whole affordance is inert.
+  //
+  // A NEW FUNCTION MEANS A NEW LIST: the next `/` asks it again. So a caller memoizes it on what the
+  // list depends on (a thread's box on its slug, the new-thread box on its project and agent), and an
+  // inline arrow would re-ask on every render of the caller.
   slashSuggest?: () => Promise<ThreadSkill[]>
   // INTERRUPT AND SEND — what the FORCED chord (⌘/Ctrl-Enter) does while the thread's worker is
   // mid-turn AND its runtime can be preempted; the caller owns that policy entirely. When it is not
@@ -495,7 +498,12 @@ export function Composer({
   // read as "no suggestions", never as an error the operator has to dismiss). `dismissedFor` records
   // the exact draft an Escape closed the menu over, so it stays closed until the draft CHANGES —
   // without it the menu would reopen on the very next render.
-  const [skillItems, setSkillItems] = useState<ThreadSkill[] | null>(null)
+  //
+  // The list belongs to the `slashSuggest` that fetched it: the new-thread box hands over a new one when
+  // its model chip moves to another agent, whose skills differ, and a list fetched for the old one must
+  // read as "not asked yet". A thread's box keeps one function per thread, so its list is fetched once.
+  const [skillsFetched, setSkillsFetched] = useState<{ from: typeof slashSuggest; items: ThreadSkill[] } | null>(null)
+  const skillItems = skillsFetched && skillsFetched.from === slashSuggest ? skillsFetched.items : null
   // The highlighted row, REMEMBERED WITH THE DRAFT IT WAS CHOSEN OVER: the filtered list under it
   // changes with every keystroke, so a highlight belongs to one draft and reads as row 0 for any
   // other. Derived, not reset by an effect — `useEffect(() => setSuggestSel(0), [prose])` looked free
@@ -515,11 +523,13 @@ export function Composer({
   useEffect(() => {
     if (!slashActive || skillItems !== null) return
     let live = true
+    const from = slashSuggest
     // Errors resolve to "asked, nothing to offer": the caller decides whether to retry on a later
-    // trigger by handing this component a fresh mount (drawer reopen) — a typeahead never toasts.
-    void slashSuggest!().then(
-      (items) => { if (live) setSkillItems(items) },
-      () => { if (live) setSkillItems([]) },
+    // trigger by handing this component a fresh mount (drawer reopen) or a new function — a typeahead
+    // never toasts.
+    void from!().then(
+      (items) => { if (live) setSkillsFetched({ from, items }) },
+      () => { if (live) setSkillsFetched({ from, items: [] }) },
     )
     return () => { live = false }
   }, [slashActive, skillItems, slashSuggest])
@@ -895,7 +905,12 @@ export function Composer({
       return (
         <div ref={phoneRootRef} data-phone-composer="page" className={`flex min-h-0 flex-1 flex-col ${keyboardInset > 0 ? "" : "pb-[env(safe-area-inset-bottom)]"}`}>
           <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-none">
-            {suggestMenu}
+            {/* The menu's anchor is the prompt's FIRST LINE, not this page-tall column: anchored on the
+                column it had no room below and opened above the page's top edge, over the header. A
+                `/token` the menu can complete is always the only line (py-[14px] + leading-[25px]), so
+                the menu flips below it, under the typed text. Inset 3px so a row's name (the menu's 1px
+                border, then px-3.5) starts at the prompt's own 18px. */}
+            {suggestMenu && <div aria-hidden className="pointer-events-none absolute inset-x-[3px] top-0 h-[39px]">{suggestMenu}</div>}
             {textarea}
             {attachmentRow}
           </div>
