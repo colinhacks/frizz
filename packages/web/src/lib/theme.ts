@@ -7,16 +7,20 @@ export interface ThemeSnapshot {
 }
 
 export const THEME_STORAGE_KEY = "frizz-theme"
+/** What a browser that never picked an appearance gets: dark, whatever the OS prefers. Light is an explicit
+ *  choice, and so is following the OS ("system"), which only a stored pick turns on (maintainer
+ *  2026-11-22: dark is preferred even on a light system; light only when it is chosen). */
+export const DEFAULT_THEME_PREFERENCE: ThemePreference = "dark"
 
 const DARK_CANVAS = "#0d0e10"
 const LIGHT_CANVAS = "#f7f7f7"
 const listeners = new Set<() => void>()
-let snapshot: ThemeSnapshot = { preference: "system", resolved: "dark" }
+let snapshot: ThemeSnapshot = { preference: DEFAULT_THEME_PREFERENCE, resolved: "dark" }
 let media: MediaQueryList | undefined
 let dispose: (() => void) | undefined
 
 export function parseThemePreference(value: unknown): ThemePreference {
-  return value === "light" || value === "dark" || value === "system" ? value : "system"
+  return value === "light" || value === "dark" || value === "system" ? value : DEFAULT_THEME_PREFERENCE
 }
 
 export function resolveTheme(preference: ThemePreference, dark = systemPrefersDark()): ResolvedTheme {
@@ -24,14 +28,15 @@ export function resolveTheme(preference: ThemePreference, dark = systemPrefersDa
 }
 
 function systemPrefersDark(): boolean {
-  try { return media?.matches ?? window.matchMedia("(prefers-color-scheme: dark)").matches } catch { return false }
+  // A browser that cannot say what its OS prefers gets the default, dark.
+  try { return media?.matches ?? window.matchMedia("(prefers-color-scheme: dark)").matches } catch { return true }
 }
 
 function storedPreference(): ThemePreference {
   try {
     return parseThemePreference(localStorage.getItem(THEME_STORAGE_KEY))
   } catch {
-    return "system"
+    return DEFAULT_THEME_PREFERENCE
   }
 }
 
@@ -77,7 +82,7 @@ export function initTheme() {
   const storageChange = (event: StorageEvent) => {
     try { if (event.storageArea && event.storageArea !== localStorage) return } catch { return }
     if (event.key === THEME_STORAGE_KEY) publish(parseThemePreference(event.newValue))
-    else if (event.key === null) publish("system")
+    else if (event.key === null) publish(DEFAULT_THEME_PREFERENCE)
   }
   window.addEventListener("storage", storageChange)
   dispose = () => {
