@@ -951,9 +951,8 @@ export const ThreadRow = memo(function ThreadRow({
                                                                      border IS its ink: deadLeft 0)
                     The 1.4× step is the grouping and is deliberate — the mark is the title's own
                     adornment and clings to it, the tag is a separate label and stands off.
-                    VERTICAL: this pill's ink centre rides 0.42px ABOVE the title's cap band, and the
-                    provider mark beside it 0.08px below. Both are under half a device pixel at the
-                    shipped size, so `align-[2px]` stands as measured rather than as a guess.
+                    This pill's ink centre rides 0.42px above the title's cap band with `align-[2px]`.
+                    The provider mark's vertical reading lives with `.sidebar-provider-mark` in styles.css.
                     RE-MEASURE rather than re-guess if the type scale or the pill's size moves. */}
                 {foreign && (
                   <span
