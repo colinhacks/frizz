@@ -2563,6 +2563,12 @@ test("a launcher asks the running server where it lands, and decides for itself 
     body: { protocol: 1, dir: "/code/app/src" },
   }]);
 
+  // A sandbox says so, and the server's own lines come back to be printed.
+  seen.length = 0;
+  const sandboxed = await askLaunchRoute(9393, "t", "/x", { sandbox: true, fetcher: answering(answer({ protocol: 1, path: "/", notices: ["a line about this machine"] })) });
+  assert.deepEqual(sandboxed, { path: "/", notices: ["a line about this machine"] });
+  assert.deepEqual(seen.map((request) => request.body), [{ protocol: 1, dir: "/x", sandbox: true }]);
+
   // The public listener is up before the server behind it: wait a restart out, briefly.
   const recovering = answering(new Response("starting", { status: 503 }), new Response("starting", { status: 503 }), answer({ protocol: 1, path: "/" }));
   assert.deepEqual(await askLaunchRoute(9393, "t", "/x", { fetcher: recovering }), { path: "/" });

@@ -1,4 +1,4 @@
-import { claimNameIsValid, isAnonymousClaimName } from "@frizz/shared";
+import { claimNameIsValid, isAnonymousClaimName } from "@frizz/shared/claim";
 import { GithubCredentialError, githubClaimToken, githubCredentialStatus } from "@frizz/server/github-credential";
 
 /**

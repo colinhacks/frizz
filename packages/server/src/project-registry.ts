@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { slugify } from "@frizz/shared"
+import { slugify } from "@frizz/shared/slug"
 import { frizzPaths, launchHostDir } from "./frizz-paths.ts"
 import { existingProjectId, isHomeDirectory, projectIdPath } from "./project-root.ts"
 

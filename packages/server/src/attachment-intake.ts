@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { ATTACHMENT_MAX_BASE64_CHARS, isAllowedAttachmentName } from "@frizz/shared"
+import { ATTACHMENT_MAX_BASE64_CHARS, isAllowedAttachmentName } from "@frizz/shared/attachments"
 
 // ATTACHMENT INTAKE: a dropped, pasted or picked file (images AND every document, office, data and archive
 // format in @frizz/shared ATTACHMENT_EXTENSIONS) lands on DISK, outside the repo, under the project's state

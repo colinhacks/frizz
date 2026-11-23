@@ -37,7 +37,8 @@ import type { BootView } from "./boot-view.ts"
 import { CALLER_HEADER, encodeCallerStamp, recordAudit, requestOriginFrom, withRequestOrigin, type AuditLog, type CallerVia } from "./audit.ts"
 import { REMOTE_REFUSED_CODE, remoteHostLabel, remoteRefusedMessage } from "./remote-refusal.ts"
 import { refuseTransforms } from "./no-transform.ts"
-import { FRIZZ_ROUTE_PREFIX, frizzRoute, type RelayAccess } from "@frizz/shared"
+import { type RelayAccess } from "@frizz/shared/relay-protocol"
+import { FRIZZ_ROUTE_PREFIX, frizzRoute } from "@frizz/shared/routes"
 
 export const SUPERVISOR_CONTROL_PREFIX = "/_frizz/control"
 export const SUPERVISOR_RESTART_PATH = `${SUPERVISOR_CONTROL_PREFIX}/restart`

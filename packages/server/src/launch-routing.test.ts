@@ -89,7 +89,9 @@ test("a request names the protocol and an absolute folder, and nothing else is r
   const dir = join(tmpdir(), "somewhere")
   assert.deepEqual(parseLaunchRouteRequest({ protocol: LAUNCH_ROUTE_PROTOCOL, dir }), { protocol: 1, dir })
   assert.deepEqual(parseLaunchRouteRequest({ protocol: 1, dir, args: ["a"], extra: true }), { protocol: 1, dir, args: ["a"] })
-  for (const bad of [null, [], "x", { dir }, { protocol: 2, dir }, { protocol: 1 }, { protocol: 1, dir: "relative/path" }, { protocol: 1, dir: "" }, { protocol: 1, dir, args: "a" }, { protocol: 1, dir, args: [1] }])
+  assert.deepEqual(parseLaunchRouteRequest({ protocol: 1, dir, sandbox: true }), { protocol: 1, dir, sandbox: true })
+  assert.deepEqual(parseLaunchRouteRequest({ protocol: 1, dir, sandbox: false }), { protocol: 1, dir })
+  for (const bad of [null, [], "x", { dir }, { protocol: 2, dir }, { protocol: 1 }, { protocol: 1, dir: "relative/path" }, { protocol: 1, dir: "" }, { protocol: 1, dir, args: "a" }, { protocol: 1, dir, args: [1] }, { protocol: 1, dir, sandbox: "yes" }])
     assert.ok("error" in parseLaunchRouteRequest(bad), JSON.stringify(bad))
 })
 
@@ -99,6 +101,11 @@ test("a launcher follows only a plain same-origin path", () => {
   })
   assert.deepEqual(parseLaunchRoute({ protocol: 1, path: "/?add=%2Fcode%2Fnew" }), { path: "/?add=%2Fcode%2Fnew" })
   assert.deepEqual(parseLaunchRoute({ protocol: 1, path: "/", project: { name: 1 }, notice: "" }), { path: "/" })
+  // The server's own lines: strings only, eight at most, each as long as a notice may be.
+  assert.deepEqual(parseLaunchRoute({ protocol: 1, path: "/", notice: "first", notices: ["a", "", 3, "b"] }), { path: "/", notice: "first", notices: ["a", "b"] })
+  assert.deepEqual(parseLaunchRoute({ protocol: 1, path: "/", notices: Array.from({ length: 12 }, (_, i) => `line ${i}`) })?.notices?.length, 8)
+  assert.equal(parseLaunchRoute({ protocol: 1, path: "/", notices: ["x".repeat(900)] })?.notices?.[0]?.length, 500)
+  assert.deepEqual(parseLaunchRoute({ protocol: 1, path: "/", notices: "not a list" }), { path: "/" })
   for (const bad of [
     undefined, "/", { path: "/" }, { protocol: 2, path: "/" }, { protocol: 1 },
     { protocol: 1, path: "//evil.example/" }, { protocol: 1, path: "https://evil.example/" }, { protocol: 1, path: "/\\evil.example" },

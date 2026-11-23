@@ -3,8 +3,8 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync }
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
-import { FRIZZ_GITHUB_APP_CLIENT_ID } from "@frizz/shared"
-import { findOnPath } from "./backend/acp-agents.ts"
+import { FRIZZ_GITHUB_APP_CLIENT_ID } from "@frizz/shared/claim"
+import { findOnPath } from "./find-on-path.ts"
 import { frizzRoots } from "./frizz-paths.ts"
 import { GithubCredentialSealError, openGithubCredential, resetGithubCredentialSeal, sealGithubCredential } from "./github-credential-seal.ts"
 

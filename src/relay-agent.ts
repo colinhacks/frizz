@@ -2,19 +2,7 @@ import { request as httpRequest } from "node:http";
 // The WHATWG `WebSocket` global cannot set request headers, and the visitor's Host, Origin and session
 // cookie are exactly what the board's upgrade gate reads. `ws` is already in the published bundle.
 import { WebSocket as WsWebSocket } from "ws";
-import {
-  chunkWsMessage,
-  decodeBody,
-  encodeBody,
-  isNavigation,
-  RELAY_MAX_FRAME_BODY,
-  relayUnavailablePage,
-  serializeFrame,
-  stripHopByHop,
-  WsMessageAssembler,
-  type RelayDownFrame,
-  type RelayUpFrame,
-} from "@frizz/shared";
+import { chunkWsMessage, decodeBody, encodeBody, isNavigation, RELAY_MAX_FRAME_BODY, relayUnavailablePage, serializeFrame, stripHopByHop, WsMessageAssembler, type RelayDownFrame, type RelayUpFrame } from "@frizz/shared/relay-protocol";
 
 /**
  * The board's half of the relay: it answers requests that arrive down the socket.

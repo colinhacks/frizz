@@ -1,5 +1,4 @@
-import { accessSync, constants, statSync } from "node:fs"
-import { delimiter, isAbsolute, join } from "node:path"
+import { findOnPath } from "../find-on-path.ts"
 import { ACP_MODEL_PREFIX, acpAgentIdFromModel, acpModelSlug } from "@frizz/shared"
 
 // Which ACP agents Frizz knows how to launch, and which of them this machine actually has.
@@ -47,29 +46,7 @@ export interface ResolvedAcpAgent extends AcpAgentSpec {
 
 // The `acp:<id>` model-slug grammar lives in @frizz/shared so the composer and the dispatcher cannot drift.
 export { ACP_MODEL_PREFIX, acpAgentIdFromModel, acpModelSlug }
-
-function isExecutableFile(path: string): boolean {
-  try {
-    if (!statSync(path).isFile()) return false
-    if (process.platform !== "win32") accessSync(path, constants.X_OK)
-    return true
-  } catch { return false }
-}
-
-/** Find `command` on PATH (or verify it as an absolute path). Windows also tries PATHEXT suffixes. */
-export function findOnPath(command: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  if (isAbsolute(command)) return isExecutableFile(command) ? command : undefined
-  const dirs = (env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean)
-  const exts = process.platform === "win32" ? ["", ...(env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";")] : [""]
-  for (const dir of dirs) {
-    for (const ext of exts) {
-      const candidate = join(dir, command + ext.toLowerCase())
-      if (isExecutableFile(candidate)) return candidate
-      if (ext && isExecutableFile(join(dir, command + ext))) return join(dir, command + ext)
-    }
-  }
-  return undefined
-}
+export { findOnPath }
 
 /** The catalogue merged with the operator's own entries (theirs win on id), in catalogue order. */
 export function acpAgentSpecs(custom: readonly AcpAgentInput[] | undefined): AcpAgentSpec[] {

@@ -1,4 +1,5 @@
-import { isAnonymousClaimName, type RelayAccess } from "@frizz/shared";
+import { isAnonymousClaimName } from "@frizz/shared/claim";
+import { type RelayAccess } from "@frizz/shared/relay-protocol";
 import { signedInAgo, type SessionRecord } from "@frizz/server/access-codes";
 import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
 import type { AccessLink } from "./access-pane.ts";

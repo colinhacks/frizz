@@ -126,7 +126,11 @@ test("the launch route answers a launcher holding either owner token, and nobody
   const app = originTestApp(port, undefined, {
     controlToken: "host-capability",
     machineToken: "machine-capability",
-    launchRouting: { home, open: (dir) => { opened.push(dir); throw new Error("nothing here is a project") } },
+    launchRouting: {
+      home,
+      open: (dir) => { opened.push(dir); throw new Error("nothing here is a project") },
+      notices: (request) => request.sandbox ? [] : ["a line about this machine"],
+    },
   })
   const ask = (headers: Record<string, string>, body: unknown = { protocol: 1, dir: elsewhere }) =>
     app.request(`http://127.0.0.1:${port}/_frizz/control/launch`, {
@@ -139,8 +143,10 @@ test("the launch route answers a launcher holding either owner token, and nobody
   for (const token of ["host-capability", "machine-capability"]) {
     const answered = await ask({ "x-frizz-launch-token": token })
     assert.equal(answered.status, 200, token)
-    assert.deepEqual(await answered.json(), { protocol: 1, path: "/" })
+    assert.deepEqual(await answered.json(), { protocol: 1, path: "/", notices: ["a line about this machine"] })
   }
+  // A sandbox's notices are the server's to leave out, and an answer with none carries no list.
+  assert.deepEqual(await (await ask({ "x-frizz-launch-token": "machine-capability" }, { protocol: 1, dir: elsewhere, sandbox: true })).json(), { protocol: 1, path: "/" })
   assert.equal((await ask({})).status, 403)
   assert.equal((await ask({ "x-frizz-launch-token": "forged" })).status, 403)
   // A page on another loopback name cannot borrow the token it has no way to read anyway.

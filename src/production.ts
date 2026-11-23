@@ -10,7 +10,6 @@ import { dirname, join } from "node:path";
 import { launchApp, launchBrowserTab } from "./browser.ts";
 import { adoptSessionState, liveSessions, loadSessionState, remoteDevicesLine, sessionEpochLogLine, sessionEpochNotice } from "@frizz/server/access-codes";
 import { qrAreaOf, renderQrLines } from "@frizz/server/qr";
-import { claudeRetentionWarning, claudeTranscriptRetention, claudeUserSettingsFile } from "@frizz/server/claude-retention";
 import { listSessions, signOutSession } from "./sessions-cli.ts";
 import { SUPERVISOR_ACCESS_CODE_PATH } from "@frizz/server/restart-supervisor";
 import { createAccessPane, type AccessPane } from "./access-pane.ts";
@@ -76,7 +75,7 @@ import {
   assertLaunchPrerequisites,
   assertRequiredExecutables,
 } from "./preflight.ts";
-import { DEFAULT_PORT, fallbackPort } from "@frizz/shared";
+import { DEFAULT_PORT, fallbackPort } from "@frizz/shared/routes";
 import { registerProject } from "@frizz/server/project-registry";
 import { resolveProjectLabel } from "@frizz/server/project-identity";
 
@@ -411,7 +410,7 @@ function legacyLanding(): LaunchRoute {
 
 /** Where this launch lands: the running server's answer, or the frozen rules when it has none. */
 async function resolveLanding(port: number, ownerToken: string | undefined): Promise<LaunchRoute> {
-  const answered = ownerToken ? await askLaunchRoute(port, ownerToken, launchDir) : undefined;
+  const answered = ownerToken ? await askLaunchRoute(port, ownerToken, launchDir, { sandbox: sandbox !== null }) : undefined;
   if (answered) return answered;
   logger.info("launcher", "the running server did not say where this launch lands; using this launcher's own rules");
   return legacyLanding();
@@ -473,11 +472,9 @@ async function openOrPrint(port: number, reused: boolean, landing: LaunchRoute):
   if (sandbox) warnings.push(`Sandbox: everything here is throwaway (${sandbox.home}) and is deleted when this terminal closes.`);
   if (sessionNotice && !reused) warnings.push(sessionNotice);
   if (landing.notice) warnings.push(landing.notice);
-  // Claude Code deletes an idle session's file after `cleanupPeriodDays`, and with it the thread's whole
-  // conversation; Frizz cannot keep it, only say so while there is still time to raise the period. The
-  // machine-wide period, as the source launcher reads it (index.ts, claude-retention.ts).
-  const retentionWarning = sandbox ? undefined : claudeRetentionWarning(claudeTranscriptRetention({}), claudeUserSettingsFile({}), (path) => tildePath(path, homedir()));
-  if (retentionWarning) warnings.push(retentionWarning);
+  // The server writes the rest, such as Claude Code's retention warning (launch-notices.ts), so a new
+  // line ships in a server release. A server from before `notices` sends none, and the launch says less.
+  warnings.push(...(landing.notices ?? []));
   if (!readout) {
     console.log(`${reused ? "reusing" : "started"} Frizz${landing.project ? ` for ${landing.project.dir}` : ""}`);
     console.log(url);

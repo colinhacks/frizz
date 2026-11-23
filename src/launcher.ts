@@ -51,7 +51,7 @@ import {
 } from "@frizz/server/launch-routing";
 import { seedProjectId } from "@frizz/server/project-registry";
 import { defaultLogRoot, latestLogPath } from "@frizz/server/logging";
-import { DEFAULT_PORT, fallbackPort, FRIZZ_ROUTE_PREFIX } from "@frizz/shared";
+import { DEFAULT_PORT, fallbackPort, FRIZZ_ROUTE_PREFIX } from "@frizz/shared/routes";
 
 export { acquireGlobalLaunchLock, pidIsAlive };
 
@@ -537,7 +537,7 @@ export async function askLaunchRoute(
   port: number,
   ownerToken: string,
   dir: string,
-  options: { fetcher?: typeof fetch; args?: readonly string[]; patienceMs?: number; timeoutMs?: number } = {},
+  options: { fetcher?: typeof fetch; args?: readonly string[]; sandbox?: boolean; patienceMs?: number; timeoutMs?: number } = {},
 ): Promise<LaunchRoute | undefined> {
   const fetcher = options.fetcher ?? fetch
   const deadline = Date.now() + (options.patienceMs ?? 6_000)
@@ -549,7 +549,7 @@ export async function askLaunchRoute(
       const response = await fetcher(`http://127.0.0.1:${port}${FRIZZ_ROUTE_PREFIX}${LAUNCH_ROUTE_PATH}`, {
         method: "POST",
         headers: { "content-type": "application/json", [LAUNCH_TOKEN_HEADER]: ownerToken },
-        body: JSON.stringify({ protocol: LAUNCH_ROUTE_PROTOCOL, dir, ...(options.args?.length ? { args: options.args } : {}) }),
+        body: JSON.stringify({ protocol: LAUNCH_ROUTE_PROTOCOL, dir, ...(options.args?.length ? { args: options.args } : {}), ...(options.sandbox ? { sandbox: true } : {}) }),
         signal: controller.signal,
       })
       if (response.status === 200) return parseLaunchRoute(await response.json())

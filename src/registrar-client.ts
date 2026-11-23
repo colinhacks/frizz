@@ -1,4 +1,4 @@
-import { CLAIM_PROTOCOL_VERSION, normalizeClaimName, signClaim } from "@frizz/shared";
+import { CLAIM_PROTOCOL_VERSION, normalizeClaimName, signClaim } from "@frizz/shared/claim";
 
 /**
  * The CLI half of claiming `<name>.frizz.sh`.

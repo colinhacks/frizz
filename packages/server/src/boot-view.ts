@@ -13,7 +13,7 @@
 // is decided here, house duration grammar included (`5m`, `3m 12s`).
 import type { BootProgress, BootRuntime } from "./boot-progress.ts"
 
-import type { BootView, BootViewKind, BootViewStep, RuntimeDownloadChip } from "@frizz/shared"
+import type { BootView, BootViewKind, BootViewStep, RuntimeDownloadChip } from "@frizz/shared/boot-view"
 import type { RuntimeDownload } from "./runtimes.ts"
 
 export type { BootView, BootViewKind, BootViewStep, RuntimeDownloadChip }

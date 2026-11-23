@@ -31,6 +31,8 @@ export interface LaunchRouteRequest {
   dir: string
   /** Positional arguments the launcher did not consume. Nothing reads them yet. */
   args?: string[]
+  /** A `--sandbox` launch: a throwaway home, where a notice about keeping history does not apply. */
+  sandbox?: boolean
 }
 
 export interface LaunchRoute {
@@ -40,6 +42,11 @@ export interface LaunchRoute {
   project?: { name: string; dir: string }
   /** One line for the launcher to print. */
   notice?: string
+  /**
+   * More lines for the launcher to print, written by the server (launch-notices.ts) so that a new one
+   * ships in a server release. A launcher from before this field reads `notice` alone.
+   */
+  notices?: string[]
 }
 
 export type LaunchKind =
@@ -107,12 +114,13 @@ export function routeLaunch(
 /** Read a request body, or say what is wrong with it. */
 export function parseLaunchRouteRequest(body: unknown): LaunchRouteRequest | { error: string } {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { error: "expected a JSON object" }
-  const { protocol, dir, args } = body as Record<string, unknown>
+  const { protocol, dir, args, sandbox } = body as Record<string, unknown>
   if (protocol !== LAUNCH_ROUTE_PROTOCOL) return { error: `unsupported launch protocol ${String(protocol)}` }
   if (typeof dir !== "string" || dir.length === 0 || dir.length > 4096 || !isAbsolute(dir)) return { error: "dir must be an absolute path" }
   if (args !== undefined && !(Array.isArray(args) && args.length <= 64 && args.every((arg) => typeof arg === "string" && arg.length <= 4096)))
     return { error: "args must be a short list of strings" }
-  return { protocol: LAUNCH_ROUTE_PROTOCOL, dir, ...(args ? { args: args as string[] } : {}) }
+  if (sandbox !== undefined && typeof sandbox !== "boolean") return { error: "sandbox must be true or false" }
+  return { protocol: LAUNCH_ROUTE_PROTOCOL, dir, ...(args ? { args: args as string[] } : {}), ...(sandbox ? { sandbox } : {}) }
 }
 
 /**
@@ -122,7 +130,7 @@ export function parseLaunchRouteRequest(body: unknown): LaunchRouteRequest | { e
  */
 export function parseLaunchRoute(body: unknown): LaunchRoute | undefined {
   if (!body || typeof body !== "object" || Array.isArray(body)) return undefined
-  const { protocol, path, project, notice } = body as Record<string, unknown>
+  const { protocol, path, project, notice, notices } = body as Record<string, unknown>
   if (protocol !== LAUNCH_ROUTE_PROTOCOL || typeof path !== "string") return undefined
   if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\") || /[\u0000-\u001f]/u.test(path)) return undefined
   const named = project && typeof project === "object" ? (project as Record<string, unknown>) : undefined
@@ -130,5 +138,12 @@ export function parseLaunchRoute(body: unknown): LaunchRoute | undefined {
     path,
     ...(named && typeof named.name === "string" && typeof named.dir === "string" ? { project: { name: named.name, dir: named.dir } } : {}),
     ...(typeof notice === "string" && notice.length > 0 ? { notice: notice.slice(0, 500) } : {}),
+    ...(Array.isArray(notices) ? listedNotices(notices) : {}),
   }
+}
+
+/** A server's extra lines, as many as a readout has room for, each as long as `notice` may be. */
+function listedNotices(notices: unknown[]): { notices?: string[] } {
+  const lines = notices.filter((line): line is string => typeof line === "string" && line.length > 0).slice(0, 8).map((line) => line.slice(0, 500))
+  return lines.length > 0 ? { notices: lines } : {}
 }

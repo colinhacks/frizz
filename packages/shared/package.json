@@ -4,7 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./attachments": "./src/attachments.ts",
+    "./boot-view": "./src/boot-view.ts",
+    "./claim": "./src/claim.ts",
+    "./relay-protocol": "./src/relay-protocol.ts",
+    "./routes": "./src/routes.ts",
+    "./slug": "./src/slug.ts"
   },
   "dependencies": {
     "yaml": "^2.9",

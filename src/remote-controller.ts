@@ -9,7 +9,7 @@
  * switch from one setup to another leave no tunnel behind.
  */
 import { homedir } from "node:os";
-import type { RelayAccess } from "@frizz/shared";
+import type { RelayAccess } from "@frizz/shared/relay-protocol";
 import {
   type CloudConfig,
   type CloudTransport,

@@ -1,13 +1,5 @@
-import {
-  exportClaimPublicKey,
-  parseFrame,
-  RELAY_KEEPALIVE_PING,
-  relayHandshakeInput,
-  serializeFrame,
-  type RelayDownFrame,
-  type RelayHandshake,
-  type RelayUpFrame,
-} from "@frizz/shared";
+import { exportClaimPublicKey } from "@frizz/shared/claim";
+import { parseFrame, RELAY_KEEPALIVE_PING, relayHandshakeInput, serializeFrame, type RelayDownFrame, type RelayHandshake, type RelayUpFrame } from "@frizz/shared/relay-protocol";
 import { serveRelayRequest, serveRelayWebSocket, type NestedSession, type RelayedRequest } from "./relay-agent.ts";
 
 /**

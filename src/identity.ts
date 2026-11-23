@@ -2,12 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { frizzPaths } from "@frizz/server/frizz-paths";
-import {
-  claimIdentityFromPrivateKey,
-  exportClaimPrivateKey,
-  exportClaimPublicKey,
-  generateClaimIdentity,
-} from "@frizz/shared";
+import { claimIdentityFromPrivateKey, exportClaimPrivateKey, exportClaimPublicKey, generateClaimIdentity } from "@frizz/shared/claim";
 
 /**
  * The keypair that owns this machine's `<name>.frizz.sh` names.

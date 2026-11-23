@@ -76,6 +76,17 @@ test("the shell answers --help with nothing installed beside it", () => {
   }
 });
 
+test("the shell carries none of the shared index, zod or yaml", () => {
+  // The shared index is 8,000 lines of schemas the launcher never runs, and it pulled zod and yaml in
+  // with it: 658 KB of a 1.28 MB shell until 2026-11-23. It changed in nearly every release, so the
+  // shell's bytes did too, and comparing two builds could not say whether the launcher had changed
+  // (plans/shell-release-cadence.md). The launcher imports the narrow subpaths of `@frizz/shared`.
+  const [output] = Object.values(bundled.metafile.outputs);
+  const carried = Object.entries(output.inputs).filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path);
+  assert.ok(carried.some((path) => path.endsWith("packages/shared/src/routes.ts")), "the bundle lists no shared module at all, so this test would pass on anything");
+  assert.deepEqual(carried.filter((path) => /packages\/shared\/src\/index\.ts$|node_modules\/(?:\.pnpm\/)?(?:zod|yaml)[@/]/.test(path) || /\/(?:zod|yaml)@[^/]+\/node_modules\//.test(path)), []);
+});
+
 test("the build script bundles with the options this file tests", async () => {
   // The script cannot be imported (it writes `dist/` when it loads), so it is read: a second copy of
   // the options there would be what ships, and this file would be testing something else.

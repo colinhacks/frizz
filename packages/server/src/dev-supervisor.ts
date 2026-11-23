@@ -26,7 +26,7 @@ import {
   type ProjectLaunchTarget,
 } from "./project-launch.ts"
 import type { SessionDirectory, SessionRecord } from "./access-codes.ts"
-import type { RelayAccess } from "@frizz/shared"
+import type { RelayAccess } from "@frizz/shared/relay-protocol"
 import { auditLogPathForStateDir, fileAuditLog } from "./audit.ts"
 import { RestartSupervisorProxy, type RestartResult } from "./restart-supervisor.ts"
 import { log as frizzLog } from "./logging.ts"

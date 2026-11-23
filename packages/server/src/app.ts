@@ -18,7 +18,8 @@ import { resolveLocalVisualization } from "./local-visualization.ts"
 import { CALLER_HEADER, requestOriginFrom, withRequestOrigin } from "./audit.ts"
 import { callerAccess, refuseRemoteRoute, remoteGate, remoteRouteAllowed } from "./remote-gate.ts"
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
-import { LAUNCH_ROUTE_PATH, LAUNCH_ROUTE_PROTOCOL, LAUNCH_TOKEN_HEADER, parseLaunchRouteRequest, routeLaunch } from "./launch-routing.ts"
+import { LAUNCH_ROUTE_PATH, LAUNCH_ROUTE_PROTOCOL, LAUNCH_TOKEN_HEADER, parseLaunchRouteRequest, routeLaunch, type LaunchRouteRequest } from "./launch-routing.ts"
+import { launchNotices } from "./launch-notices.ts"
 import { openableFileRoots, resolveProject } from "./project.ts"
 import { registeredWorktreeRoots } from "./worktree-changes.ts"
 import { ProjectServedElsewhereError, projectServedElsewhere } from "./project-serving.ts"
@@ -41,7 +42,7 @@ export interface AppOptions {
   machineToken?: string
   requestOwnerStop?: () => void
   /** Test seam for the launch route: the project resolver, and the home whose registry it reads. */
-  launchRouting?: { open?: (dir: string) => { id: string; dir: string; name: string }; home?: string }
+  launchRouting?: { open?: (dir: string) => { id: string; dir: string; name: string }; home?: string; notices?: (request: LaunchRouteRequest) => string[] }
 }
 
 export function createApp(ctx: AppContext, options: AppOptions = {}) {
@@ -216,7 +217,9 @@ export function createApp(ctx: AppContext, options: AppOptions = {}) {
       return project
     })
     try {
-      return c.json({ protocol: LAUNCH_ROUTE_PROTOCOL, ...routeLaunch(request.dir, open, home) })
+      const landing = routeLaunch(request.dir, open, home)
+      const notices = options.launchRouting?.notices?.(request) ?? launchNotices(request, { home })
+      return c.json({ protocol: LAUNCH_ROUTE_PROTOCOL, ...landing, ...(notices.length > 0 ? { notices } : {}) })
     } catch (error) {
       // The folder is gone, or cannot be read at all: nothing to classify.
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400)
