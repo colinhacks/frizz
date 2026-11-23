@@ -1,7 +1,7 @@
 import { useEffect } from "react"
 import { proxy, useSnapshot } from "valtio"
 import type { AwaitingHint, HumanTodo, ThreadView } from "@frizz/shared"
-import { awaitingSteps, repliesStepsDone, STEPS_DONE, wordsUnderAnswers } from "@frizz/shared"
+import { awaitingSteps, STEPS_DONE, stepsReportOf, wordsUnderAnswers } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import type { ChatMessage } from "../hooks.ts"
 import { showToast } from "../store.ts"
@@ -134,11 +134,14 @@ export function stepsReport<T extends Pick<HumanTodo, "done" | "staged">>(todos:
   return todos.filter((todo) => todo.staged || !todo.done)
 }
 
-/** The reply a send carries: the bare word when everything is done, as if the human had typed it, and a
- *  checklist when some is not. The human's note goes under either. */
+/** The reply a send carries: "Done 2 of 3:" over the checklist it reports, every box ticked or not, with
+ *  the human's note under it. A report of everything done was the bare word until 2026-11-23, which the
+ *  chat could only draw as that word in a bubble, the boxes it answered nowhere in it (maintainer: "it
+ *  shows up in the fucking chat as just the word 'done'"). Now every send draws as the card of what it
+ *  said (ChatView, AwaitingSteps StepsReportCard), and the worker reads which steps it covers. */
 export function withStepsReport(report: readonly Pick<HumanTodo, "text" | "done">[], note: string): string {
   const done = report.filter((todo) => todo.done).length
-  const head = done === report.length
+  const head = report.length === 0
     ? STEPS_DONE
     : `${STEPS_DONE} ${done} of ${report.length}:\n${report.map((todo) => `- [${todo.done ? "x" : " "}] ${todo.text}`).join("\n")}`
   const trimmed = note.trim()
@@ -148,20 +151,10 @@ export function withStepsReport(report: readonly Pick<HumanTodo, "text" | "done"
 /** What a reply said was done: everything, the steps it ticked, or null for a reply that was not a report. */
 export type StepsReply = "all" | ReadonlySet<string>
 
-const REPORT_HEAD = new RegExp(`^${STEPS_DONE} \\d+ of \\d+:$`)
-const REPORT_ROW = /^- \[( |x)\] (.*)$/
-
 export function repliedSteps(text: string): StepsReply | null {
-  if (repliesStepsDone(text)) return "all"
-  const [head, ...rows] = wordsUnderAnswers(text).split("\n")
-  if (!REPORT_HEAD.test(head)) return null
-  const done = new Set<string>()
-  for (const row of rows) {
-    const match = REPORT_ROW.exec(row)
-    if (!match) break
-    if (match[1] === "x") done.add(match[2])
-  }
-  return done
+  const report = stepsReportOf(wordsUnderAnswers(text))
+  if (!report) return null
+  return report.all ? "all" : new Set(report.rows.filter((row) => row.done).map((row) => row.text))
 }
 
 // A SETTLED STEPS CARD SHOWS WHAT ITS REPLY SAID (maintainer 2026-10-15: "we should have something to

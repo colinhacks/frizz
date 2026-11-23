@@ -18,6 +18,11 @@ const baseUrl = process.env.FRIZZ_SETTLED_STEPS_E2E_URL
 // reply's bubble is drawn. A reply in words ticks nothing.
 
 const CARD = "[data-awaiting-background]"
+// What the send carries once both boxes are ticked (lib/stepsAnswer withStepsReport): the titles as the
+// worker wrote them, each ticked.
+const BOTH_DONE = "Done 2 of 2:\n- [x] Run `npm login --auth-type=web` in a terminal on this machine.\n- [x] Approve the browser prompt with the **acme-bot** account."
+// The reply while it is still on its way: the to-do list's report card, dimmed (AnswersCard ReplyCard).
+const GHOST = "[data-steps-report].opacity-50"
 const STEPS = [
   "Run npm login --auth-type=web in a terminal on this machine.",
   "Approve the browser prompt with the acme-bot account.",
@@ -90,28 +95,28 @@ test("a steps card stays in the transcript after its rest, ticked as its reply s
     await recordSends()
     await tick()
     // Every commit from the Send on: the steps cards on screen, whether one still has its box, and whether
-    // the reply's ghost bubble is drawn.
-    await page.evaluate((sel) => {
+    // the reply's ghost card is drawn.
+    await page.evaluate((sel, ghost) => {
       const w = window as unknown as { __commits: { cards: number; box: boolean; completed: boolean; ghost: boolean }[] }
       w.__commits = []
       new MutationObserver(() => w.__commits.push({
         cards: document.querySelectorAll(`${sel} [data-awaiting-steps]`).length,
         box: !!document.querySelector("[data-awaiting-steps] button[role=checkbox]"),
         completed: document.querySelectorAll("[data-awaiting-steps] span[role=checkbox][aria-checked=true]").length === 2,
-        ghost: [...document.querySelectorAll(".bg-user-bubble.opacity-50")].some((el) => el.textContent?.includes("Done")),
+        ghost: !!document.querySelector(ghost),
       })).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true })
-    }, CARD)
+    }, CARD, GHOST)
     await page.click("[data-send-split] [data-send]")
     await page.waitForFunction(() => (window as unknown as { __sent: string[] }).__sent.length > 0, { timeout: 10_000 })
-    assert.deepEqual(await sent(), ["Done"], "one reply, the word")
+    assert.deepEqual(await sent(), [BOTH_DONE], "one reply, the checklist of both")
 
     // SENT, and the board still says the thread rests on these steps — this fixture's never says otherwise.
     // The send ends the rest in the render that draws its ghost (lib/steering.ts steeredSinceRest), so the live
     // card at the tail becomes the record in its message right there: the steps stay on screen through every
     // commit, and once the ghost is drawn, nobody is waiting on their box.
-    await page.waitForFunction(() => document.querySelector(".bg-user-bubble.opacity-50"), { timeout: 10_000 })
+    await page.waitForFunction((ghost) => document.querySelector(ghost), { timeout: 10_000 }, GHOST)
     const commits = await page.evaluate(() => (window as unknown as { __commits: { cards: number; box: boolean; completed: boolean; ghost: boolean }[] }).__commits)
-    assert.ok(commits.some((c) => c.ghost), "the reply's ghost bubble is drawn")
+    assert.ok(commits.some((c) => c.ghost), "the reply's ghost card is drawn")
     assert.deepEqual(commits.filter((c) => c.cards !== 1), [], "the steps are on screen, once, in every commit")
     assert.deepEqual(commits.filter((c) => c.ghost && c.box), [], "no commit draws the ghost beside the live box")
     assert.deepEqual(commits.filter((c) => c.ghost && !c.completed), [], "every commit that draws the ghost draws the ticked record with it")
@@ -127,7 +132,7 @@ test("a steps card stays in the transcript after its rest, ticked as its reply s
     await tick()
     await page.click("[data-steps-send]")
     await page.waitForFunction(() => (window as unknown as { __sent: string[] }).__sent.length > 0, { timeout: 10_000 })
-    assert.deepEqual(await sent(), ["Done"], "one reply, the word")
+    assert.deepEqual(await sent(), [BOTH_DONE], "one reply, the checklist of both")
     await page.setViewport({ width: 900, height: 1000 })
 
     // SENT, worker mid-turn: the card stays where it was, its box ticked and no longer a control.
@@ -187,6 +192,16 @@ test("a steps card stays in the transcript after its rest, ticked as its reply s
     const report = { title: "Done 1 of 2", steps: STEPS, ticks: [true, false], wire: false }
     assert.deepEqual(await reply("partial"), { ...report, note: false })
     assert.deepEqual(await reply("partial&note=1"), { ...report, note: true })
+
+    // …AND SO DOES A REPORT OF EVERYTHING DONE (2026-11-23, maintainer: "when I hit Enter on them, it shows
+    // up in the fucking chat as just the word 'done'"): every box it sent, ticked.
+    assert.deepEqual(await reply("running"), { title: "Done 2 of 2", steps: STEPS, ticks: [true, true], wire: false, note: false })
+    // The word typed alone is the human's own, and stays their bubble — while the card above still reads
+    // it as every step done.
+    const typed = await read("running&typed=1")
+    assert.deepEqual(typed.cards, [record([true, true])], "a typed Done ticks the card it answers")
+    assert.equal(await page.$("[data-steps-report]"), null, "and draws no report card")
+    assert.equal(await page.$eval("[data-transcript-source-id='u2'] .bg-user-bubble", (el) => (el as HTMLElement).innerText.trim()), "Done", "the word, in the human's own bubble")
 
     // THE THREAD MOVED ON to a later rest: still there, still ticked, beside the new resting card.
     const moved = await read("moved")
@@ -248,7 +263,7 @@ test("a box carried onto a later rest's card stays on it, ticked, once the reply
       const last = [...document.querySelectorAll(sel)].pop()
       return [...(last?.querySelectorAll("[data-awaiting-steps] [role=checkbox]") ?? [])].every((box) => box.getAttribute("aria-checked") === "true")
     }, {}, CARD)
-    await page.evaluate((sel) => {
+    await page.evaluate((sel, ghost) => {
       const w = window as unknown as { __commits: Commit[]; __sent: string[] }
       w.__commits = []
       w.__sent = []
@@ -263,16 +278,16 @@ test("a box carried onto a later rest's card stays on it, ticked, once the reply
         w.__commits.push({
           rows: all.map((el) => el.querySelectorAll("[data-awaiting-steps] li").length),
           ticked: boxes.length > 0 && boxes.every((box) => box.getAttribute("aria-checked") === "true"),
-          ghost: [...document.querySelectorAll(".bg-user-bubble.opacity-50")].some((el) => el.textContent?.includes("Done")),
+          ghost: !!document.querySelector(ghost),
         })
       }).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true })
-    }, CARD)
+    }, CARD, GHOST)
     await page.click("[data-send-split] [data-send]")
     await page.waitForFunction(() => (window as unknown as { __sent: string[] }).__sent.length > 0, { timeout: 10_000 })
-    assert.deepEqual(await page.evaluate(() => (window as unknown as { __sent: string[] }).__sent), ["Done"], "one reply, the word")
-    await page.waitForFunction(() => document.querySelector(".bg-user-bubble.opacity-50"), { timeout: 10_000 })
+    assert.deepEqual(await page.evaluate(() => (window as unknown as { __sent: string[] }).__sent), [`Done 3 of 3:\n${[FIRST, ...SECOND].map((step) => `- [x] ${step}`).join("\n")}`], "one reply, the checklist of all three")
+    await page.waitForFunction((ghost) => document.querySelector(ghost), { timeout: 10_000 }, GHOST)
     const commits = await page.evaluate(() => (window as unknown as { __commits: Commit[] }).__commits)
-    assert.ok(commits.some((c) => c.ghost), "the reply's ghost bubble is drawn")
+    assert.ok(commits.some((c) => c.ghost), "the reply's ghost card is drawn")
     assert.deepEqual(commits.filter((c) => c.rows.join() !== "2,3").map((c) => c.rows.join()), [], "both cards keep every row in every commit: the carried box never leaves")
     assert.deepEqual(commits.filter((c) => c.ghost && !c.ticked), [], "every commit that draws the reply draws all three of its boxes ticked")
     assert.deepEqual((await cards()).at(-1), { steps: [FIRST, ...SECOND], ticks: [true, true, true], controls: 0 }, "the record of the send, from its first frame")

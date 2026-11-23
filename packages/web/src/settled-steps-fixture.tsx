@@ -22,8 +22,11 @@ import "./styles.css"
 //                is still owed (`&note=1`: with words typed under the report)
 //   ?at=carried-rest  a box ticked at an EARLIER steps rest and never sent rides on the next rest's card
 //                beside its own two steps (the nub thread of 2026-11-11)
-//   ?at=carried  all three sent with one "Done", which the worker took in mid-turn: it had just woken on
-//                a shell and made a tool call, so the reply is drawn under that call
+//   ?at=carried  all three sent with one "Done 3 of 3", which the worker took in mid-turn: it had just
+//                woken on a shell and made a tool call, so the reply is drawn under that call
+//
+// `&typed=1` makes every report of everything done the word "Done" alone: the human typing it, or a send
+// from before 2026-11-23, which composed the bare word.
 //
 // The transcript also carries an EARLIER settled fence with no steps — a plain shell wait — which must
 // keep drawing nothing in every state: that is the negative control for the exception.
@@ -34,6 +37,9 @@ const AT = PARAMS.get("at") ?? "running"
 document.documentElement.dataset.font = PARAMS.get("font") === "mono" ? "mono" : "sans"
 
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
+// A report of every step done, as the to-do list's send composes it (lib/stepsAnswer withStepsReport).
+const allDone = (steps: readonly string[]) =>
+  PARAMS.get("typed") ? "Done" : `Done ${steps.length} of ${steps.length}:\n${steps.map((step) => `- [x] ${step}`).join("\n")}`
 
 const SHELL_FENCE = "```awaiting\nshells: [bzvtnt3ig]\nstatus: working\nfor: 30m\n---\nThe release build is running in the background.\n```"
 const STEPS_PROSE = "The 4.2.0 tag is cut and verified. The publish step runs as the acme-bot account, and no token for it is available to this thread."
@@ -85,7 +91,7 @@ const carriedMessages: TranscriptMessage[] = [
     event("e1", "Background task «Starting the second sign-in» finished", 5.001),
     // Made 4s AFTER the human sent, and drawn above the reply: the worker took the reply in after it.
     toolCall("a3", 4.93),
-    human("u2", "Done", 5),
+    human("u2", allDone([FIRST_STEPS[0], ...SECOND_STEPS]), 5),
   ] : []),
 ]
 
@@ -93,12 +99,12 @@ const messages: TranscriptMessage[] = CARRIED ? carriedMessages : [
   human("u1", "Cut the acme 4.2.0 release.", 40),
   say("a1", `Building the release artifacts.\n\n${SHELL_FENCE}`, 38),
   signed(say("a2", `The build is green.\n\n${STEPS_FENCE}`, 20)),
-  ...(AT === "rest" ? [] : [human("u2", AT === "asked" ? "Which account should approve it — the bot or mine?" : AT === "partial" ? `Done 1 of 2:\n- [x] Run \`npm login --auth-type=web\` in a terminal on this machine.\n- [ ] Approve the browser prompt with the **acme-bot** account.${PARAMS.get("note") ? "\n\nThe browser prompt never came up." : ""}` : "Done", 5)]),
+  ...(AT === "rest" ? [] : [human("u2", AT === "asked" ? "Which account should approve it — the bot or mine?" : AT === "partial" ? `Done 1 of 2:\n- [x] Run \`npm login --auth-type=web\` in a terminal on this machine.\n- [ ] Approve the browser prompt with the **acme-bot** account.${PARAMS.get("note") ? "\n\nThe browser prompt never came up." : ""}` : allDone(STEPS_HINTS.filter((h) => h.kind === "step").map((h) => h.value)), 5)]),
   ...(AT === "moved" ? [signed(say("a3", LATER_FENCE, 1))] : []),
 ]
 
 // THE LIST AS THE SERVER HOLDS IT in each state (human-todos.ts): both steps owed at rest and after a
-// reply in words, both reported done after "Done", and the second still owed after "Done 1 of 2".
+// reply in words, both reported done after "Done 2 of 2", and the second still owed after "Done 1 of 2".
 function todosAt(): HumanTodo[] {
   if (CARRIED) {
     // The first rest's second step was never ticked, so the second rest's list dropped it.

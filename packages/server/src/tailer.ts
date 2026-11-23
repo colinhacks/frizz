@@ -1572,7 +1572,7 @@ function noteAssistantSignOff(state: FoldState, text: string): void {
 
 /** The human came in — typed, answered a question, or reported the steps they were handed done — so the
  *  next sign-off answers them, and a fence it repeats from before is a reply rather than a restatement.
- *  Frizz's own deliveries leave it standing. A bare "Done" is no TYPED message (isHumanTypedMessage: the
+ *  Frizz's own deliveries leave it standing. A steps report is no TYPED message (isHumanTypedMessage: the
  *  checklist is not the human's prose), but it is the human coming in, as sign-offs.ts humanCameIn and the
  *  web's isHumanTurn read it; until 2026-11-17 this alone disagreed, on 117 steps reports across this
  *  machine's transcripts. */

@@ -18,8 +18,8 @@ const baseUrl = process.env.FRIZZ_AWAITING_STEPS_E2E_URL
 //      colour, one box per step: no Snooze, no button, no text box of its own.
 //   2. Ticking a box STAGES an answer, as picking a question's option does: the tick is saved, nothing is sent,
 //      the prompt box arms its Send and says it will carry a note, and a second click unticks it.
-//   3. The prompt box sends it: every box ticked is the word alone, part of them is a checklist, and a typed
-//      note rides under either in the same reply, bound to the thread's session, and the list stays as the
+//   3. The prompt box sends it as a checklist, every box ticked or part of them, and a typed
+//      note rides under it in the same reply, bound to the thread's session, and the list stays as the
 //      record of what was sent, its boxes no longer live. Enter on a ticked box itself is the same send, whether it was ticked by click or by key.
 //   4. What was finished at an earlier rest folds away, and stays one click off.
 
@@ -212,7 +212,7 @@ test("a steps card's checklist stages an answer the prompt box sends", {
     assert.equal(partial[0].body.sessionId, "aaaaaaaa-bbbb-cccc-dddd-000000000001", "bound to the session that posted the steps")
     await gone()
 
-    // ---- 3b. the whole list is the word, with a typed note under it, through the Send button ----
+    // ---- 3b. the whole list is the same checklist, every box ticked, with a typed note under it, through the Send button ----
     await fresh()
     await tickAll()
     await page.type(COMPOSER, "Signed in as acme-bot.")
@@ -220,7 +220,7 @@ test("a steps card's checklist stages an answer the prompt box sends", {
     await sends()
     const withNote = await rpcs("followUp")
     assert.equal(withNote.length, 1)
-    assert.equal(withNote[0].body.message, "Done\n\nSigned in as acme-bot.", "the word, then the human's note under it")
+    assert.equal(withNote[0].body.message, `Done 3 of 3:\n- [x] ${FIRST}\n- [x] Approve the browser prompt with the **acme-bot** account.\n- [x] Reply here once \`npm whoami\` prints \`acme-bot\`.\n\nSigned in as acme-bot.`, "every box ticked, then the human's note under it")
     await gone()
 
     // ---- 3c. Enter on a ticked box itself sends it, as Enter after picking an option does ----
@@ -281,7 +281,7 @@ test("a steps card's checklist stages an answer the prompt box sends", {
     await page.keyboard.press("Enter")
     await sends()
     const reported = await rpcs("followUp")
-    assert.equal(reported[0].body.message, "Done", "everything owed is done, and the steps the worker already knows about are not recited")
+    assert.equal(reported[0].body.message, "Done 1 of 1:\n- [x] Publish the release from the [GitHub releases page](https://github.com/acme/app/releases).", "everything owed is done, and the steps the worker already knows about are not recited")
     assert.equal(reported[0].body.todos?.length, 1)
 
     assert.deepEqual(errors, [], "a clean console")

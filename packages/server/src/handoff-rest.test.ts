@@ -30,6 +30,8 @@ const WAKE = `✅ CI PASSED on ${PR} — 93 checks green, 31 skipped.\n\n${wakeD
 // Two steps, and the reply the to-do list's send composes for one of them ticked (web withStepsReport).
 const TWO_STEPS = "```awaiting\nprs: [acme/app#391]\nfor: 180d\ntitle: Ready, unmerged\nsteps:\n  - Merge [acme/app#391](https://github.com/acme/app/pull/391).\n  - Delete the old branch.\n---\nReady at 0251203e.\n```"
 const ONE_OF_TWO = "Done 1 of 2:\n- [x] Merge [acme/app#391](https://github.com/acme/app/pull/391).\n- [ ] Delete the old branch."
+// Every step done: what the to-do list's send composes, and the word the human types.
+const ALL_DONE = ["Done 2 of 2:\n- [x] Merge [acme/app#391](https://github.com/acme/app/pull/391).\n- [x] Delete the old branch.", "Done"]
 const GREEN: GithubWatchStatus = {
   checks: "passing", running: 0, passed: 93, failed: 0, skipped: 31, gated: 0, gating: [], failing: [],
   merge: "mergeable", state: "open", polledAt: at(0),
@@ -314,33 +316,35 @@ for (const backend of ["claude", "codex"] as const) {
     } finally { w.close() }
   })
 
-  test(`${backend}: a report of every step done reaches the handoff, so the next quiet park snoozes`, () => {
-    const w = world(backend)
-    try {
-      w.user(0, `own ${PR}`)
-      w.say(1, TWO_STEPS)
-      w.user(5, "Done")
-      w.user(6, WAKE)
-      w.say(7, QUIET)
-      const v = w.view()
-      assert.equal(v.needsYou, false)
-      assert.equal(isSnoozed(v), true)
-    } finally { w.close() }
-  })
+  for (const done of ALL_DONE) {
+    test(`${backend}: a report of every step done (${done.split("\n")[0]}) reaches the handoff, so the next quiet park snoozes`, () => {
+      const w = world(backend)
+      try {
+        w.user(0, `own ${PR}`)
+        w.say(1, TWO_STEPS)
+        w.user(5, done)
+        w.user(6, WAKE)
+        w.say(7, QUIET)
+        const v = w.view()
+        assert.equal(v.needsYou, false)
+        assert.equal(isSnoozed(v), true)
+      } finally { w.close() }
+    })
 
-  test(`${backend}: a steps report sent with nothing typed leaves a question asked beside the steps standing`, () => {
-    const w = world(backend)
-    try {
-      w.user(0, `own ${PR}`)
-      w.say(1, TWO_STEPS)
-      w.ask("qst_beside", 1)
-      w.user(5, "Done")
-      w.say(7, QUIET)
-      const v = w.view()
-      assert.equal(v.needsYou, true, "the human answered the to-do card, not the question")
-      assert.deepEqual((v.questions ?? []).map((q) => [q.id, q.standing]), [["qst_beside", true]])
-    } finally { w.close() }
-  })
+    test(`${backend}: a steps report (${done.split("\n")[0]}) sent with nothing typed leaves a question asked beside the steps standing`, () => {
+      const w = world(backend)
+      try {
+        w.user(0, `own ${PR}`)
+        w.say(1, TWO_STEPS)
+        w.ask("qst_beside", 1)
+        w.user(5, done)
+        w.say(7, QUIET)
+        const v = w.view()
+        assert.equal(v.needsYou, true, "the human answered the to-do card, not the question")
+        assert.deepEqual((v.questions ?? []).map((q) => [q.id, q.standing]), [["qst_beside", true]])
+      } finally { w.close() }
+    })
+  }
 
   test(`${backend}: words typed under a report are typing, and reach the handoff as typing does`, () => {
     const w = world(backend)

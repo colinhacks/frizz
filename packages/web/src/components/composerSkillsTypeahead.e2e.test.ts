@@ -130,6 +130,64 @@ test("a new suggestion source is asked again, and its list replaces the old one"
   assert.deepEqual(errors, [], `no page errors: ${errors.join(" | ")}`)
 })
 
+// MID-TEXT, as Notion's `/` menu and Claude Code's open (lib/slashToken.ts): a `/` after whitespace
+// anywhere in the draft opens the menu on that token, and accepting replaces only the token.
+test("a `/` after a space opens the menu mid-sentence, and accepting completes only that token", {
+  skip: !baseUrl,
+  timeout: 150_000,
+}, async () => {
+  await open()
+  await page!.type(BOX, "please run /fr")
+  await page!.waitForSelector(MENU)
+  assert.deepEqual(await menuRows(), ["/frizz-stack", "/frizz:gh"])
+  await page!.keyboard.press("Enter")
+  await waitForCaretAtEnd()
+  assert.equal(await boxValue(), "please run /frizz-stack ")
+  assert.deepEqual((await hooks()).submitted, [], "Enter completed the name; nothing was sent")
+  await page!.type(BOX, "first")
+  assert.equal(await boxValue(), "please run /frizz-stack first")
+  assert.equal(await menuVisible(), false)
+  assert.deepEqual(errors, [], `no page errors: ${errors.join(" | ")}`)
+})
+
+test("a `/` inside a word or a path opens nothing", {
+  skip: !baseUrl,
+  timeout: 150_000,
+}, async () => {
+  await open()
+  for (const typed of ["see src/fr", " and/or", " /Users/fr"]) {
+    await page!.type(BOX, typed)
+    // Give a menu that should not open the time a real one takes (the list is local here).
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    assert.equal(await menuVisible(), false, `no menu after typing ${JSON.stringify(typed)}`)
+  }
+})
+
+test("moving the caret back into a `/` token opens the menu there, and accepting keeps the text after it", {
+  skip: !baseUrl,
+  timeout: 150_000,
+}, async () => {
+  await open()
+  await page!.type(BOX, "run /fr then report")
+  assert.equal(await menuVisible(), false)
+  // Back over " then report" (12 characters): the caret sits right after `/fr`.
+  for (let i = 0; i < 12; i++) await page!.keyboard.press("ArrowLeft")
+  await page!.waitForSelector(MENU)
+  assert.deepEqual(await menuRows(), ["/frizz-stack", "/frizz:gh"])
+  await page!.keyboard.press("ArrowDown")
+  await page!.keyboard.press("Tab")
+  await page!.waitForFunction((sel) => (document.querySelector(sel) as HTMLTextAreaElement).value === "run /frizz:gh then report", {}, BOX)
+  // The existing space is reused, and the caret lands past it, before "then".
+  await page!.waitForFunction((sel, at) => (document.querySelector(sel) as HTMLTextAreaElement).selectionStart === at, {}, BOX, "run /frizz:gh ".length)
+  // Escape closes the menu over THAT token, and it stays closed until the caret or the text moves on.
+  for (let i = 0; i < 6; i++) await page!.keyboard.press("ArrowLeft")
+  await page!.waitForSelector(MENU)
+  await page!.keyboard.press("Escape")
+  assert.equal(await menuVisible(), false)
+  assert.equal(await page!.evaluate((sel) => document.activeElement === document.querySelector(sel), BOX), true, "Escape kept focus")
+  assert.deepEqual(errors, [], `no page errors: ${errors.join(" | ")}`)
+})
+
 // Where a skill came FROM, which the harness reports and frizz normalizes to one vocabulary. The
 // column has to be ONE width across every row — including the row whose source is unknown — or an
 // unlabelled row's description truncates ~50px further right than its neighbours' and the list reads

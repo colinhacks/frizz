@@ -2174,8 +2174,8 @@ function signoffNudgeText(needsInput: boolean): string {
   "- `` ```question `` — you need the human's decision. Write each fence right under the paragraph it",
   "  decides, never stacked at the bottom: `id:` (a slug of your choosing), `kind:` (`choice`, `multi`,",
   "  `text` or `secret`), a one-line `question:`, and `options:` with one-line trade-offs, the recommended",
-  "  one first. Frizz registers it when the message lands, and a question asked at this rest is its",
-  "  sign-off: rest normally.",
+  "  one first, its line saying why it wins. Frizz registers it when the message lands, and a question",
+  "  asked at this rest is its sign-off: rest normally.",
   "- `` ```done `` — genuinely FINISHED. A DISMISSAL: the card is filed away and nobody looks again, so",
   "  if anything is still owed, it is not done. Body: 1-3 sentences, then bullets, each opening with a",
   "  **bolded verb phrase**.",
@@ -4126,24 +4126,26 @@ export function splitAnswersNote(text: string): { answers: string; note: string 
   return { answers: text.slice(0, at).trimEnd(), note: text.slice(at + marker.length).trim() }
 }
 
-/** EXACTLY the message that says every step on the list is done: an ordinary reply from the human, the
- *  same thing typing the word would send, with any note they typed under it. Nothing marks it as Frizz's,
- *  because nothing about it is. The worker contract names the word. */
+/** The word a steps report opens on: "Done 2 of 3:" over the checklist the to-do list's send composes,
+ *  and, typed alone, the human saying every step is done. The worker contract names both. */
 export const STEPS_DONE = "Done"
 
-/** Does this reply say the steps are done? The word opens the human's own words: the whole message, or
+/** Does this reply say the steps are done — every one the human was handed? A report with every box
+ *  ticked, or the word typed alone (stepsReportOf). Read on the human's own words: the whole message, or
  *  what follows the answers that rode the same send. Each kind of answer ends its rows with its own note
  *  header (withAnswersNote), so a reply carrying registered AND fenced answers nests twice, and the word
  *  is under the last one. A reply that only MENTIONS done is not this. */
 export function repliesStepsDone(text: string): boolean {
-  const said = wordsUnderAnswers(text)
-  return said === STEPS_DONE || said.startsWith(`${STEPS_DONE}\n\n`)
+  return stepsReportOf(wordsUnderAnswers(text))?.all === true
 }
 
-/** A STEPS REPORT, the reply the to-do list's send composes (web stepsAnswer withStepsReport): the bare
- *  word when every step is done, or "Done 2 of 3:" over its checklist, with whatever the human typed under
- *  it as `note`. Null for anything else. Read on the human's own words (wordsUnderAnswers). `rows` is the
- *  checklist, in the order it was sent, and empty for the bare word. */
+/** A STEPS REPORT, the reply the to-do list's send composes (web stepsAnswer withStepsReport): "Done 2 of
+ *  3:" over its checklist, with whatever the human typed under it as `note`. The bare word is one too: the
+ *  human typing that every step is done, and what the send composed when every box was ticked until
+ *  2026-11-23, when the chat drew it as nothing but the word (maintainer: "when I hit Enter on them, it
+ *  shows up in the fucking chat as just the word 'done'"). Null for anything else. Read on the human's own
+ *  words (wordsUnderAnswers). `rows` is the checklist, in the order it was sent, and empty for the bare
+ *  word; `all` says every step sent is done. */
 export function stepsReportOf(said: string): { all: boolean; rows: { text: string; done: boolean }[]; note: string } | null {
   const text = said.trim()
   if (text === STEPS_DONE || text.startsWith(`${STEPS_DONE}\n\n`)) return { all: true, rows: [], note: text.slice(STEPS_DONE.length).trim() }
@@ -4155,7 +4157,7 @@ export function stepsReportOf(said: string): { all: boolean; rows: { text: strin
     if (!row) break
     rows.push({ text: row[2], done: row[1] === "x" })
   }
-  return rows.length > 0 ? { all: false, rows, note: lines.slice(rows.length).join("\n").trim() } : null
+  return rows.length > 0 ? { all: rows.every((row) => row.done), rows, note: lines.slice(rows.length).join("\n").trim() } : null
 }
 
 /** What the human wrote themselves, under any answers that rode the same send. */

@@ -21,7 +21,7 @@ import { localFileDragProps } from "../lib/localFileDrag.ts"
 import { basename } from "../lib/paths.ts"
 import { useKeyboardInset } from "../lib/keyboardInset.ts"
 import { useFileDropZone, type SurfaceFileDrop } from "../lib/fileDrop.ts"
-import { AnchoredLayer, aboveAnchor } from "./ui/AnchoredLayer.tsx"
+import { BELOW_LINE, useSlashTypeahead } from "./SlashTypeahead.tsx"
 
 /** Box px between an inline lead's right edge and the first letter after it (Composer's `lead`). */
 const LEAD_GAP = 6
@@ -59,18 +59,6 @@ async function uploadAttachment(file: File, name: string, project: string | unde
   if (!res.ok) return null
   const json = (await res.json()) as { path?: string }
   return json.path ?? null
-}
-
-// Where a `/` suggestion came FROM, in this repo's own vocabulary rather than either harness's. Claude
-// says `projectSettings`/`userSettings`, codex says `repo`/`user`; the server normalizes both to the
-// shared enum and this names them the way the docs and the maintainer do — a skill in the checkout is
-// "project", one in the home directory is "global" (see CLAUDE.md § project-local skills). Rendered in
-// petite caps: a metadata tag the eye can skip, not more description to read.
-const SKILL_SOURCE_LABEL: Record<NonNullable<ThreadSkill["source"]>, string> = {
-  project: "project",
-  user: "global",
-  builtin: "built-in",
-  plugin: "plugin",
 }
 
 // A staged context reference in the prose is the literal `@guide.md:3` token the ⌘I flow splices in
@@ -122,9 +110,6 @@ export type PhoneComposerLayout =
   | { layout: "page"; tools?: ReactNode }
 
 const LONG_PRESS_MS = 500
-// The skills menu's placement: from the box's left edge, a share of its width, 6px above it (below when
-// the top has no room).
-const SUGGEST_PLACEMENT = aboveAnchor(6)
 
 // HOLDING THE BAR OPEN. The open box's toolbar is only there while the field has focus or text — but a
 // control in it that opens a sheet (the model chip) closes the keyboard first, which blurs an empty
@@ -493,74 +478,19 @@ export function Composer({
     if (el && (!active || active.contains(el))) el.focus({ preventScroll: true })
   }, [busy])
 
-  // SKILLS TYPEAHEAD state. `skillItems` is the harness's list, fetched once on the first `/` trigger
-  // (null = not asked yet; [] = asked, nothing to offer — including a fetch that failed, which must
-  // read as "no suggestions", never as an error the operator has to dismiss). `dismissedFor` records
-  // the exact draft an Escape closed the menu over, so it stays closed until the draft CHANGES —
-  // without it the menu would reopen on the very next render.
-  //
-  // The list belongs to the `slashSuggest` that fetched it: the new-thread box hands over a new one when
-  // its model chip moves to another agent, whose skills differ, and a list fetched for the old one must
-  // read as "not asked yet". A thread's box keeps one function per thread, so its list is fetched once.
-  const [skillsFetched, setSkillsFetched] = useState<{ from: typeof slashSuggest; items: ThreadSkill[] } | null>(null)
-  const skillItems = skillsFetched && skillsFetched.from === slashSuggest ? skillsFetched.items : null
-  // The highlighted row, REMEMBERED WITH THE DRAFT IT WAS CHOSEN OVER: the filtered list under it
-  // changes with every keystroke, so a highlight belongs to one draft and reads as row 0 for any
-  // other. Derived, not reset by an effect — `useEffect(() => setSuggestSel(0), [prose])` looked free
-  // (same value, no re-render) but it was not: once the fiber carries any pending lane React skips
-  // the same-value bailout, so every keystroke's effect enqueued a DefaultLane update that a fast
-  // burst of keystrokes starved; the root then ended every sync commit with that lane still pending,
-  // React's nested-update counter climbed one per keystroke, and a 50-keystroke burst (a multi-line
-  // draft on /full, 2026-08-28) threw "Maximum update depth exceeded" twice per run.
-  const [suggestSelFor, setSuggestSelFor] = useState<{ prose: string; index: number }>({ prose: "", index: 0 })
-  const suggestSel = suggestSelFor.prose === prose ? suggestSelFor.index : 0
-  const setSuggestSel = (next: number | ((current: number) => number)) =>
-    setSuggestSelFor({ prose, index: typeof next === "function" ? next(suggestSel) : next })
-  const [dismissedFor, setDismissedFor] = useState<string | null>(null)
-  // Active while the draft is exactly one `/`-led token — the shape of a skill invocation still being
-  // typed. A space (arguments have begun) or a newline closes it.
-  const slashActive = Boolean(slashSuggest) && /^\/\S*$/.test(prose)
-  useEffect(() => {
-    if (!slashActive || skillItems !== null) return
-    let live = true
-    const from = slashSuggest
-    // Errors resolve to "asked, nothing to offer": the caller decides whether to retry on a later
-    // trigger by handing this component a fresh mount (drawer reopen) or a new function — a typeahead
-    // never toasts.
-    void from!().then(
-      (items) => { if (live) setSkillsFetched({ from, items }) },
-      () => { if (live) setSkillsFetched({ from, items: [] }) },
-    )
-    return () => { live = false }
-  }, [slashActive, skillItems, slashSuggest])
-  const suggestions = useMemo(() => {
-    if (!slashActive || !skillItems || dismissedFor === prose) return []
-    const query = prose.slice(1).toLowerCase()
-    // Prefix matches first (what completion usually wants), then substring matches — those are what
-    // surface a namespaced skill (`frizz:gh`) from its bare name.
-    const starts = skillItems.filter((s) => s.name.toLowerCase().startsWith(query))
-    const contains = skillItems.filter((s) => !s.name.toLowerCase().startsWith(query) && s.name.toLowerCase().includes(query))
-    return [...starts, ...contains]
-  }, [slashActive, skillItems, dismissedFor, prose])
-  const suggestOpen = suggestions.length > 0
-  // The DISTINCT source labels in the list on screen, which every row then reserves room for (see the
-  // sizer in the menu below). Empty when no visible suggestion reports a source — a harness that says
-  // nothing must not cost the descriptions a column of width.
-  const suggestSourceLabels = useMemo(() => {
-    const labels = new Set<string>()
-    for (const s of suggestions) if (s.source) labels.add(SKILL_SOURCE_LABEL[s.source])
-    return [...labels]
-  }, [suggestions])
-  // Keep the highlighted row in view when arrowing through a list taller than the menu.
-  const suggestListRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    suggestListRef.current?.querySelector(`[data-suggest-index="${suggestSel}"]`)?.scrollIntoView({ block: "nearest" })
-  }, [suggestSel])
-  function acceptSuggestion(item: { name: string }) {
-    const next = `/${item.name} `
-    setProse(next)
-    requestAnimationFrame(() => taRef.current?.setSelectionRange(next.length, next.length))
-  }
+  // THE SKILLS TYPEAHEAD (SlashTypeahead.tsx): the `/` menu on the token at the caret. `focused` is
+  // declared here because the menu closes with focus, and the phone layouts below read it too.
+  const [focused, setFocused] = useState(false)
+  // The phone's page layout anchors the menu at the token's line (PageLineAnchor below) and opens it
+  // under that line; every other layout hangs it above the box.
+  const slash = useSlashTypeahead({
+    text: prose,
+    setText: setProse,
+    textareaRef: taRef,
+    suggest: slashSuggest,
+    active: focused,
+    ...(phone?.layout === "page" ? { place: BELOW_LINE } : {}),
+  })
 
   // DICTATION (lib/dictation.ts): the microphone beside Send, on the desktop layout only — a phone's
   // keyboard carries its own. It writes into the prose at the caret (or at the end, when the box was
@@ -604,31 +534,9 @@ export function Composer({
       isComposing: e.nativeEvent.isComposing,
       keyCode: e.keyCode,
     }
-    // The open skills menu claims its keys FIRST — above all Enter (accept, not send) and Escape
-    // (close the menu, not blur; the blur branch below must not see this keypress). Modified Enter
-    // deliberately falls through: ⌘-Enter mid-name is the operator overriding the menu, not using it.
-    if (suggestOpen && !e.nativeEvent.isComposing) {
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault()
-        setSuggestSel((current) => {
-          const delta = e.key === "ArrowDown" ? 1 : -1
-          return (current + delta + suggestions.length) % suggestions.length
-        })
-        return
-      }
-      if ((e.key === "Enter" || e.key === "Tab") && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-        e.preventDefault()
-        e.stopPropagation()
-        acceptSuggestion(suggestions[suggestSel] ?? suggestions[0])
-        return
-      }
-      if (e.key === "Escape") {
-        e.preventDefault()
-        e.stopPropagation()
-        setDismissedFor(prose)
-        return
-      }
-    }
+    // The open skills menu claims its keys FIRST — Enter accepts rather than sends, Escape closes it
+    // rather than blurring (SlashTypeahead.tsx).
+    if (slash.onKeyDown(e)) return
     // A staged `@` token deletes as ONE token — the editor convention for a reference the user placed
     // as a unit. Only a bare Backspace with a collapsed caret sitting immediately after a STAGED
     // token (a hand-typed `@thing` is ordinary text); a selection, a modifier, or any other position
@@ -723,69 +631,11 @@ export function Composer({
     // Arrow keys just move the caret — no boundary semantics (the nav walk they used to drive is gone).
   }
 
-  // The skills menu, floated ABOVE the box (the composer lives at the bottom of its surface, so up is
-  // the direction with room; ui/AnchoredLayer flips it below when the box sits too near the window's
-  // top). Rows are text-only — a name and its one-line description — which keeps this out of icon-ink
-  // territory entirely. Mousedown is prevented on every row for the same reason as the send button:
-  // choosing a suggestion must never blur the textarea. Shared by every layout.
-  //
-  // PORTALED, and shown only while the textarea has focus. It was `absolute bottom-full z-20` inside the
-  // box until 2026-11-01, where its z ranked only inside the composer's surface — a card footer is
-  // sticky z-10, a drawer footer z-10 — so the drawer's jump-to-latest pill (z-20 over the transcript)
-  // painted across its rows, and a box near the window's top opened it off the screen (lib/layers.ts
-  // rule 2). Out of the surface it outranks anything opened after it, so it has to close when the
-  // textarea lets go of focus, as every popover does; its keys only ever reached it with focus anyway.
-  const [focused, setFocused] = useState(false)
-  const suggestMenu = suggestOpen && focused ? (
-      <AnchoredLayer place={SUGGEST_PLACEMENT}>
-        <div
-          ref={suggestListRef}
-          data-slash-menu
-          // On the list, not each row: a press on its padding or its scrollbar would blur the box too,
-          // and the menu closes with focus.
-          onMouseDown={(e) => e.preventDefault()}
-          className="max-h-56 overflow-y-auto rounded-lg border border-border bg-bg py-1 shadow-lg"
-        >
-          {suggestions.map((s, i) => (
-            <button
-              key={s.name}
-              type="button"
-              data-suggest-index={i}
-              onClick={() => acceptSuggestion(s)}
-              onMouseEnter={() => setSuggestSel(i)}
-              // px-3.5 matches the textarea's own text inset, so the completed `/name` lands exactly
-              // under the row that offered it.
-              className={`flex w-full items-baseline gap-2 px-3.5 py-1.5 text-left ${i === suggestSel ? "bg-panel-2" : ""}`}
-            >
-              <span className="shrink-0 text-[12px] font-medium text-fg">/{s.name}</span>
-              {s.description && <span className="min-w-0 truncate text-[11px] text-muted">{s.description}</span>}
-              {/* The source column. One WIDTH for every row, including the rows with no source to
-                  show — otherwise an unlabelled row's description truncates 50px further right than
-                  its neighbours' and the list reads ragged. The width is reserved by stacking every
-                  label in the list invisibly under the real one, so the BROWSER measures it: a
-                  hand-fitted px constant would be right in one of this app's two fonts and wrong in
-                  the other (AGENTS.md). Measured ink gap from the truncated description ahead of it:
-                  13.16px against 8.87px between a name and its own description — the tag reads as a
-                  separate column, which is what it is. */}
-              {suggestSourceLabels.length > 0 && (
-                <span className="ml-auto grid shrink-0 text-[10px]">
-                  {suggestSourceLabels.map((label) => (
-                    <span key={label} aria-hidden className="petite-caps invisible col-start-1 row-start-1">{label}</span>
-                  ))}
-                  <span className="petite-caps col-start-1 row-start-1 text-right text-muted-70">
-                    {s.source ? SKILL_SOURCE_LABEL[s.source] : ""}
-                  </span>
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      </AnchoredLayer>
-  ) : null
+  const suggestMenu = slash.menu
 
   // ── The phone layouts ────────────────────────────────────────────────────────────────────────────
   // Hooks first and unconditionally, so a window that crosses the breakpoint keeps its hook order.
-  // (`focused` is declared above, with the skills menu that reads it too.)
+  // (`focused` is declared above, with the skills typeahead that reads it too.)
   const [held, setHeld] = useState(false)
   const phoneRootRef = useRef<HTMLDivElement>(null)
   const keyboardInset = useKeyboardInset(phoneRootRef, Boolean(phone))
@@ -864,8 +714,12 @@ export function Composer({
           value={prose}
           autoFocus={autoFocus}
           disabled={busy}
-          onChange={(e) => setProse(e.target.value)}
+          onChange={(e) => {
+            slash.noteCaret(e.target)
+            setProse(e.target.value)
+          }}
           onKeyDown={onKeyDown}
+          onSelect={(e) => slash.noteCaret(e.currentTarget)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onPaste={(e) => {
@@ -905,12 +759,15 @@ export function Composer({
       return (
         <div ref={phoneRootRef} data-phone-composer="page" className={`flex min-h-0 flex-1 flex-col ${keyboardInset > 0 ? "" : "pb-[env(safe-area-inset-bottom)]"}`}>
           <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-none">
-            {/* The menu's anchor is the prompt's FIRST LINE, not this page-tall column: anchored on the
-                column it had no room below and opened above the page's top edge, over the header. A
-                `/token` the menu can complete is always the only line (py-[14px] + leading-[25px]), so
-                the menu flips below it, under the typed text. Inset 3px so a row's name (the menu's 1px
-                border, then px-3.5) starts at the prompt's own 18px. */}
-            {suggestMenu && <div aria-hidden className="pointer-events-none absolute inset-x-[3px] top-0 h-[39px]">{suggestMenu}</div>}
+            {/* The menu's anchor is the LINE the `/` is on, not this page-tall column: anchored on the
+                column it had no room below and opened above the page's top edge, over the header. An
+                invisible copy of the prose up to the `/`, laid out exactly as the textarea's, says where
+                that line starts; the strip covers it (one 25px line), and the menu opens below it, under
+                the typed name (BELOW_LINE). Inset 3px so a row's name (the menu's 1px border, then px-3.5) starts at
+                the prompt's own 18px. */}
+            {suggestMenu && slash.tokenStart !== null && (
+              <PageLineAnchor before={prose.slice(0, slash.tokenStart)} typeClass={typeClass}>{suggestMenu}</PageLineAnchor>
+            )}
             {textarea}
             {attachmentRow}
           </div>
@@ -1063,9 +920,11 @@ export function Composer({
           onChange={(e) => {
             // Typing takes the box back from dictation (lib/dictation.ts).
             dictation.cancel()
+            slash.noteCaret(e.target)
             setProse(e.target.value)
           }}
           onKeyDown={onKeyDown}
+          onSelect={(e) => slash.noteCaret(e.currentTarget)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onPaste={(e) => {
@@ -1284,5 +1143,27 @@ function AttachmentChip({
         <X size={10} strokeWidth={2.5} />
       </button>
     </div>
+  )
+}
+
+// The phone page's anchor for the `/` menu: a strip over the line the token sits on. The mirror is the
+// prose before the `/` in the textarea's own type and padding, so its marker lands where the `/` does;
+// the strip then sits at the marker's line. Measured after layout, and again whenever the text before
+// the `/` changes, which is all that can move the line.
+function PageLineAnchor({ before, typeClass, children }: { before: string; typeClass: string; children: ReactNode }) {
+  const marker = useRef<HTMLSpanElement>(null)
+  const [top, setTop] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    setTop(marker.current ? marker.current.offsetTop : null)
+  }, [before, typeClass])
+  return (
+    <>
+      <div aria-hidden className={`pointer-events-none invisible absolute inset-x-0 top-0 whitespace-pre-wrap [overflow-wrap:break-word] ${typeClass}`}>
+        {before}<span ref={marker}>/</span>
+      </div>
+      {top !== null && (
+        <div aria-hidden data-slash-line className="pointer-events-none absolute inset-x-[3px] h-[25px]" style={{ top }}>{children}</div>
+      )}
+    </>
   )
 }

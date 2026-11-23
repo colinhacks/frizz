@@ -1,8 +1,9 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react"
 import { useSnapshot } from "valtio"
-import type { AccountBackend, ThreadSkill, ThreadView } from "@frizz/shared"
+import type { AccountBackend, ThreadView } from "@frizz/shared"
 import { hasStandingQuestion, questionAnswerMessage, withAnswersNote } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
+import { fetchThreadSkills } from "../lib/skillSources.ts"
 import { restoreContextItems, showToast, store, takeContextItems } from "../store.ts"
 import { useThreadSnapshot } from "../hooks.ts"
 import { buildMessageWithContext, hasToken } from "../lib/composerContext.ts"
@@ -48,24 +49,6 @@ import { buildMessageWithComments } from "../lib/transcriptComments.ts"
 // It has one call site since the queue card went (2026-11-10): ThreadActionBar, on every surface. What a
 // surface still decides is a prop, never a forked tree: the padding wrapper (`className`) and whether the
 // running-operations reading (`above` the box, the one line of counts) is drawn at all.
-// The skills typeahead's per-thread cache, shared by every box on the same thread so opening any of them
-// only ever asks the harness once. A failure is NOT
-// cached: the common failure is "the session is not running yet", and the next `/` should ask again
-// once it is. Module scope on purpose — the cache outlives any one composer mount.
-const threadSkillsCache = new Map<string, Promise<ThreadSkill[]>>()
-function fetchThreadSkills(slug: string): Promise<ThreadSkill[]> {
-  const cached = threadSkillsCache.get(slug)
-  if (cached) return cached
-  const fetched = rpc.threadSkills({ slug }).then(
-    (result) => result.skills,
-    () => {
-      threadSkillsCache.delete(slug)
-      return []
-    },
-  )
-  threadSkillsCache.set(slug, fetched)
-  return fetched
-}
 
 /**
  * The prompt box on a read-and-answer session: nothing to type in, and the one line saying where typing happens.
