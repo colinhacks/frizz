@@ -113,13 +113,3 @@ test("codex reasoning toggle is a peer of quiet metadata labels", () => {
   assert.match(block, /className=\{`\$\{TRANSCRIPT_META_LABEL_CLASS\}[^`]*self-start/, "reasoning toggle must consume the shared metadata-label class")
   assert.doesNotMatch(block, /uppercase|tracking-wide|petite-caps|text-\[\d+px\]|text-muted\/\d/, "reasoning toggle must not reintroduce a bespoke label type/color")
 })
-
-test("inline reasoning renders muted prose with clamp toggle and stays distinct from Codex ReasoningBlock", () => {
-  const source = readFileSync(new URL("./ChatView.tsx", import.meta.url), "utf8")
-  const block = source.match(/function InlineReasoningBlock[\s\S]*?\n}/)?.[0]
-  assert.ok(block, "InlineReasoningBlock must exist")
-  assert.match(block, /frizz-reasoning frizz-reasoning-inline/, "inline reasoning consumes the quiet reasoning scale and inline leading")
-  assert.match(block, /frizz-reasoning-clamped/, "overflowing inline reasoning clamps behind the fade mask")
-  assert.match(block, /"Show less" : "Show more"/, "overflowing inline reasoning exposes Show more / Show less")
-  assert.match(source, /m\.reasoningInline[\s\S]*?<InlineReasoningBlock/, "MessageBody routes reasoningInline messages to InlineReasoningBlock")
-})

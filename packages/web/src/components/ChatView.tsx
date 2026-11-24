@@ -2028,7 +2028,7 @@ export function messageHeadIsTool(m: ChatMessage): boolean {
 // run instead of forcing a full STEP break on both sides. A BOUNDARY event is a section-break divider,
 // not a quiet label.
 function isMetaLabelMessage(m: ChatMessage): boolean {
-  return (m.kind === "event" && !m.boundary) || (m.kind === "reasoning" && !m.reasoningInline)
+  return (m.kind === "event" && !m.boundary) || m.kind === "reasoning"
 }
 // Tail/head predicates for the tight-run spacer: a tool band OR a meta label. An event/reasoning
 // message is a single row, so its head and tail are the same meta label.
@@ -3937,14 +3937,10 @@ function MessageBody({ m, answering, paired, showSendButton, staleAwaiting, done
   // bubble or a tool band. Rendered before the role branches (its role field is nominal).
   if (m.providerError) return <ThreadProviderErrorCard error={m.providerError} />
   if (m.kind === "event") return <EventLine text={m.text} boundary={m.boundary} sourceId={m.sourceId} at={m.at} />
-  // A model-reasoning summary — Codex's coalesced turn block stays behind a collapsed `Reasoning >`
-  // toggle, while Antigravity's per-step summaries (`reasoningInline`) render inline in quiet muted
-  // prose and clamp behind `Show more` when long. Rendered before the role branches (nominal role).
-  if (m.kind === "reasoning") {
-    return m.reasoningInline
-      ? <InlineReasoningBlock text={m.text} sourceId={m.sourceId} />
-      : <ReasoningBlock text={m.text} sourceId={m.sourceId} />
-  }
+  // A model-reasoning summary (Codex, and every ACP agent's coalesced turn block) — quiet punctuation
+  // like an event line, but CLICKABLE to expand the full reasoning. Rendered before the role branches
+  // (its role field is nominal, like an event).
+  if (m.kind === "reasoning") return <ReasoningBlock text={m.text} sourceId={m.sourceId} />
   // A SUB-AGENT COMPLETION — the same class of event as the background-shell wake above, so it takes
   // the same divider (see AgentCompletionLine). Routed here, before the tool-band walk, so the marker
   // copy never renders as a second AgentBlock card.
@@ -5356,59 +5352,6 @@ function ReasoningBlock({ text, sourceId }: { text: string; sourceId?: string })
     </div>
   )
 }
-
-// Antigravity inline reasoning: Gemini emits almost no mid-turn assistant-text and puts its
-// step-by-step progress summaries in `agent_thought_chunk`. Show those inline in quiet 12px muted
-// prose so short steps narrate each tool batch without a `Reasoning >` click, and clamp long
-// planning blocks at 4 lines (72px at 18px leading) behind a soft fade and `Show more` toggle.
-const INLINE_REASONING_CLAMP_PX = 72
-
-function InlineReasoningBlock({ text, sourceId }: { text: string; sourceId?: string }) {
-  const [open, setOpen] = useState(false)
-  const [overflows, setOverflows] = useState(false)
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const bodyId = useId()
-
-  useLayoutEffect(() => {
-    const el = bodyRef.current
-    if (!el) return
-    const check = () => setOverflows(el.scrollHeight > INLINE_REASONING_CLAMP_PX + 2)
-    check()
-    if (typeof ResizeObserver === "undefined") return
-    const ro = new ResizeObserver(check)
-    ro.observe(el)
-    if (el.firstElementChild) ro.observe(el.firstElementChild)
-    return () => ro.disconnect()
-  }, [text, open])
-
-  const clamped = overflows && !open
-  return (
-    <div data-frizz-msg={sourceId} data-reasoning-inline className="frizz-reasoning frizz-reasoning-inline flex flex-col">
-      <div
-        id={bodyId}
-        ref={bodyRef}
-        data-reasoning-clamped={clamped ? "true" : undefined}
-        className={clamped ? "frizz-reasoning-clamped" : !open ? "max-h-[72px] overflow-hidden" : undefined}
-      >
-        <ProseHtml md={text} wrap />
-      </div>
-      {overflows && (
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          onMouseDown={(e) => e.preventDefault()}
-          aria-controls={bodyId}
-          aria-expanded={open}
-          data-reasoning-toggle
-          className="mt-1 self-start rounded text-[12px] leading-4 text-muted-70 outline-none transition-colors hover:text-fg focus-visible:ring-1 focus-visible:ring-focus-ink-60"
-        >
-          {open ? "Show less" : "Show more"}
-        </button>
-      )}
-    </div>
-  )
-}
-
 
 function Dots() {
   return <span className="inline-block w-2.5 h-2.5 rounded-full border border-muted/70 border-t-transparent animate-spin" />

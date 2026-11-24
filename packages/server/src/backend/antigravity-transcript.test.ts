@@ -39,7 +39,7 @@ test("antigravity-transcript: the calls a file holds are those with a result and
   } finally { f.cleanup() }
 })
 
-test("antigravity-transcript: strips the thinking placeholder, marks real reasoning inline, and keeps tool runs merged across filler", () => {
+test("antigravity-transcript: strips the thinking placeholder and keeps tool runs merged across filler", () => {
   assert.equal(cleanAntigravityReasoning("I'm thinking through how to approach this.\n\n\n"), "")
   assert.equal(cleanAntigravityReasoning("I’m thinking through how to approach this."), "")
   assert.equal(
@@ -57,22 +57,24 @@ test("antigravity-transcript: strips the thinking placeholder, marks real reason
     { kind: "reasoning", at: "t4", text: "I'm thinking through how to approach this." },
     { kind: "tool-call", at: "t5", id: "c2", name: "Edit", input: { file_path: "/a.ts" } },
     { kind: "tool-result", at: "t6", id: "c2", text: "edited" },
-    // Leading filler is stripped; surviving summary renders inline.
+    // Leading filler is stripped; the surviving summary opens the turn's reasoning block.
     { kind: "reasoning", at: "t7", text: "I'm thinking through how to approach this.\n\n\nRunning the test suite to verify the fix." },
     { kind: "tool-call", at: "t8", id: "c3", name: "Bash", input: { command: "npm test" } },
     { kind: "tool-result", at: "t9", id: "c3", text: "pass" },
+    // A later summary joins the same block, and the run it interrupts stays one run.
+    { kind: "reasoning", at: "t9", text: "Tests pass." },
     { kind: "assistant-text", at: "t10", text: "Fixed.", final: true, messageId: "m1" },
     { kind: "turn-end", at: "t10", finalText: "Fixed.", successful: true },
   ].map((r) => JSON.stringify(r)).join("\n") + "\n"
 
   const msgs = projectAntigravityTranscript(raw, "antigravity:s1", (b) => [{ name: b.name }])
   assert.deepEqual(
-    msgs.map((m) => [m.role, m.kind ?? "message", m.reasoningInline ?? false, m.tools.length, m.text]),
+    msgs.map((m) => [m.role, m.kind ?? "message", m.tools.length, m.text]),
     [
-      ["user", "message", false, 0, "Fix it"],
-      ["assistant", "message", false, 2, ""],
-      ["assistant", "reasoning", true, 0, "Running the test suite to verify the fix."],
-      ["assistant", "message", false, 1, "Fixed."],
+      ["user", "message", 0, "Fix it"],
+      ["assistant", "message", 2, ""],
+      ["assistant", "reasoning", 0, "Running the test suite to verify the fix.\n\nTests pass."],
+      ["assistant", "message", 1, "Fixed."],
     ],
   )
 })

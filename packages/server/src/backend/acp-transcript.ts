@@ -288,9 +288,9 @@ export type AcpUserRecordProjector = (out: TranscriptMessage[]) => (sourceId: st
 export interface WrittenTranscriptDialect {
   toolCall?: (rec: Extract<NormalizedEvent, { kind: "tool-call" }>) => TranscriptToolCall
   toolResult?: (call: TranscriptToolCall, rec: Extract<NormalizedEvent, { kind: "tool-result" }>) => void
-  /** Transform a reasoning record before projection; returning null (or blank text) drops it without
-   *  closing the open assistant message, so tool calls on either side stay in one run. */
-  reasoning?: (text: string) => { text: string; inline?: boolean } | null
+  /** Clean a reasoning record's text before it joins the turn's reasoning block; returning null (or
+   *  blank text) drops it. */
+  reasoning?: (text: string) => string | null
 }
 
 /** The drawer's messages from the raw file. `identityPrefix` seeds `sourceId`s the client keys on. */
@@ -299,10 +299,20 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
   const pushUser = userProjector?.(out)
   let current: TranscriptMessage | undefined // the open assistant message
   let currentMessageId: string | undefined
+  // The CURRENT turn's reasoning block, mirroring Codex's `turnReasoning` (transcript.ts). ACP and
+  // Antigravity emit a thought chunk before nearly every tool batch, so pushing a fresh reasoning
+  // message each time fragments one tool run into dozens of alternating `Reasoning` / `Ran N tool
+  // calls` rows. The first step opens the block and closes any preceding assistant message; later
+  // steps in the same turn append to it in place without closing `current`, so consecutive tool
+  // calls stay in one run.
+  let turnReasoning: TranscriptMessage | undefined
+  // Tracks an absorbed thought between text records so adjacent id-less text records still get a
+  // paragraph break instead of concatenating raw once `reasoning` no longer closes `current`.
+  let thoughtSinceText = false
   const openTools = new Map<string, TranscriptToolCall>()
   const lines = raw.split("\n")
 
-  const close = () => { current = undefined; currentMessageId = undefined }
+  const close = () => { current = undefined; currentMessageId = undefined; thoughtSinceText = false }
   const openAssistant = (i: number, at: string | undefined): TranscriptMessage => {
     if (!current) {
       current = { sourceId: `${identityPrefix}:${i}`, role: "assistant", text: "", tools: [], parts: [], ...(at ? { at } : {}) }
@@ -310,9 +320,9 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
     }
     return current
   }
-  const appendText = (msg: TranscriptMessage, text: string) => {
+  const appendText = (msg: TranscriptMessage, text: string, separate = false) => {
     const last = msg.parts[msg.parts.length - 1]
-    if (last?.kind === "text") last.text += text
+    if (last?.kind === "text") last.text = separate && last.text ? `${last.text}\n\n${text}` : last.text + text
     else msg.parts.push({ kind: "text", text })
     msg.text = msg.parts.filter((p) => p.kind === "text").map((p) => (p as { text: string }).text).join("\n\n")
   }
@@ -338,6 +348,7 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         break
       case "user-message": {
         close()
+        turnReasoning = undefined
         const text = rec.text ?? ""
         if (!pushUser) {
           out.push({ sourceId: `${identityPrefix}:${i}`, role: "user", text, tools: [], parts: [], ...(rec.at ? { at: rec.at } : {}), ...(rec.synthetic ? { wake: true } : {}) })
@@ -357,24 +368,24 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         break
       }
       case "turn-start":
+        turnReasoning = undefined
         break
       case "turn-end":
         close()
+        turnReasoning = undefined
         break
       case "reasoning": {
-        const shaped = dialect?.reasoning ? dialect.reasoning(rec.text) : { text: rec.text }
-        if (!shaped || !shaped.text.trim()) break
-        close()
-        out.push({
-          sourceId: `${identityPrefix}:${i}`,
-          role: "assistant",
-          kind: "reasoning",
-          text: shaped.text,
-          ...(shaped.inline ? { reasoningInline: true as const } : {}),
-          tools: [],
-          parts: [],
-          ...(rec.at ? { at: rec.at } : {}),
-        })
+        const shaped = dialect?.reasoning ? dialect.reasoning(rec.text) : rec.text
+        const text = shaped?.replace(/\r\n?/g, "\n").trim()
+        if (!text) break
+        if (turnReasoning) {
+          turnReasoning.text = `${turnReasoning.text}\n\n${text}`
+          thoughtSinceText = true
+        } else {
+          close()
+          turnReasoning = { sourceId: `${identityPrefix}:${i}`, role: "assistant", kind: "reasoning", text, tools: [], parts: [], ...(rec.at ? { at: rec.at } : {}) }
+          out.push(turnReasoning)
+        }
         break
       }
       case "assistant-text": {
@@ -383,16 +394,20 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         const msg = openAssistant(i, rec.at)
         const mid = (rec as { messageId?: string }).messageId
         if (mid && mid === currentMessageId) {
+          thoughtSinceText = false
           const last = msg.parts[msg.parts.length - 1]
           if (last?.kind === "text") { last.text += rec.text; msg.text = msg.parts.filter((p) => p.kind === "text").map((p) => (p as { text: string }).text).join("\n\n"); break }
         }
+        const separate = Boolean((mid && currentMessageId && mid !== currentMessageId) || thoughtSinceText)
+        thoughtSinceText = false
         currentMessageId = mid
-        appendText(msg, rec.text)
+        appendText(msg, rec.text, separate)
         break
       }
       case "tool-call": {
         const msg = openAssistant(i, rec.at)
         currentMessageId = undefined
+        thoughtSinceText = false
         const call = dialect?.toolCall?.(rec) ?? toolCallFor(rec, (rec as { acp?: AcpToolMeta }).acp)
         openTools.set(rec.id, call)
         appendTool(msg, call)
@@ -420,6 +435,7 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
       // the message that failed read as delivered (2026-11-06).
       case "provider-error": {
         close()
+        turnReasoning = undefined
         out.push({ sourceId: `${identityPrefix}:${i}`, role: "assistant", kind: "event", text: rec.error.message, providerError: rec.error, tools: [], parts: [], ...(rec.at ? { at: rec.at } : {}) })
         break
       }

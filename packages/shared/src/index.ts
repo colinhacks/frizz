@@ -7830,12 +7830,6 @@ export const TranscriptMessage = z.object({
   // ordinary user/assistant message. Old clients that don't know a `kind` render it as a plain
   // assistant line, which is a graceful (if unstyled) degrade.
   kind: z.enum(["event", "reasoning"]).optional(),
-  // Render a `kind:"reasoning"` block inline as quiet muted prose (clamped when long) rather than
-  // behind a collapsed `Reasoning >` toggle. Set by Antigravity's projection, where Gemini emits
-  // almost no mid-turn `assistant-text` and puts its step-by-step progress summaries in reasoning.
-  // Additive + optional: Codex and other backends omit it and keep their single collapsed disclosure;
-  // an older client ignores it and renders the collapsed toggle (graceful degrade).
-  reasoningInline: z.literal(true).optional(),
   // Wall-clock the model spent THINKING, in ms — set only on a `kind:"reasoning"` message. Derived from
   // the rollout's per-step reasoning timestamps (Σ of each reasoning step's gap from the event before it,
   // which excludes tool-execution time). NOT rendered: it used to caption the reasoning disclosure as

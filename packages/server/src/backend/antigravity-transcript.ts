@@ -90,10 +90,7 @@ export function cleanAntigravityReasoning(text: string): string {
 export function projectAntigravityTranscript(raw: string, identityPrefix: string, buildCards: OpencodeToolCardBuilder, userProjector?: AcpUserRecordProjector): TranscriptMessage[] {
   return projectAcpTranscript(raw, identityPrefix, userProjector, {
     ...frizzToolDialect(buildCards),
-    reasoning: (text) => {
-      const cleaned = cleanAntigravityReasoning(text)
-      return cleaned ? { text: cleaned, inline: true } : null
-    },
+    reasoning: (text) => cleanAntigravityReasoning(text) || null,
   })
 }
 
