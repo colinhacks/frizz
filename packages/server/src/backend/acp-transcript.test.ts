@@ -228,3 +228,80 @@ test("acp-transcript: the message an open turn was in the middle of is its piece
     assert.equal(acpOpenMessage(join(tmpdir(), "no-such-transcript.jsonl")), undefined)
   } finally { for (const f of [midAnswer, newMessage, noIds, afterCall, afterSteer, closed]) f.cleanup() }
 })
+
+test("acp-transcript: reasoning steps within a turn coalesce into one block without splitting tool runs", () => {
+  const raw = ([
+    { kind: "user-message", at: T(1), text: "audit the docs", synthetic: false },
+    { kind: "turn-start", at: T(1) },
+    { kind: "reasoning", at: T(2), text: "First, inspect the directory." },
+    { kind: "tool-call", at: T(2), id: "c1", name: "Read", input: { file_path: "/p/a.md" } },
+    { kind: "tool-result", at: T(3), id: "c1", text: "ok" },
+    // Blank reasoning must neither emit a row nor break the tool batch.
+    { kind: "reasoning", at: T(3), text: "   \r\n  " },
+    { kind: "reasoning", at: T(4), text: "Now check the second file.\r\n" },
+    { kind: "tool-call", at: T(4), id: "c2", name: "Read", input: { file_path: "/p/b.md" } },
+    { kind: "tool-result", at: T(5), id: "c2", text: "ok" },
+    { kind: "reasoning", at: T(6), text: "Ready to summarize." },
+    { kind: "assistant-text", at: T(6), text: "All good.", final: true, messageId: "m1" },
+    { kind: "turn-end", at: T(6), finalText: "All good.", successful: true },
+    // A new turn starts a fresh reasoning block.
+    { kind: "user-message", at: T(8), text: "now check c.md", synthetic: false },
+    { kind: "turn-start", at: T(8) },
+    { kind: "reasoning", at: T(9), text: "Turn two thought." },
+    { kind: "assistant-text", at: T(9), text: "Checked.", final: true, messageId: "m2" },
+    { kind: "turn-end", at: T(9), finalText: "Checked.", successful: true },
+  ] as AcpRecord[]).map((r) => JSON.stringify(r)).join("\n")
+
+  const msgs = projectAcpTranscript(raw, "acp:s")
+  assert.deepEqual(msgs.map((m) => [m.role, m.kind ?? "message"]), [
+    ["user", "message"],
+    ["assistant", "reasoning"],
+    ["assistant", "message"],
+    ["user", "message"],
+    ["assistant", "reasoning"],
+    ["assistant", "message"],
+  ])
+  assert.equal(msgs[1]!.text, "First, inspect the directory.\n\nNow check the second file.\n\nReady to summarize.")
+  assert.equal(msgs[1]!.sourceId, "acp:s:2")
+  assert.equal(msgs[2]!.tools.length, 2, "both tool calls stay in one message/tools part")
+  assert.deepEqual(msgs[2]!.parts.map((p) => p.kind), ["tools", "text"])
+  assert.equal(msgs[2]!.text, "All good.")
+  assert.equal(msgs[4]!.text, "Turn two thought.", "the next turn opens a fresh reasoning block")
+})
+
+test("acp-transcript: a pre-reasoning tool call closes on the first thought, and a provider error or new message boundary resets cleanly", () => {
+  const raw = ([
+    { kind: "user-message", at: T(1), text: "go", synthetic: false },
+    { kind: "turn-start", at: T(1) },
+    { kind: "tool-call", at: T(2), id: "c0", name: "Bash", input: { command: "ls" } },
+    { kind: "tool-result", at: T(2), id: "c0", text: "a" },
+    { kind: "reasoning", at: T(3), text: "Thought one." },
+    { kind: "tool-call", at: T(3), id: "c1", name: "Bash", input: { command: "pwd" } },
+    { kind: "tool-result", at: T(4), id: "c1", text: "/p" },
+    { kind: "reasoning", at: T(4), text: "Thought two." },
+    { kind: "tool-call", at: T(5), id: "c2", name: "Bash", input: { command: "date" } },
+    { kind: "tool-result", at: T(5), id: "c2", text: "now" },
+    { kind: "assistant-text", at: T(6), text: "First note.", final: false, messageId: "m1" },
+    { kind: "reasoning", at: T(6), text: "Thought three." },
+    { kind: "assistant-text", at: T(7), text: "Second note.", final: true, messageId: "m2" },
+    { kind: "provider-error", at: T(8), error: { message: "boom" } },
+    { kind: "reasoning", at: T(9), text: "After error." },
+    { kind: "assistant-text", at: T(9), text: "Recovered.", final: true, messageId: "m3" },
+  ] as AcpRecord[]).map((r) => JSON.stringify(r)).join("\n")
+
+  const msgs = projectAcpTranscript(raw, "acp:s")
+  assert.deepEqual(msgs.map((m) => [m.role, m.kind ?? "message"]), [
+    ["user", "message"],
+    ["assistant", "message"], // c0 before first reasoning
+    ["assistant", "reasoning"], // Thought one + two + three
+    ["assistant", "message"], // c1 + c2 + First note + Second note
+    ["assistant", "event"], // provider-error
+    ["assistant", "reasoning"], // After error
+    ["assistant", "message"], // Recovered
+  ])
+  assert.equal(msgs[1]!.tools.length, 1)
+  assert.equal(msgs[2]!.text, "Thought one.\n\nThought two.\n\nThought three.")
+  assert.equal(msgs[3]!.tools.length, 2, "tools after the first thought stay coalesced")
+  assert.equal(msgs[3]!.text, "First note.\n\nSecond note.", "distinct messageIds separated by a coalesced thought keep a paragraph break")
+  assert.equal(msgs[5]!.text, "After error.", "provider-error resets turnReasoning")
+})
