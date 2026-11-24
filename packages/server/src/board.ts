@@ -2353,6 +2353,7 @@ function sessionThreadView(
     snoozePrompt: snoozedUntil ? row.snooze_prompt ?? undefined : undefined,
     pinnedAt: row.pinned_at ?? undefined,
     consolePinnedAt: row.console_pinned_at ?? undefined,
+    leavePinned: row.leave_pinned_at ? true as const : undefined,
     parentSlug,
     handoffToParent: handoffToParent ? true as const : undefined,
     handoffRestAt: handoffToParent ? tele?.lastAssistantAt : undefined,

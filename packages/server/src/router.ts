@@ -4146,7 +4146,10 @@ export function createRouter(ctx: AppContext) {
     // “Mark as done” stops a resting provider shell and archives in one action. The server—not the
     // client—asks for confirmation only when current telemetry shows an executing/ambiguous turn.
     completeThread: mutation({
-      input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1), terminateLive: z.boolean().default(false) }).strict(),
+      // `leavePinned`: the human answered "Leave pinned" to the pin question this Done asked, which the
+      // thread remembers once the completion lands (SessionRow.leave_pinned_at), so its next Done asks
+      // nothing.
+      input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1), terminateLive: z.boolean().default(false), leavePinned: z.boolean().optional() }).strict(),
       // `hold` rides along only with needsConfirmation:true — it is the evidence the dialog names.
       output: z.object({ needsConfirmation: z.boolean(), hold: CompletionHold.optional() }),
       handler: async ({ input }) => {
@@ -4155,6 +4158,7 @@ export function createRouter(ctx: AppContext) {
           ctx.storage, row, input.terminateLive, cachedLivenessTerminator, ctx.tailer.get(input.slug), ctx.codexAppServer, ctx.claudeBroker, acpTransportTerminator(ctx), ctx.opencodeBridge,
         )
         if (!result.needsConfirmation) {
+          if (input.leavePinned && !row.leave_pinned_at) ctx.storage.setLeavePinnedAt(input.slug, new Date().toISOString())
           ctx.board.refresh()
           // Whatever an ACP thread was still holding fails now, not at the next sweep.
           if (backendUsesAcpTransport(row.backend)) void releaseHeldFollowUps(input.slug)

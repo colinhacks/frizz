@@ -4574,6 +4574,9 @@ export const ThreadView = z.object({
   // project's board, nor the other way round. The instant is the Console's pinned band's order across
   // every project, and like the project pin it outranks every derived state.
   consolePinnedAt: z.string().optional(),
+  // The human answered "Leave pinned" to Mark as done's pin question once, so Done on this thread keeps
+  // its pin without asking again, whichever shelf it is on (absent = ask).
+  leavePinned: z.literal(true).optional(),
   /** CHILD THREADS (Settings.childThreads): the thread that spawned this one with `frizzctl spawn-child`.
    *  Present only while that thread still exists. A child is never a row of its own on the board — not in
    *  any band, the queue, a count or a badge — and is drawn under its parent instead, unless it stands at a
