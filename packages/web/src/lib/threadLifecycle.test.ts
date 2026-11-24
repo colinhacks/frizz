@@ -109,25 +109,32 @@ function hold(over: Partial<CompletionHold> = {}): CompletionHold {
   return { turnInFlight: false, unobservable: false, subAgents: [], subAgentCount: 0, bgShells: [], bgShellCount: 0, ...over }
 }
 
-test("completionHoldSummary names the live sub-agents and shells, with counts", () => {
+test("completionHoldSummary counts the live sub-agents and shells in its sentence and lists each as a row", () => {
+  const at = "2026-11-24T12:00:00.000Z"
   const summary = completionHoldSummary(hold({
-    subAgents: [{ label: "Audit the resolver", state: "running" }],
+    subAgents: [{ label: "Audit the resolver", state: "running", startedAt: at }],
     subAgentCount: 1,
     bgShells: [{ label: "Watch CI", state: "running" }, { label: "vite dev", state: "stale" }],
     bgShellCount: 2,
   }))
-  assert.match(summary.lead, /resting, but the background work it launched is still running/)
-  assert.deepEqual(summary.groups.map((g) => g.heading), ["1 sub-agent", "2 background shells"], "singular/plural counts, per kind")
-  assert.deepEqual(summary.groups[0].items, [{ label: "Audit the resolver", stale: false }])
-  assert.deepEqual(summary.groups[1].items, [{ label: "Watch CI", stale: false }, { label: "vite dev", stale: true }])
-  assert.match(summary.trailer, /stop the session and everything running under it/)
+  assert.equal(summary.lead, "The agent is resting, but a sub-agent and 2 background shells are still running:")
+  assert.deepEqual(summary.rows, [
+    { kind: "AGENT", label: "Audit the resolver", state: "running", startedAt: at },
+    { kind: "SHELL", label: "Watch CI", state: "running" },
+    { kind: "SHELL", label: "vite dev", state: "stale" },
+  ], "sub-agents first, each kind drawn as its own hue, the launch carried for the row's clock")
+  assert.equal(summary.overflow, 0)
+  assert.equal(summary.trailer, "Marking it done stops all of it.")
+
+  const one = completionHoldSummary(hold({ bgShells: [{ label: "Watch CI", state: "running" }], bgShellCount: 1 }))
+  assert.equal(one.lead, "The agent is resting, but a background shell is still running:", "singular")
 })
 
 test("completionHoldSummary says a cut-off worker is gone, not busy, and points at Retry", () => {
   const summary = completionHoldSummary(hold({ turnInFlight: true, cutOff: true }))
   assert.match(summary.lead, /cut off mid-turn/)
   assert.match(summary.lead, /isn’t done/)
-  assert.deepEqual(summary.groups, [], "nothing is running under a dead worker, so nothing is listed")
+  assert.deepEqual(summary.rows, [], "nothing is running under a dead worker, so nothing is listed")
   assert.match(summary.trailer, /Retry resumes it/)
   assert.doesNotMatch(summary.trailer, /stop/, "nothing will be stopped — the copy must not promise a kill")
 })
@@ -135,13 +142,13 @@ test("completionHoldSummary says a cut-off worker is gone, not busy, and points 
 test("completionHoldSummary distinguishes a mid-turn agent from the work hanging off it", () => {
   const midTurnOnly = completionHoldSummary(hold({ turnInFlight: true }))
   assert.match(midTurnOnly.lead, /mid-turn — it’s executing right now/)
-  assert.deepEqual(midTurnOnly.groups, [])
-  assert.match(midTurnOnly.trailer, /stop its agent session mid-turn/)
+  assert.deepEqual(midTurnOnly.rows, [])
+  assert.match(midTurnOnly.trailer, /stops the session mid-turn/)
 
   // Mid-turn AND owning children: both facts survive; neither replaces the other.
   const both = completionHoldSummary(hold({ turnInFlight: true, bgShells: [{ label: "Watch CI", state: "running" }], bgShellCount: 1 }))
-  assert.match(both.lead, /mid-turn, and it still owns background work/)
-  assert.deepEqual(both.groups.map((g) => g.heading), ["1 background shell"])
+  assert.equal(both.lead, "The agent is mid-turn, and a background shell is running under it:")
+  assert.deepEqual(both.rows.map((row) => row.label), ["Watch CI"])
 })
 
 test("completionHoldSummary reports withheld labels as '+N more' and never claims a false cause", () => {
@@ -149,13 +156,14 @@ test("completionHoldSummary reports withheld labels as '+N more' and never claim
     subAgents: [{ label: "child 0", state: "running" }],
     subAgentCount: 9,
   }))
-  assert.equal(capped.groups[0].heading, "9 sub-agents", "the heading counts every child, not just the named ones")
-  assert.equal(capped.groups[0].overflow, 8)
+  assert.match(capped.lead, /9 sub-agents are still running/, "the sentence counts every child, not just the named ones")
+  assert.equal(capped.rows.length, 1)
+  assert.equal(capped.overflow, 8)
 
   // Telemetry missing entirely: say the transcript is unreadable rather than inventing a running turn.
   const blind = completionHoldSummary(hold({ unobservable: true }))
   assert.match(blind.lead, /transcript can’t be read right now/)
-  assert.deepEqual(blind.groups, [])
+  assert.deepEqual(blind.rows, [])
 
   // No hold at all (older server, or a mispredict with no evidence) degrades to the original sentence.
   assert.equal(completionHoldSummary(undefined).lead, "This thread is still running.")

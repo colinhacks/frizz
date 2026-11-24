@@ -645,10 +645,11 @@ const INPUT_AHEAD_MAX_MS = 30_000
 // alongside (see CompletionHold), so a capped list is reported as "+N more", never silently shortened.
 const HOLD_OPS_MAX = 8
 const HOLD_LABEL_MAX = 100
-function holdOps(ops: readonly { label: string; state: "running" | "stale" }[]): CompletionHold["subAgents"] {
+function holdOps(ops: readonly { label: string; state: "running" | "stale"; startedAt?: string }[]): CompletionHold["subAgents"] {
   return ops.slice(0, HOLD_OPS_MAX).map((op) => ({
     label: op.label.trim().slice(0, HOLD_LABEL_MAX) || "(unnamed)",
     state: op.state,
+    ...(op.startedAt ? { startedAt: op.startedAt } : {}),
   }))
 }
 

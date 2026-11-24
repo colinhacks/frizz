@@ -3,11 +3,11 @@ import { Check, Loader2 } from "lucide-react"
 import type { CompletionHold, ThreadView } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { showToast } from "../store.ts"
-import { threadLifecycleAvailability, completionArchivesImmediately, completionHoldSummary } from "../lib/threadLifecycle.ts"
+import { threadLifecycleAvailability, completionArchivesImmediately } from "../lib/threadLifecycle.ts"
 import { markArchived, clearArchived } from "../lib/optimisticArchive.ts"
 import { isPinned, settleCompletion } from "../lib/completionPins.ts"
-import { CHILD_ARROW, CHILD_ARROW_CLASS } from "../lib/childOps.ts"
 import { HEADER_ICON_CLASS } from "../lib/headerIcon.ts"
+import { CompletionHoldBody } from "./CompletionHoldBody.tsx"
 import { SnoozeMenu } from "./SnoozeMenu.tsx"
 import { Tooltip } from "./Tooltip.tsx"
 import { Dialog } from "./ui/Dialog.tsx"
@@ -280,7 +280,7 @@ export function StateButton({
               className="button-outline flex items-center gap-1.5 rounded-md bg-fg px-3 py-1.5 text-[12px] font-medium text-bg outline-none transition-opacity hover:opacity-90 disabled:opacity-45"
             >
               {pending && <Loader2 size={12} className="animate-spin" />}
-              {hold?.cutOff ? "Mark done anyway" : "End session & mark done"}
+              Mark as done
             </button>
           </>
         }
@@ -319,35 +319,3 @@ function UnpinAsk({ open, onOpenChange, onAnswer }: { open: boolean; onOpenChang
   )
 }
 
-// The confirm dialog's body. Ending a session kills its whole process tree, so this names what is
-// about to die: the executing turn and/or every live sub-agent and background shell, counted and
-// listed by label. The human clicked Done believing the thread was finished — the specific "2
-// background shells: `Watch CI`, `vite dev`" is the correction, and a bare "still running" was not.
-function CompletionHoldBody({ hold }: { hold: CompletionHold | undefined }) {
-  const summary = completionHoldSummary(hold)
-  return (
-    <div data-completion-hold className="flex flex-col gap-2 p-4 text-[12px] leading-relaxed text-muted">
-      <p>{summary.lead}</p>
-      {summary.groups.map((group) => (
-        <div key={group.kind} className="flex flex-col gap-0.5">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-fg/70">{group.heading}</div>
-          <ul className="flex flex-col gap-0.5">
-            {group.items.map((item, index) => (
-              <li key={`${item.label}-${index}`} className="flex min-w-0 items-baseline gap-1.5">
-                {/* The same ⤷ token every child row uses (lib/childOps.ts). This list is prose inside a
-                    dialog, not an operations surface, so it stops at the arrow: no liveness mark, no
-                    drill-in, no dismiss — hence the tokens rather than ChildOpRow itself. */}
-                <span aria-hidden className={CHILD_ARROW_CLASS}>{CHILD_ARROW}</span>
-                <span className="min-w-0 truncate text-fg/80">{item.label}</span>
-                {/* Stale is why we ask rather than proof of life: say so instead of implying either. */}
-                {item.stale && <span className="shrink-0 text-[11px] text-muted-60">no recent output</span>}
-              </li>
-            ))}
-            {group.overflow > 0 && <li className="pl-[15px] text-muted-60">+{group.overflow} more</li>}
-          </ul>
-        </div>
-      ))}
-      <p>{summary.trailer}</p>
-    </div>
-  )
-}

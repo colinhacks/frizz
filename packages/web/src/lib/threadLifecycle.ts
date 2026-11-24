@@ -67,21 +67,22 @@ export function completionArchivesImmediately(thread: ThreadView): boolean {
   return true
 }
 
-// One named group of work the confirmation is holding on — "2 sub-agents", with the labels beneath it.
-export interface CompletionHoldGroup {
-  kind: "agent" | "shell"
-  heading: string // "1 sub-agent" / "3 background shells"
-  // The ops the server named (already capped). `stale` is carried through rather than flattened: it
-  // is not proof the op stopped — which is why it holds the completion — but claiming a silent child
-  // is actively running would overstate what the tailer knows.
-  items: { label: string; stale: boolean }[]
-  overflow: number // labels the server withheld; >0 renders a "+N more" line
+// One piece of work the confirmation is holding on, drawn as the same row the ops panel over the prompt
+// box draws for it (ChildOpRow), so the dialog lists live work the way every other surface does.
+export interface CompletionHoldRow {
+  kind: "AGENT" | "SHELL"
+  label: string
+  // Carried through rather than flattened: stale is not proof the op stopped — which is why it holds the
+  // completion — but claiming a silent child is actively running would overstate what the tailer knows.
+  state: "running" | "stale"
+  startedAt?: string
 }
 
 export interface CompletionHoldSummary {
-  lead: string // the sentence that names WHY Done stopped to ask
-  groups: CompletionHoldGroup[]
-  trailer: string // what "End session & mark done" will actually do
+  lead: string // the sentence that names WHY Done stopped to ask, and how much is running
+  rows: CompletionHoldRow[] // sub-agents first, then shells, as the server named them (already capped)
+  overflow: number // ops the server counted but withheld; >0 draws a "+N more" line
+  trailer: string // what "Mark as done" will actually do
 }
 
 // The confirm dialog's copy. "This thread is still running" answers nothing the human can act on —
@@ -89,62 +90,66 @@ export interface CompletionHoldSummary {
 // an executing turn, a specific count of live sub-agents/background shells with their labels, or an
 // unreadable transcript. `hold` absent (an older server, or a mispredicted needsConfirmation with no
 // evidence attached) degrades to the original generic sentence rather than asserting something false.
+//
+// THE COUNT LIVES IN THE SENTENCE, the labels in the rows under it (maintainer 2026-11-24, of a
+// "1 BACKGROUND SHELL" heading over a ⤷ line: "the rendering looks kind of weird … we have better ways of
+// rendering these kinds of running tasks"). The rows are the ops panel's, whose dot already carries the
+// kind's hue, so a heading per kind had nothing left to say that the sentence could not.
 export function completionHoldSummary(hold: CompletionHold | undefined): CompletionHoldSummary {
   const generic = {
     lead: "This thread is still running.",
-    groups: [],
-    trailer: "Marking it done will stop its agent session, then move it to Done.",
+    rows: [],
+    overflow: 0,
+    trailer: "Marking it done stops its agent session.",
   }
   if (!hold) return generic
   // Nothing is running and nothing will be stopped: the worker is already gone, mid-turn. The correction
   // the human needs is that the thread is NOT finished — and that Retry, not Done, is the verb that
-  // picks it back up. No groups: a dead worker's children cannot be live, and the server names none.
+  // picks it back up. No rows: a dead worker's children cannot be live, and the server names none.
   if (hold.cutOff) {
     return {
       lead: "This session was cut off mid-turn — its worker ended before the turn finished, so the thread isn’t done.",
-      groups: [],
+      rows: [],
+      overflow: 0,
       trailer: "Marking it done files it under Done as it is. Retry resumes it where it left off.",
     }
   }
-  const groups = [
-    holdGroup("agent", "sub-agent", hold.subAgents, hold.subAgentCount),
-    holdGroup("shell", "background shell", hold.bgShells, hold.bgShellCount),
-  ].filter((group): group is CompletionHoldGroup => group !== null)
+  // The counts are authoritative — the server caps the named list and can send fewer labels.
+  const agents = Math.max(hold.subAgentCount, hold.subAgents.length)
+  const shells = Math.max(hold.bgShellCount, hold.bgShells.length)
+  const rows: CompletionHoldRow[] = [
+    ...hold.subAgents.map((op) => holdRow("AGENT", op)),
+    ...hold.bgShells.map((op) => holdRow("SHELL", op)),
+  ]
+  const overflow = Math.max(0, agents + shells - rows.length)
+  const work = [counted(agents, "sub-agent"), counted(shells, "background shell")].filter(Boolean).join(" and ")
+  const verb = agents + shells === 1 ? "is" : "are"
   if (hold.unobservable) {
     return {
       lead: "This session is live, but its transcript can’t be read right now — it may still be working.",
-      groups,
-      trailer: "Marking it done will stop the session anyway, then move it to Done.",
+      rows,
+      overflow,
+      trailer: "Marking it done stops the session anyway.",
     }
   }
-  if (!hold.turnInFlight && groups.length === 0) return generic // defensive: a hold with no evidence
-  const lead = hold.turnInFlight
-    ? groups.length > 0
-      ? "The agent is mid-turn, and it still owns background work:"
-      : "The agent is mid-turn — it’s executing right now."
-    : "The agent is resting, but the background work it launched is still running:"
+  if (!hold.turnInFlight && !work) return generic // defensive: a hold with no evidence
+  if (hold.turnInFlight && !work) {
+    return { lead: "The agent is mid-turn — it’s executing right now.", rows, overflow, trailer: "Marking it done stops the session mid-turn." }
+  }
   return {
-    lead,
-    groups,
-    trailer: groups.length > 0
-      ? "Marking it done will stop the session and everything running under it, then move it to Done."
-      : "Marking it done will stop its agent session mid-turn, then move it to Done.",
+    lead: hold.turnInFlight
+      ? `The agent is mid-turn, and ${work} ${verb} running under it:`
+      : `The agent is resting, but ${work} ${verb} still running:`,
+    rows,
+    overflow,
+    trailer: "Marking it done stops all of it.",
   }
 }
 
-function holdGroup(
-  kind: CompletionHoldGroup["kind"],
-  noun: string,
-  ops: CompletionHold["subAgents"],
-  count: number,
-): CompletionHoldGroup | null {
-  // The count is authoritative — the label list is capped server-side and can be shorter.
-  const total = Math.max(count, ops.length)
-  if (total === 0) return null
-  return {
-    kind,
-    heading: `${total} ${noun}${total === 1 ? "" : "s"}`,
-    items: ops.map((op) => ({ label: op.label, stale: op.state === "stale" })),
-    overflow: Math.max(0, total - ops.length),
-  }
+function holdRow(kind: CompletionHoldRow["kind"], op: CompletionHold["subAgents"][number]): CompletionHoldRow {
+  return { kind, label: op.label, state: op.state, ...(op.startedAt ? { startedAt: op.startedAt } : {}) }
+}
+
+function counted(count: number, noun: string): string {
+  return count === 0 ? "" : `${count === 1 ? "a" : count} ${noun}${count === 1 ? "" : "s"}`
 }

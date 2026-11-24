@@ -849,11 +849,11 @@ test("completionConfirmationHold names WHY it declined: the executing turn plus 
   assert.deepEqual(hold, {
     turnInFlight: true,
     unobservable: false,
-    subAgents: [{ label: "Audit the resolver", state: "running" }],
+    subAgents: [{ label: "Audit the resolver", state: "running", startedAt: at }],
     subAgentCount: 1,
-    bgShells: [{ label: "Watch CI", state: "running" }],
+    bgShells: [{ label: "Watch CI", state: "running", startedAt: at }],
     bgShellCount: 1,
-  }, "only ACTIVELY-running ops are named; a stale child no longer holds Done, matching the queue rule")
+  }, "only ACTIVELY-running ops are named, each with its launch for the dialog's clock; a stale child no longer holds Done, matching the queue rule")
 })
 
 test("completionConfirmationHold caps worker-authored labels but reports the untruncated count", () => {

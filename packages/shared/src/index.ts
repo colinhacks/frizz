@@ -477,6 +477,9 @@ export type BgShellView = z.infer<typeof BgShellView>
 export const CompletionHoldOp = z.object({
   label: z.string(),
   state: z.enum(["running", "stale"]),
+  // ISO of its launch, for the dialog's running clock beside each row, as every other row of live work
+  // carries one. Optional: an older server sends none, and the row then draws no reading.
+  startedAt: z.string().optional(),
 })
 export type CompletionHoldOp = z.infer<typeof CompletionHoldOp>
 export const CompletionHold = z.object({

@@ -1,11 +1,34 @@
 import { createRoot } from "react-dom/client"
 import { useEffect, useState } from "react"
 import type { ThreadView } from "@frizz/shared"
+import { PhoneDoneButton } from "./components/PhoneDoneButton.tsx"
 import { ThreadLifecycleActions } from "./components/ThreadLifecycle.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
 import "./styles.css"
 
-const mode = new URLSearchParams(window.location.search).get("mode") === "executing" ? "executing" : "resting"
+const params = new URLSearchParams(window.location.search)
+const mode = params.get("mode") === "executing" ? "executing" : "resting"
+// `ops=one` / `ops=many`: the server's hold names the live work, as it does for a resting thread whose
+// background shell or sub-agents are still running (the dialog's rows). Absent: no evidence attached.
+const ops = params.get("ops")
+// `phone=1`: the phone thread bar's Done, whose dialog draws the same body at the phone's type size.
+const phone = params.get("phone") === "1"
+const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+const hold = ops === "one"
+  ? { turnInFlight: false, unobservable: false, subAgents: [], subAgentCount: 0, bgShells: [{ label: "Watching main's CI run for the landing commit", state: "running", startedAt: ago(4) }], bgShellCount: 1 }
+  : ops === "many"
+  ? {
+    turnInFlight: true,
+    unobservable: false,
+    subAgents: [
+      { label: "Audit the resolver's cache keys", state: "running", startedAt: ago(12) },
+      { label: "Reproduce the flaky upload on Linux", state: "running", startedAt: ago(3) },
+    ],
+    subAgentCount: 2,
+    bgShells: [{ label: "Watching main's CI run for the landing commit", state: "running", startedAt: ago(41) }],
+    bgShellCount: 4,
+  }
+  : undefined
 const nativeFetch = window.fetch.bind(window)
 const rpcResult = (result: unknown) => new Response(JSON.stringify({ result }), {
   headers: { "content-type": "application/json", "x-frizz-boot": "completion-lifecycle-fixture" },
@@ -16,7 +39,8 @@ window.fetch = async (input, init) => {
   if (url.pathname === "/_frizz/rpc/completeThread") {
     const body = JSON.parse(String(init?.body ?? "{}")) as { terminateLive?: boolean }
     window.dispatchEvent(new CustomEvent("fixture-complete", { detail: body }))
-    return rpcResult({ needsConfirmation: mode === "executing" && body.terminateLive !== true })
+    const needsConfirmation = mode === "executing" && body.terminateLive !== true
+    return rpcResult({ needsConfirmation, ...(needsConfirmation && hold ? { hold } : {}) })
   }
   return nativeFetch(input, init)
 }
@@ -69,7 +93,7 @@ function Fixture() {
         </div>
         {/* The header's lifecycle cluster — the check is what this fixture drives. */}
         <div className="flex justify-end px-4 py-2">
-          <ThreadLifecycleActions thread={thread} onArchived={() => setDone(true)} />
+          {phone ? <PhoneDoneButton thread={thread} compact={false} /> : <ThreadLifecycleActions thread={thread} onArchived={() => setDone(true)} />}
         </div>
       </section>
     </main>
