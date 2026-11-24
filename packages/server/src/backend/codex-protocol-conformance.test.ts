@@ -298,7 +298,7 @@ function featureStates(overrides: string[] = []): Map<string, string> {
 }
 
 // Codex compresses a rollout untouched for 7 days into `.jsonl.zst` behind `local_thread_store_compression`,
-// under development and off by default through 0.171.0 (codex-rs/features/src/lib.rs, re-checked 2026-11-23),
+// under development and off by default through 0.172.0 (codex-rs/features/src/lib.rs, re-checked 2026-11-24),
 // and turns it back into plain JSONL when the thread resumes. The conversation reader decodes one
 // (transcript.ts, on a Node whose zlib has Zstd), but the live tailer, discovery, sub-agent rollouts and quota
 // sampling still read plain JSONL only. Audit those before accepting a pin that turns the flag on.
