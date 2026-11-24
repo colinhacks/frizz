@@ -1,29 +1,22 @@
 import type { ThreadView } from "@frizz/shared"
 import { setPinned } from "./optimisticPin.ts"
 import { showToast, type ToastAction } from "../store.ts"
-import { prefs } from "./prefs.ts"
 
-// WHAT MARK AS DONE DOES TO A PIN IS THE OPERATOR'S CHOICE, remembered per browser (prefs.doneUnpins).
-// The default KEEPS it: a pin outranks Done (router setThreadPinned), and the maintainer pins threads on
-// purpose and marks them done, and wants them to stay on the shelf, visible and one click away
-// (2026-10-26: "I often have a lot of things pinned intentionally, and I mark them as done. I want them
-// to stay visible and obviously clickable"). Then the toast offers "Unpin", which the human can ignore.
-// Another operator finishes a pinned thread to be rid of it (2026-11-12: a split button like Send's,
-// whose ticked row is what the button does), and ticks "Mark as done & unpin" in the done card's caret
-// menu once (ThreadLifecycle DonePinChoice); every completion in that browser then unpins.
+// WHAT MARK AS DONE DOES TO A PIN IS ASKED, EVERY TIME (maintainer 2026-11-24: "When you mark a pinned
+// thread as done, it should show you a pop-up asking you if you want to unpin it"). The desktop's Done
+// asks before it files the thread (ThreadLifecycle StateButton, UnpinAsk) and hands the answer here. A
+// pin outranks Done (router setThreadPinned), so keeping it leaves the thread on the shelf, visible and
+// one click away (2026-10-26: "I often have a lot of things pinned intentionally, and I mark them as
+// done"). The phone's swipe asks nothing, since the phone has no pin control; its toast offers "Unpin".
+// A per-browser choice ticked in a split button's caret (colinhacks/frizz#72) came before the question
+// and went with it.
 //
 // The unpin is the CLIENT's second write after the completion, not part of it: the server's verb stays
-// one meaning for every caller, and the phone and an older tab keep the default without knowing a
-// choice exists.
+// one meaning for every caller.
 
 // Pinned on either shelf, the project board's or the Console's.
 export function isPinned(thread: Pick<ThreadView, "pinnedAt" | "consolePinnedAt">): boolean {
   return typeof thread.pinnedAt === "string" || typeof thread.consolePinnedAt === "string"
-}
-
-// Mark as done will take this thread off the pinned list too.
-export function completionUnpins(thread: Pick<ThreadView, "pinnedAt" | "consolePinnedAt">): boolean {
-  return prefs.doneUnpins && isPinned(thread)
 }
 
 type PinnedThread = Pick<ThreadView, "id" | "sessionId" | "pinnedAt" | "consolePinnedAt">
@@ -37,7 +30,7 @@ async function unpin(thread: PinnedThread): Promise<void> {
   ])
 }
 
-// The completion toast's "Unpin" action, offered when the completion kept the pin.
+// The completion toast's "Unpin" action, offered when the completion kept the pin without asking.
 export function unpinAction(thread: PinnedThread): ToastAction {
   return {
     label: "Unpin",
@@ -49,14 +42,15 @@ export function unpinAction(thread: PinnedThread): ToastAction {
   }
 }
 
-// What every completion surface runs once the server has filed the thread under Done: unpin it when this
-// browser says Done unpins, otherwise the plain confirmation, with "Unpin" on offer for a pinned thread.
-export function settleCompletion(text: string, thread: PinnedThread): void {
-  if (!isPinned(thread)) {
+// What every completion surface runs once the server has filed the thread under Done. `unpinIt` is the
+// operator's answer to the pin question: true lifts the pin, false keeps it with nothing more to offer,
+// and undefined (a surface that did not ask) keeps it with "Unpin" on offer in the toast.
+export function settleCompletion(text: string, thread: PinnedThread, unpinIt?: boolean): void {
+  if (!isPinned(thread) || unpinIt === false) {
     showToast(text)
     return
   }
-  if (!completionUnpins(thread)) {
+  if (unpinIt === undefined) {
     showToast(text, { action: unpinAction(thread) })
     return
   }

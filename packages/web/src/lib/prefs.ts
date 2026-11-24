@@ -36,11 +36,6 @@ export interface Prefs {
   // the plug — until its state changes, when the entry is dropped (components/McpPlug.tsx). Per browser,
   // like the rest of this file: it decides what this window draws, not what the agent mounts.
   mcpIgnored: Record<string, string>
-  // What Mark as done does to a PINNED thread: keep the pin (the default, maintainer 2026-10-26: "I often
-  // have a lot of things pinned intentionally, and I mark them as done. I want them to stay visible") or
-  // take it off the pinned list too. Ticked in the done card's split button (ThreadLifecycle
-  // DonePinChoice), and read by every completion in this browser (lib/completionPins.ts).
-  doneUnpins: boolean
   // The most a thread's column grows to when the window has room for it, set in Settings (maintainer
   // 2026-11-18, closing colinhacks/frizz#77: "There is no value in having the pane be that wide … it just
   // still has a somewhat opinionated max width"). Three fixed steps, never a dragged width: the px are in
@@ -66,8 +61,10 @@ function coerceQueueOrder(v: unknown, fallback: QueueDirection): QueueDirection 
 // Keys a retired setting left behind in stored blobs, dropped on read so the spread below does not
 // carry them into the proxy and back out to localStorage forever. `compactDiffs` was the Settings
 // "Density" switch (retired 2026-10-20 — diffs always open collapsed now, see DiffBlock) and
-// `diffsRedefaulted` the marker of its one-time 2026-07-09 migration.
-const RETIRED_KEYS = ["compactDiffs", "diffsRedefaulted"]
+// `diffsRedefaulted` the marker of its one-time 2026-07-09 migration. `doneUnpins` was what Mark as done
+// did to a pinned thread, ticked in the done card's split button (retired 2026-11-24 — Done asks each
+// time now, see lib/completionPins.ts).
+const RETIRED_KEYS = ["compactDiffs", "diffsRedefaulted", "doneUnpins"]
 
 export function parseStoredPrefs(raw: string | null): Prefs {
   const fallback: Prefs = {
@@ -77,7 +74,6 @@ export function parseStoredPrefs(raw: string | null): Prefs {
     dictation: true,
     wrapCode: true,
     mcpIgnored: {},
-    doneUnpins: false,
     threadWidth: "standard",
   }
   try {
@@ -93,7 +89,6 @@ export function parseStoredPrefs(raw: string | null): Prefs {
       dictation: typeof stored.dictation === "boolean" ? stored.dictation : fallback.dictation,
       wrapCode: typeof stored.wrapCode === "boolean" ? stored.wrapCode : fallback.wrapCode,
       mcpIgnored: stringRecord(stored.mcpIgnored),
-      doneUnpins: typeof stored.doneUnpins === "boolean" ? stored.doneUnpins : fallback.doneUnpins,
       threadWidth: isThreadWidth(stored.threadWidth) ? stored.threadWidth : fallback.threadWidth,
     }
   } catch {

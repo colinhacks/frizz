@@ -57,11 +57,11 @@ test("a blob from before the Density switch was retired drops its keys and keeps
   assert.ok(!("compactDiffs" in parseStoredPrefs(null)))
 })
 
-test("Mark as done keeps a pin by default and only a stored boolean makes it unpin", () => {
-  assert.equal(parseStoredPrefs(null).doneUnpins, false)
-  assert.equal(parseStoredPrefs(JSON.stringify({ queueOrder: "lifo" })).doneUnpins, false)
-  assert.equal(parseStoredPrefs(JSON.stringify({ doneUnpins: true })).doneUnpins, true)
-  assert.equal(parseStoredPrefs(JSON.stringify({ doneUnpins: "yes" })).doneUnpins, false)
+// Mark as done asks about a pin each time now, so the per-browser answer it used to remember is dropped.
+test("a blob from before Done asked about the pin drops the remembered choice", () => {
+  const prefs = parseStoredPrefs(JSON.stringify({ doneUnpins: true, queueOrder: "lifo" }))
+  assert.equal(prefs.queueOrder, "lifo")
+  assert.ok(!("doneUnpins" in prefs))
 })
 
 test("the thread width is Standard by default and only a known step is kept", () => {

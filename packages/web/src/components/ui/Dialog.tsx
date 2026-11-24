@@ -18,7 +18,9 @@ export function Dialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   title: ReactNode
-  children: ReactNode
+  // Absent for a question the title asks whole: the header then sits straight on the footer, under
+  // one rule rather than two.
+  children?: ReactNode
   footer?: ReactNode
   className?: string
   /**
@@ -46,9 +48,9 @@ export function Dialog({
               <X size={15} />
             </RadixDialog.Close>
           </header>
-          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+          {children != null && <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>}
           {footer && (
-            <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-3">
+            <footer className={`flex shrink-0 items-center justify-end gap-2 px-4 py-3 ${children != null ? "border-t border-border" : ""}`}>
               {footer}
             </footer>
           )}

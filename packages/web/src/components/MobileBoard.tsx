@@ -346,7 +346,7 @@ function MobileThreadRow({
                 : "Still running — open the thread to finish it")
               return
             }
-            settleCompletion("Marked as done", t) // keeps or lifts a pin as this browser chose (lib/completionPins.ts)
+            settleCompletion("Marked as done", t) // keeps a pin, with "Unpin" on offer (lib/completionPins.ts)
           } catch (error) {
             clearArchived(t.id)
             showToast(error instanceof Error ? error.message.slice(0, 100) : "Could not mark as done")

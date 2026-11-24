@@ -1,15 +1,11 @@
-import { useState, type ReactNode } from "react"
-import * as RadixMenu from "@radix-ui/react-dropdown-menu"
-import { useSnapshot } from "valtio"
-import { Check, ChevronDown, Loader2 } from "lucide-react"
+import { useRef, useState, type ReactNode } from "react"
+import { Check, Loader2 } from "lucide-react"
 import type { CompletionHold, ThreadView } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { showToast } from "../store.ts"
 import { threadLifecycleAvailability, completionArchivesImmediately, completionHoldSummary } from "../lib/threadLifecycle.ts"
 import { markArchived, clearArchived } from "../lib/optimisticArchive.ts"
 import { isPinned, settleCompletion } from "../lib/completionPins.ts"
-import { prefs } from "../lib/prefs.ts"
-import { OPAQUE_PORTAL_SURFACE_CLASS } from "../lib/overlaySurface.ts"
 import { CHILD_ARROW, CHILD_ARROW_CLASS } from "../lib/childOps.ts"
 import { HEADER_ICON_CLASS } from "../lib/headerIcon.ts"
 import { SnoozeMenu } from "./SnoozeMenu.tsx"
@@ -117,6 +113,13 @@ export function LifecycleReadout({
 // the phone's ⋯ sheet. Same completion mutation and live-session confirmation flow; only the chrome
 // differs, via `className` or `iconOnly`. There is deliberately NO Reopen state: reopening a thread is done by
 // sending it another message, so the button is always "Mark as done".
+//
+// ON A PINNED THREAD IT ASKS FIRST whether to unpin it too (UnpinAsk), every time, before anything is
+// filed (maintainer 2026-11-24: "When you mark a pinned thread as done, it should show you a pop-up
+// asking you if you want to unpin it"). Asking BEFORE the completion keeps the question on the thread it
+// is about: the header's check dismisses the pane on success, so a question asked after it would land
+// over whatever thread came next. It replaced a split button on the done card (colinhacks/frizz#72)
+// whose caret ticked a per-browser choice of what every later Done did to a pin.
 export function StateButton({
   thread,
   onArchived,
@@ -125,7 +128,6 @@ export function StateButton({
   iconClassName = "",
   iconSize = 12,
   iconOnly = false,
-  pinChoice,
 }: {
   thread: ThreadView
   onArchived?: () => void
@@ -149,15 +151,8 @@ export function StateButton({
   // immediate tooltip like every other header icon. 15px, one size up from the strip's 14: lucide's
   // Check paints only 16 of its 24 units across, so at 14 it read lighter than the clock beside it.
   iconOnly?: boolean
-  // THE DONE CARD'S SPLIT BUTTON: on a pinned thread a caret beside the label opens what Done does to the
-  // pin (DonePinChoice), and the label names the ticked choice. The value is the PILL's chrome — its
-  // corner, type size and fill, with no padding and no hover, since each half pads and tints itself. An
-  // unpinned thread has nothing to choose, so it draws the plain button in `className`.
-  pinChoice?: string
 }) {
-  const { doneUnpins } = useSnapshot(prefs)
-  // What this click will do, named where the verb is named: the header check's tooltip and the label.
-  const label = doneUnpins && isPinned(thread) ? "Mark as done & unpin" : "Mark as done"
+  const label = "Mark as done"
   // Disables the instant it's clicked. On success we DON'T reset it: the card is dissolving, so the
   // button stays disabled (still reading "Mark as done", no spinner) for the whole fade-out rather
   // than flickering back to enabled under the animation. Only a live-session confirmation prompt
@@ -168,10 +163,15 @@ export function StateButton({
   // the board snapshot: the snapshot lags the RPC by up to a poll, and the whole point of this copy is
   // that it describes the exact state the server refused on.
   const [hold, setHold] = useState<CompletionHold | undefined>(undefined)
+  // The pin question (UnpinAsk), and its answer, held through the session confirmation that can follow
+  // it: undefined until a pinned thread's operator has answered.
+  const [unpinAskOpen, setUnpinAskOpen] = useState(false)
+  const unpinRef = useRef<boolean | undefined>(undefined)
   // `optimistic`: fade the card NOW (before the RPC) rather than after the round-trip. Only when a
   // reinstate path exists AND the completion is predicted to archive immediately — so the common resting
   // "done" card feels instantaneous, while an executing turn still waits and shows the confirm dialog.
   const complete = (terminateLive: boolean, optimistic: boolean) => {
+    const unpin = unpinRef.current
     setPending(true)
     if (optimistic) onArchived?.() // start the exit animation immediately
     // Move the SIDEBAR row to Done now, on the same prediction the queue card's fade already runs on —
@@ -199,8 +199,8 @@ export function StateButton({
           return
         }
         setConfirmOpen(false)
-        // A pinned thread keeps or loses its pin as this browser chose (lib/completionPins.ts).
-        settleCompletion("Done", thread)
+        // Keeps or lifts the pin as the operator just answered (lib/completionPins.ts).
+        settleCompletion("Done", thread, unpin)
         if (!optimistic) onArchived?.() // non-optimistic path dismisses now; optimistic already did
       })
       .catch((error) => {
@@ -211,13 +211,24 @@ export function StateButton({
       })
   }
   const canOptimistic = !!onArchived && !!onDismissCancel && completionArchivesImmediately(thread)
+  // The click: a pinned thread asks about its pin first, and its answer runs the same completion.
+  const start = () => {
+    unpinRef.current = undefined
+    if (isPinned(thread)) setUnpinAskOpen(true)
+    else complete(false, canOptimistic)
+  }
+  const answer = (unpin: boolean) => {
+    unpinRef.current = unpin
+    setUnpinAskOpen(false)
+    complete(false, canOptimistic)
+  }
   return (
     <>
       {iconOnly ? (
         <Tooltip label={label}>
           <button
             type="button"
-            onClick={() => complete(false, canOptimistic)}
+            onClick={start}
             disabled={pending}
             aria-label={label}
             onMouseDown={(event) => event.preventDefault()}
@@ -226,28 +237,12 @@ export function StateButton({
             <Check size={15} strokeWidth={2} />
           </button>
         </Tooltip>
-      ) : pinChoice && isPinned(thread) ? (
-        <DonePinChoice className={pinChoice} pending={pending}>
-          <button
-            type="button"
-            data-done-split-label
-            onClick={() => complete(false, canOptimistic)}
-            disabled={pending}
-            aria-label={label}
-            title={label}
-            onMouseDown={(event) => event.preventDefault()}
-            className={`flex items-center gap-1 rounded-l-[inherit] py-1 pl-2.5 pr-[7px] font-medium outline-none transition-colors hover:bg-bg/10 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-45`}
-          >
-            <Check size={iconSize} className={iconClassName} />
-            {label}
-          </button>
-        </DonePinChoice>
       ) : (
         <button
           type="button"
           // The server owns the execution verdict. A live worker can be resting between turns, in
           // which case Done should immediately stop it and archive the thread.
-          onClick={() => complete(false, canOptimistic)}
+          onClick={start}
           disabled={pending}
           aria-label={label}
           title={label}
@@ -291,77 +286,42 @@ export function StateButton({
       >
         <CompletionHoldBody hold={hold} />
       </Dialog>
+      <UnpinAsk open={unpinAskOpen} onOpenChange={setUnpinAskOpen} onAnswer={answer} />
     </>
   )
 }
 
-const PIN_CHOICES: readonly { unpins: boolean; name: string; says: string }[] = [
-  { unpins: false, name: "Mark as done", says: "It stays pinned at the top of the sidebar." },
-  { unpins: true, name: "Mark as done & unpin", says: "It leaves the pinned list and files under Done." },
-]
-
-// THE CARET HALF OF THE DONE CARD'S SPLIT BUTTON, after the prompt box's Send (SendSplitButton): the
-// pill paints the fill once, each half paints only its hover tint, and the 1px seam wears that same tint
-// so a lit half swallows it. The menu's ticked row is what the label does, and picking a row only ticks
-// it — it marks nothing done — because the choice is remembered for every later Done in this browser
-// (prefs.doneUnpins), as Send's ticked row is for every later send.
-//
-// Its ink gaps are Send's, read side by side from pixels in sans at a real 2x (2026-11-12): last
-// letter → seam 7.5px, seam → chevron 7px, chevron → right edge 8px, each equal to Send's by the same
-// reading (SendSplitButton documents 8.0 / 7.1 / 8.1 by its own). The label half keeps the plain
-// button's left inset, so a pinned and an unpinned card start their check at the same x. Re-measure if
-// the size or glyph moves.
-function DonePinChoice({ className, pending, children }: { className: string; pending: boolean; children: ReactNode }) {
-  const { doneUnpins } = useSnapshot(prefs)
+// THE PIN QUESTION a pinned thread's Done asks first (StateButton). The title is the whole question, so
+// it draws no body. Either answer marks the thread done; Cancel, Escape and the × mark nothing done, so
+// closing it is never a silent "keep". Focus starts on Unpin, the yes to the question asked, so Enter
+// answers it.
+function UnpinAsk({ open, onOpenChange, onAnswer }: { open: boolean; onOpenChange: (open: boolean) => void; onAnswer: (unpin: boolean) => void }) {
+  const unpinButton = useRef<HTMLButtonElement>(null)
+  const button = "button-outline rounded-md px-3 py-1.5 text-[12px] outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60"
   return (
-    <span data-done-split className={`flex items-stretch font-medium ${className}`}>
-      {children}
-      <span aria-hidden className="w-px shrink-0 bg-bg/10" />
-      <RadixMenu.Root modal={false}>
-        <RadixMenu.Trigger asChild>
-          <button
-            type="button"
-            data-done-split-menu
-            disabled={pending}
-            aria-label="Choose what Mark as done does to the pin"
-            onMouseDown={(event) => event.preventDefault()}
-            className="flex items-center rounded-r-[inherit] pl-[5px] pr-[6px] outline-none transition-colors hover:bg-bg/10 focus-visible:ring-1 focus-visible:ring-focus-ink-60 disabled:opacity-45"
-          >
-            <ChevronDown size={12} strokeWidth={2.5} />
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Unpin this thread too?"
+      className="w-[340px] max-w-[92vw]"
+      onOpenAutoFocus={(event) => {
+        event.preventDefault()
+        unpinButton.current?.focus()
+      }}
+      footer={
+        <>
+          <button type="button" data-unpin-ask="cancel" onClick={() => onOpenChange(false)} className={`${button} text-muted transition-colors hover:bg-panel-2 hover:text-fg`}>
+            Cancel
           </button>
-        </RadixMenu.Trigger>
-        <RadixMenu.Portal>
-          <RadixMenu.Content
-            data-done-pin-choices
-            side="bottom"
-            align="start"
-            sideOffset={6}
-            className={`${OPAQUE_PORTAL_SURFACE_CLASS} w-[300px] rounded-lg p-1`}
-          >
-            <RadixMenu.RadioGroup value={doneUnpins ? "unpin" : "keep"} onValueChange={(next) => { prefs.doneUnpins = next === "unpin" }}>
-              {PIN_CHOICES.map((row) => {
-                const on = row.unpins === doneUnpins
-                return (
-                  <RadixMenu.RadioItem
-                    key={row.name}
-                    value={row.unpins ? "unpin" : "keep"}
-                    data-done-pin-choice={row.unpins ? "unpin" : "keep"}
-                    className="flex cursor-pointer select-none items-start gap-2 rounded-md px-2 py-1.5 text-left outline-none transition-colors data-[highlighted]:bg-panel-2"
-                  >
-                    <span className="flex h-[18px] w-3.5 shrink-0 items-center justify-center text-fg">{on && <Check size={13} strokeWidth={2.5} />}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[12px] font-medium leading-[18px] text-fg">{row.name}</span>
-                      <span className="block text-[11.5px] leading-[16px] text-muted">{row.says}</span>
-                    </span>
-                  </RadixMenu.RadioItem>
-                )
-              })}
-            </RadixMenu.RadioGroup>
-            <div className="px-2 pb-1 pt-1.5 text-[11px] leading-[15px] text-muted-70">Remembered for every Done in this browser.</div>
-          </RadixMenu.Content>
-        </RadixMenu.Portal>
-      </RadixMenu.Root>
-    </span>
+          <button type="button" data-unpin-ask="keep" onClick={() => onAnswer(false)} className={`${button} text-fg/80 transition-colors hover:bg-panel-2 hover:text-fg`}>
+            Keep pinned
+          </button>
+          <button ref={unpinButton} type="button" data-unpin-ask="unpin" onClick={() => onAnswer(true)} className={`${button} bg-fg font-medium text-bg transition-opacity hover:opacity-90`}>
+            Unpin
+          </button>
+        </>
+      }
+    />
   )
 }
 
