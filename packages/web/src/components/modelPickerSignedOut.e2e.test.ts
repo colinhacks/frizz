@@ -83,3 +83,81 @@ test("the phone's sheet says it on the row that carries the provider's name", { 
     await browser.close()
   }
 })
+
+test("Antigravity lists regular Gemini models in the effort grid and keeps Orchestrator and third-party models under Other models", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { browser, page, errors } = await launch("&antigravity=ultra&selected=gemini")
+  try {
+    await page.click(".profile-grid-trigger")
+    await page.waitForSelector(".profile-grid-menu")
+    // Regular Gemini models sit directly in the matrix, none truncated.
+    const geminiRows = await page.$$eval("[data-profile-grid-row^='antigravity:']", (rows) =>
+      rows.map((row) => {
+        const label = row.querySelector(".profile-grid-model-label") as HTMLElement
+        return { model: row.getAttribute("data-profile-grid-row"), truncated: label.scrollWidth > label.clientWidth + 0.5 }
+      }),
+    )
+    assert.deepEqual(geminiRows.map((r) => r.model), [
+      "antigravity:gemini-4-neon",
+      "antigravity:gemini-4-carbon",
+      "antigravity:gemini-4-argon",
+      "antigravity:gemini-4-hydrogen",
+      "antigravity:gemini-3.8-flash",
+    ])
+    assert.deepEqual(geminiRows.filter((r) => r.truncated), [], "every native Gemini row fits without ellipsis")
+    // One click picks a Gemini model and effort directly.
+    await page.click("[data-profile-grid-row='antigravity:gemini-4-hydrogen'] [role='menuitemradio'][aria-label*='X-high']")
+    await page.waitForSelector(".profile-grid-menu", { hidden: true })
+    assert.match(await page.$eval(".profile-grid-trigger", (el) => el.textContent ?? ""), /Gemini 4 Hydrogen › xhigh/i)
+
+    // Non-Gemini models live under Other models and keep the Antigravity prefix in the trigger.
+    await page.click(".profile-grid-trigger")
+    await page.waitForSelector(".profile-grid-menu")
+    await page.hover("[data-profile-grid-more='antigravity'] .profile-grid-dropdown")
+    await page.waitForSelector(".profile-grid-submenu")
+    const otherLabels = await page.$$eval('.profile-grid-submenu [role="menuitemradio"]', (els) => els.map((el) => el.textContent?.trim()))
+    assert.deepEqual(otherLabels, [
+      "Orchestrator (Neon)",
+      "Orchestrator (Carbon)",
+      "Orchestrator (Argon)",
+      "Claude Opus 5.5",
+      "Claude Sonnet 5.5",
+      "GPT-OSS 120B (Medium)",
+    ])
+    await page.evaluate(() => [...document.querySelectorAll('.profile-grid-submenu [role="menuitemradio"]')].find((el) => el.textContent?.trim() === "Claude Opus 5.5")!.setAttribute("data-pick", ""))
+    await page.click(".profile-grid-submenu [data-pick]")
+    await page.waitForSelector(".profile-grid-menu", { hidden: true })
+    assert.match(await page.$eval(".profile-grid-trigger", (el) => el.textContent ?? ""), /Antigravity Claude Opus 5\.5/i)
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})
+
+test("on a phone Antigravity shows regular Gemini rows first and collapses Other models behind a toggle", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { browser, page, errors } = await launch("&antigravity=ultra&selected=gemini", true)
+  try {
+    await page.waitForSelector("[data-phone-profile-chip]")
+    await page.tap("[data-phone-profile-chip]")
+    await page.waitForSelector("[data-mobile-model-sheet]")
+    // Let the sheet's 200ms slide-up transition settle so the lower toggle row is at its resting y.
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    const initial = await page.$$eval("[data-mobile-model-row^='antigravity:']", (els) => els.map((el) => el.getAttribute("data-mobile-model-row")))
+    assert.deepEqual(initial, [
+      "antigravity:gemini-4-neon",
+      "antigravity:gemini-4-carbon",
+      "antigravity:gemini-4-argon",
+      "antigravity:gemini-4-hydrogen",
+      "antigravity:gemini-3.8-flash",
+    ])
+    await page.tap("[data-mobile-model-more='antigravity']")
+    await page.waitForSelector("[data-mobile-model-row='antigravity:gemini-pro-orchestrator-neon']")
+    await page.evaluate(() => document.querySelector("[data-mobile-model-row='antigravity:gemini-pro-orchestrator-neon']")?.scrollIntoView({ block: "center" }))
+    await page.tap("[data-mobile-model-row='antigravity:gemini-pro-orchestrator-neon']")
+    await page.keyboard.press("Escape")
+    await page.waitForSelector("[data-mobile-model-sheet]", { hidden: true })
+    assert.match(await page.$eval("[data-phone-profile-chip]", (el) => el.textContent ?? ""), /Antigravity Orchestrator \(Neon\)/i)
+    assert.deepEqual(errors, [])
+  } finally {
+    await browser.close()
+  }
+})

@@ -120,9 +120,9 @@ test("profile grid cells use pointer affordance and icon-free selection ring/tin
 })
 
 test("profile grid keeps the model column bounded and lets every effort column hug its label", () => {
-  // No track minimum: a floor wider than the word leaves slack, and left-aligned slack all lands on
-  // one side — 23px after LOW against 14px after MEDIUM, and a selection ring off-centre on its word.
-  assert.equal(profileGridTemplateColumns(5), "minmax(6rem, 7rem) repeat(5, auto)")
+  // 8.5rem holds the longest native model names (e.g. "Gemini 4 Hydrogen", 129px with padding) without
+  // truncating; no effort track minimum so left-aligned labels leave no trailing slack.
+  assert.equal(profileGridTemplateColumns(5), "minmax(6rem, 8.5rem) repeat(5, auto)")
 })
 
 test("profile grid cells hug their label rather than a fixed minimum", () => {

@@ -6,10 +6,12 @@ import {
   PROFILE_GRID_CELL_CLASS,
   PROFILE_GRID_COMPACT_TYPOGRAPHY_CLASS,
   PROFILE_GRID_TYPOGRAPHY_CLASS,
+  profileGridActiveKey,
   profileGridColumns,
   profileGridDisplayLabel,
   profileGridDisplayParts,
   profileGridEffortLabel,
+  profileGridListedMoreOptions,
   profileGridListedOptions,
   profileGridResolveSelection,
   profileGridShownModel,
@@ -157,12 +159,9 @@ function DesktopProfileGridSelector({
       ? "h-[30px] rounded-md border border-border bg-bg pl-2.5 pr-2 text-fg/85 data-[state=open]:border-border-strong data-[state=open]:text-fg"
       : "rounded-md border border-border/50 bg-transparent px-2 py-1 text-muted data-[state=open]:bg-hover-strong"
   const known = profileGridSelectionKnown(groups, value)
-  // `known` has already checked the effort against the row, and a row with no effort axis (an ACP
-  // agent) is keyed on `effort: ""` — so the key is built whenever the model is known, not only when
-  // the effort is non-empty.
-  const currentKey = known && value?.provider && value.model
-    ? profileGridSelectionKey({ provider: value.provider, model: value.model, effort: value.effort ?? "" })
-    : undefined
+  // Follows an alias (e.g. bare `antigravity:`) to its listed row and maps an omitted default effort onto
+  // that row's `defaultEffort` so the model's running cell wears the selection ring.
+  const currentKey = profileGridActiveKey(groups, value)
   const pendingLabel = pending?.model || pending?.effort
     ? profileGridDisplayLabel(groups, pending, "Pending profile")
     : undefined
@@ -244,8 +243,10 @@ function DesktopProfileGridSelector({
         unregisterOpenRef.current = undefined
         openRef.current = next
         setOpen(next)
-        if (next) unregisterOpenRef.current = registerOpenSelect(dismissTopLayer)
-        else setSettingsGroup(null)
+        if (next) {
+          unregisterOpenRef.current = registerOpenSelect(dismissTopLayer)
+          for (const group of groups) if (group.layout !== "dropdown") group.onRequestOptions?.()
+        } else setSettingsGroup(null)
       }}
     >
       <RadixMenu.Trigger asChild disabled={disabled}>
@@ -285,7 +286,7 @@ function DesktopProfileGridSelector({
             if (settingsGroupRef.current) event.preventDefault()
             else if (event.target instanceof Element && event.target.closest("[data-agent-settings-menu]")) event.preventDefault()
           }}
-          className={`profile-grid-menu ${menuZClass} ${OPAQUE_SURFACE_BASE} max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] max-w-[calc(100vw-1rem)] overflow-auto rounded-lg p-1.5 ${typography}`}
+          className={`profile-grid-menu ${menuZClass} ${OPAQUE_SURFACE_BASE} max-h-[min(480px,var(--radix-dropdown-menu-content-available-height))] max-w-[calc(100vw-1rem)] overflow-auto rounded-lg p-1.5 ${typography}`}
         >
           {groups.map((group) => (
             <RadixMenu.Group key={group.id}>
@@ -325,129 +326,162 @@ function DesktopProfileGridSelector({
                     closeFromRegistry()
                   }}
                 />
-              ) : (
-              <RadixMenu.RadioGroup
-                value={currentKey}
-                // RadioGroup keeps keyboard selection semantic. Pointer activation also commits
-                // from RadioItem's own select event below, before DropdownMenu tears this
-                // controlled subtree down during dismissal.
-                onValueChange={(key) => {
-                  const selection = profileGridSelectionFromKey(groups, key)
-                  if (selection) commitSelection(selection)
-                }}
-              >
-                {group.options.map((option) => (
-                  <div
-                    key={option.model}
-                    data-profile-grid-row={option.model}
-                    // `w-max`, not `min-w-max`: a stretched row hands its leftover width to its own
-                    // `auto` tracks, so a row shorter or narrower than the widest one slid every cell
-                    // in it out of line with the rows above. Sized to its content, a row has no
-                    // leftover to spread, and each column lands where its content puts it.
-                    className="grid w-max items-center gap-1 py-0.5"
-                    style={{ gridTemplateColumns: profileGridTemplateColumns(columns.length) }}
-                  >
-                    <span className={`profile-grid-model-label min-w-0 max-w-[9.5rem] truncate px-1.5 text-left text-muted ${typography}`} title={option.label}>
-                      <ModelLabel label={option.label} edition={option.edition} />
-                    </span>
-                    {option.efforts.length === 0 && (() => {
-                      // A row with NO effort axis — an ACP agent runs on whatever model and effort its
-                      // own CLI is configured for — is one cell spanning every effort column, keyed
-                      // on `effort: ""` (profileGridOptionEfforts). "Default" is the honest label:
-                      // Frizz sets nothing, the agent's own defaults apply.
-                      const selection = { provider: group.id, model: option.model, effort: "" }
-                      const key = profileGridSelectionKey(selection)
-                      return (
-                        <RadixMenu.RadioItem
-                          key="default"
-                          value={key}
-                          ref={(node) => {
-                            if (node) cellRefs.current.set(key, node)
-                            else cellRefs.current.delete(key)
-                          }}
-                          onKeyDown={(event) => handleCellKeyDown(event, selection)}
-                          onSelect={(event) => {
-                            event.preventDefault()
-                            commitSelection(selection)
-                            unregisterOpenRef.current?.()
-                            closeFromRegistry()
-                          }}
-                          aria-label={`${option.label}, the agent's own defaults`}
-                          title={`${option.label} › the agent's own model and effort`}
-                          className={PROFILE_GRID_CELL_CLASS}
-                          style={{ gridColumn: "2 / -1", justifySelf: "start" }}
-                        >
-                          <span className="grid">
-                            <span aria-hidden="true" className="invisible col-start-1 row-start-1 font-medium">Default</span>
-                            <span className="col-start-1 row-start-1">Default</span>
-                          </span>
-                        </RadixMenu.RadioItem>
-                      )
-                    })()}
-                    {option.efforts.length > 0 && columns.map((column) => {
-                      // A column can hold more than one effort name — "ultra" and "ultracode" share the
-                      // ceiling — so take whichever name this model actually offers.
-                      const effort = column.find((candidate) => option.efforts.includes(candidate))
-                      // An unsupported cell still has to HOLD ITS COLUMN. Each row is its own grid, so a
-                      // column that renders nothing here collapses and every cell to its right slides
-                      // left, out of line with the rows above (already true of any codex row with fewer
-                      // levels, and of Haiku, which cannot honour the ceiling). Ghosting the label keeps
-                      // the column exactly as wide as it is everywhere else — and the widest name in it,
-                      // since one column can hold two ("Ultra" beside "Ultracode").
-                      const widest = column.reduce((a, b) => (effortLabel(b).length > effortLabel(a).length ? b : a))
-                      if (!effort) {
+              ) : (() => {
+                const listedOptions = profileGridListedOptions(group)
+                const listedMore = profileGridListedMoreOptions(group)
+                return (
+                <>
+                {listedOptions.length > 0 && (
+                <RadixMenu.RadioGroup
+                  value={currentKey}
+                  // RadioGroup keeps keyboard selection semantic. Pointer activation also commits
+                  // from RadioItem's own select event below, before DropdownMenu tears this
+                  // controlled subtree down during dismissal.
+                  onValueChange={(key) => {
+                    const selection = profileGridSelectionFromKey(groups, key)
+                    if (selection) commitSelection(selection)
+                  }}
+                >
+                  {listedOptions.map((option) => (
+                    <div
+                      key={option.model}
+                      data-profile-grid-row={option.model}
+                      // `w-max`, not `min-w-max`: a stretched row hands its leftover width to its own
+                      // `auto` tracks, so a row shorter or narrower than the widest one slid every cell
+                      // in it out of line with the rows above. Sized to its content, a row has no
+                      // leftover to spread, and each column lands where its content puts it.
+                      className="grid w-max items-center gap-1 py-0.5"
+                      style={{ gridTemplateColumns: profileGridTemplateColumns(columns.length) }}
+                    >
+                      <span className={`profile-grid-model-label min-w-0 max-w-[9.5rem] truncate px-1.5 text-left text-muted ${typography}`} title={option.label}>
+                        <ModelLabel label={option.label} edition={option.edition} />
+                      </span>
+                      {option.efforts.length === 0 && (() => {
+                        // A row with NO effort axis — an ACP agent runs on whatever model and effort its
+                        // own CLI is configured for — is one cell spanning every effort column, keyed
+                        // on `effort: ""` (profileGridOptionEfforts). "Default" is the honest label:
+                        // Frizz sets nothing, the agent's own defaults apply.
+                        const selection = { provider: group.id, model: option.model, effort: "" }
+                        const key = profileGridSelectionKey(selection)
                         return (
-                          // Same box as a real cell (border + padding + type), just invisible — a
-                          // ghost that is 2px narrower still drags the column out of true.
-                          <span
-                            key={widest}
-                            aria-hidden="true"
-                            className={`invisible cursor-default border border-transparent px-1 text-left font-medium ${typography}`}
+                          <RadixMenu.RadioItem
+                            key="default"
+                            value={key}
+                            ref={(node) => {
+                              if (node) cellRefs.current.set(key, node)
+                              else cellRefs.current.delete(key)
+                            }}
+                            onKeyDown={(event) => handleCellKeyDown(event, selection)}
+                            onSelect={(event) => {
+                              event.preventDefault()
+                              commitSelection(selection)
+                              unregisterOpenRef.current?.()
+                              closeFromRegistry()
+                            }}
+                            aria-label={`${option.label}, the agent's own defaults`}
+                            title={`${option.label} › the agent's own model and effort`}
+                            className={PROFILE_GRID_CELL_CLASS}
+                            style={{ gridColumn: "2 / -1", justifySelf: "start" }}
                           >
-                            {effortLabel(widest)}
-                          </span>
+                            <span className="grid">
+                              <span aria-hidden="true" className="invisible col-start-1 row-start-1 font-medium">Default</span>
+                              <span className="col-start-1 row-start-1">Default</span>
+                            </span>
+                          </RadixMenu.RadioItem>
                         )
-                      }
-                      const selection = { provider: group.id, model: option.model, effort }
-                      const key = profileGridSelectionKey(selection)
-                      return (
-                        <RadixMenu.RadioItem
-                          key={effort}
-                          value={key}
-                          ref={(node) => {
-                            if (node) cellRefs.current.set(key, node)
-                            else cellRefs.current.delete(key)
-                          }}
-                          onKeyDown={(event) => handleCellKeyDown(event, selection)}
-                          onSelect={(event) => {
-                            // Radix dismisses a DropdownMenu as part of selection. Commit this
-                            // pointer path first and own the close, otherwise a controlled menu
-                            // can close with its RadioGroup callback already unmounted.
-                            event.preventDefault()
-                            commitSelection(selection)
-                            unregisterOpenRef.current?.()
-                            closeFromRegistry()
-                          }}
-                          aria-label={`${option.label}, ${effortLabel(effort)} effort`}
-                          title={`${option.label} › ${effortLabel(effort)}`}
-                          className={PROFILE_GRID_CELL_CLASS}
-                        >
-                          <span className="grid">
-                            {/* A checked cell sets its label in `font-medium`, which is 0.82px wider
-                                here — enough to push every cell to its right along the moment the
-                                selection moves, now that a cell is only as wide as its word. Stack an
-                                invisible copy at the heavier weight in the same grid cell so the cell
-                                always reserves its widest state and never resizes. */}
-                            <span aria-hidden="true" className="invisible col-start-1 row-start-1 font-medium">{effortLabel(effort)}</span>
-                            <span className="col-start-1 row-start-1">{effortLabel(effort)}</span>
-                          </span>
-                        </RadixMenu.RadioItem>
-                      )
-                    })}
+                      })()}
+                      {option.efforts.length > 0 && columns.map((column) => {
+                        // A column can hold more than one effort name — "ultra" and "ultracode" share the
+                        // ceiling — so take whichever name this model actually offers.
+                        const effort = column.find((candidate) => option.efforts.includes(candidate))
+                        // An unsupported cell still has to HOLD ITS COLUMN. Each row is its own grid, so a
+                        // column that renders nothing here collapses and every cell to its right slides
+                        // left, out of line with the rows above (already true of any codex row with fewer
+                        // levels, and of Haiku, which cannot honour the ceiling). Ghosting the label keeps
+                        // the column exactly as wide as it is everywhere else — and the widest name in it,
+                        // since one column can hold two ("Ultra" beside "Ultracode").
+                        const widest = column.reduce((a, b) => (effortLabel(b).length > effortLabel(a).length ? b : a))
+                        if (!effort) {
+                          return (
+                            // Same box as a real cell (border + padding + type), just invisible — a
+                            // ghost that is 2px narrower still drags the column out of true.
+                            <span
+                              key={widest}
+                              aria-hidden="true"
+                              className={`invisible cursor-default border border-transparent px-1 text-left font-medium ${typography}`}
+                            >
+                              {effortLabel(widest)}
+                            </span>
+                          )
+                        }
+                        const selection = { provider: group.id, model: option.model, effort }
+                        const key = profileGridSelectionKey(selection)
+                        return (
+                          <RadixMenu.RadioItem
+                            key={effort}
+                            value={key}
+                            ref={(node) => {
+                              if (node) cellRefs.current.set(key, node)
+                              else cellRefs.current.delete(key)
+                            }}
+                            onKeyDown={(event) => handleCellKeyDown(event, selection)}
+                            onSelect={(event) => {
+                              // Radix dismisses a DropdownMenu as part of selection. Commit this
+                              // pointer path first and own the close, otherwise a controlled menu
+                              // can close with its RadioGroup callback already unmounted.
+                              event.preventDefault()
+                              commitSelection(selection)
+                              unregisterOpenRef.current?.()
+                              closeFromRegistry()
+                            }}
+                            aria-label={`${option.label}, ${effortLabel(effort)} effort`}
+                            title={`${option.label} › ${effortLabel(effort)}`}
+                            className={PROFILE_GRID_CELL_CLASS}
+                          >
+                            <span className="grid">
+                              {/* A checked cell sets its label in `font-medium`, which is 0.82px wider
+                                  here — enough to push every cell to its right along the moment the
+                                  selection moves, now that a cell is only as wide as its word. Stack an
+                                  invisible copy at the heavier weight in the same grid cell so the cell
+                                  always reserves its widest state and never resizes. */}
+                              <span aria-hidden="true" className="invisible col-start-1 row-start-1 font-medium">{effortLabel(effort)}</span>
+                              <span className="col-start-1 row-start-1">{effortLabel(effort)}</span>
+                            </span>
+                          </RadixMenu.RadioItem>
+                        )
+                      })}
+                    </div>
+                  ))}
+                </RadixMenu.RadioGroup>
+                )}
+                {group.loading && listedOptions.length === 0 && (
+                  <div className="flex items-center gap-1.5 px-1.5 py-1 text-muted-60">
+                    <Loader2 aria-hidden="true" size={11} className="animate-spin" />
+                    Loading models…
                   </div>
-                ))}
-              </RadixMenu.RadioGroup>
-              )}
+                )}
+                {group.notice && (
+                  <div className="w-0 min-w-full px-1.5 py-1 text-muted-60 [font-variant-caps:normal]">
+                    {group.notice}
+                  </div>
+                )}
+                {listedMore.length > 0 && (
+                  <ProfileGridMoreRow
+                    group={group}
+                    options={listedMore}
+                    value={value}
+                    typography={typography}
+                    menuZClass={menuZClass}
+                    onPick={(selection) => {
+                      commitSelection(selection)
+                      unregisterOpenRef.current?.()
+                      closeFromRegistry()
+                    }}
+                  />
+                )}
+                </>
+                )
+              })()}
               {group !== groups.at(-1) && <RadixMenu.Separator className="my-1 h-px bg-border" />}
             </RadixMenu.Group>
           ))}
@@ -587,7 +621,7 @@ function ProfileGridDropdownRow({ group, value, typography, menuZClass, onPick }
         <RadixMenu.Sub>
           <RadixMenu.SubTrigger aria-label={`${group.label} reasoning level`} title="This model's reasoning level, in its own words" className={trigger} {...chosenAttr}>
             <span className="min-w-0 truncate">{profileGridEffortLabel(effort)}</span>
-            <ChevronDown aria-hidden="true" size={12} className="shrink-0 text-fg/65" />
+            <ChevronDown aria-hidden="true" size={12} className="shrink-0 translate-y-[0.5px] text-fg/65" />
           </RadixMenu.SubTrigger>
           <RadixMenu.Portal>
             <RadixMenu.SubContent sideOffset={6} alignOffset={-4} collisionPadding={8} aria-label={`${group.label} reasoning levels`} className={subContent}>
@@ -599,6 +633,115 @@ function ProfileGridDropdownRow({ group, value, typography, menuZClass, onPick }
                     onSelect={(event) => {
                       event.preventDefault()
                       onPick({ provider: group.id, model: option.model, effort: level })
+                    }}
+                    className={item}
+                  >
+                    <span className="min-w-0 truncate">{profileGridEffortLabel(level)}</span>
+                    {indicator}
+                  </RadixMenu.RadioItem>
+                ))}
+              </RadixMenu.RadioGroup>
+            </RadixMenu.SubContent>
+          </RadixMenu.Portal>
+        </RadixMenu.Sub>
+      )}
+    </div>
+  )
+}
+
+// A grid group's fallback submenu row (e.g. Antigravity's Orchestrator and third-party models). Quiet
+// when a native grid model is chosen ("Other models ⌄"); wears the chosen model's name, selection ring,
+// and an optional reasoning-level submenu when one of these fallback models is selected.
+function ProfileGridMoreRow({ group, options, value, typography, menuZClass, onPick }: {
+  group: ProfileGridGroup
+  options: readonly ProfileGridOption[]
+  value?: Partial<ProfileGridSelection>
+  typography: string
+  menuZClass: string
+  onPick: (selection: ProfileGridSelection) => void
+}) {
+  const chosenGroup = value?.provider === group.id
+  const shownModel = chosenGroup ? profileGridShownModel(group, value?.model) : undefined
+  const active = shownModel ? options.find((candidate) => candidate.model === shownModel) : undefined
+  const effort = active && active.efforts.includes(value?.effort ?? "") ? value?.effort ?? "" : ""
+  const levels = Boolean(active && (active.efforts.length > 1 || active.efforts.some(Boolean)))
+  const chosenAttr = active ? { "data-chosen": "" } : {}
+  const sections: { label: string; options: ProfileGridOption[] }[] = []
+  for (const candidate of options) {
+    const label = candidate.section ?? ""
+    const section = sections.find((entry) => entry.label === label) ?? sections[sections.push({ label, options: [] }) - 1]!
+    section.options.push(candidate)
+  }
+  const sectionHeadings = sections.filter((section) => section.label).length > 1
+  const subContent = `profile-grid-submenu ${menuZClass} ${OPAQUE_SURFACE_BASE} max-h-[min(320px,var(--radix-dropdown-menu-content-available-height))] min-w-[11rem] max-w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-lg p-1 ${typography}`
+  const item = `relative flex w-full min-w-0 cursor-pointer select-none items-center gap-1.5 overflow-hidden rounded-md py-1 pl-2 pr-7 text-left text-muted outline-none data-[highlighted]:bg-panel-2 data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg ${typography}`
+  const trigger = `profile-grid-dropdown ${PROFILE_GRID_CELL_CLASS} gap-[3px] data-[state=open]:border-border data-[state=open]:bg-panel-2 data-[state=open]:text-fg data-[chosen]:border-accent/70 data-[chosen]:bg-accent/10 data-[chosen]:font-medium data-[chosen]:text-fg data-[chosen]:ring-1 data-[chosen]:ring-inset data-[chosen]:ring-accent/90`
+  const indicator = (
+    <RadixMenu.ItemIndicator className="pointer-events-none absolute right-2 top-1/2 inline-flex -translate-y-1/2 items-center text-accent">
+      <Check size={13} />
+    </RadixMenu.ItemIndicator>
+  )
+  const triggerText = active ? active.label : (group.moreLabel ?? "Other models")
+  return (
+    <div data-profile-grid-more={group.id} className="flex w-max max-w-full items-center gap-1 py-0.5 pl-[1px]">
+      <RadixMenu.Sub>
+        <RadixMenu.SubTrigger
+          aria-label={`${group.label} ${group.moreLabel ?? "other models"}`}
+          {...chosenAttr}
+          title={active ? active.label : `Additional models offered by ${group.label}`}
+          className={`${trigger} max-w-[15rem] ${active ? "" : "text-muted-65"}`}
+        >
+          <span className="min-w-0 truncate">{triggerText}</span>
+          {/* Lowered 0.5px: petite-caps text sits slightly below box centre, so the chevron measured -0.6px high (dark/light, dsf 2). */}
+          <ChevronDown aria-hidden="true" size={12} className="shrink-0 translate-y-[0.5px] text-fg/55" />
+        </RadixMenu.SubTrigger>
+        <RadixMenu.Portal>
+          <RadixMenu.SubContent sideOffset={6} alignOffset={-4} collisionPadding={8} aria-label={`${group.label} ${group.moreLabel ?? "other models"}`} className={subContent}>
+            <RadixMenu.RadioGroup value={active?.model ?? ""}>
+              {sections.map((section, index) => (
+                <RadixMenu.Group key={section.label || `s${index}`}>
+                  {index > 0 && !sectionHeadings && <RadixMenu.Separator className="mx-1 my-1 h-px bg-border" />}
+                  {section.label && sectionHeadings && (
+                    <RadixMenu.Label className="truncate px-2 pb-0.5 pt-2 text-left font-medium tracking-[0.07em] text-muted-55">{section.label}</RadixMenu.Label>
+                  )}
+                  {section.options.map((candidate) => (
+                    <RadixMenu.RadioItem
+                      key={candidate.model}
+                      value={candidate.model}
+                      textValue={candidate.label}
+                      title={candidate.model}
+                      onSelect={(event) => {
+                        event.preventDefault()
+                        onPick({ provider: group.id, model: candidate.model, effort: candidate.efforts.includes(effort) ? effort : "" })
+                      }}
+                      className={item}
+                    >
+                      <span className="min-w-0 truncate">{candidate.label}</span>
+                      {indicator}
+                    </RadixMenu.RadioItem>
+                  ))}
+                </RadixMenu.Group>
+              ))}
+            </RadixMenu.RadioGroup>
+          </RadixMenu.SubContent>
+        </RadixMenu.Portal>
+      </RadixMenu.Sub>
+      {levels && active && (
+        <RadixMenu.Sub>
+          <RadixMenu.SubTrigger aria-label={`${group.label} reasoning level`} title="This model's reasoning level, in its own words" className={trigger} {...chosenAttr}>
+            <span className="min-w-0 truncate">{profileGridEffortLabel(effort)}</span>
+            <ChevronDown aria-hidden="true" size={12} className="shrink-0 translate-y-[0.5px] text-fg/65" />
+          </RadixMenu.SubTrigger>
+          <RadixMenu.Portal>
+            <RadixMenu.SubContent sideOffset={6} alignOffset={-4} collisionPadding={8} aria-label={`${group.label} reasoning levels`} className={subContent}>
+              <RadixMenu.RadioGroup value={effort || "__default__"}>
+                {active.efforts.map((level) => (
+                  <RadixMenu.RadioItem
+                    key={level || "__default__"}
+                    value={level || "__default__"}
+                    onSelect={(event) => {
+                      event.preventDefault()
+                      onPick({ provider: group.id, model: active.model, effort: level })
                     }}
                     className={item}
                   >

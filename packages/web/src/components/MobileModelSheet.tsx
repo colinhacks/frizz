@@ -2,8 +2,10 @@ import * as RadixDialog from "@radix-ui/react-dialog"
 import { useContext, useEffect, useRef, useState } from "react"
 import { Check, ChevronDown, Loader2 } from "lucide-react"
 import {
+  profileGridAllOptions,
   profileGridDisplayParts,
   profileGridEffortLabel,
+  profileGridListedMoreOptions,
   profileGridListedOptions,
   profileGridResolveSelection,
   profileGridShownModel,
@@ -67,6 +69,15 @@ export function MobileModelSheet({
   upgrade?: ProfileGridUpgrade
 }) {
   const [draft, setDraft] = useState<Partial<ProfileGridSelection>>(() => ({ ...value }))
+  const [expandedMore, setExpandedMore] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {}
+    for (const group of groups) {
+      if (value?.provider !== group.id) continue
+      const shown = profileGridShownModel(group, value.model)
+      if (profileGridListedMoreOptions(group).some((option) => option.model === shown)) initial[group.id] = true
+    }
+    return initial
+  })
   // Slide up on the next frame, as the phone's other sheets do (MobileAnswerSheet, the board's ⋯).
   const [shown, setShown] = useState(false)
   useEffect(() => {
@@ -89,13 +100,17 @@ export function MobileModelSheet({
     onClose()
   }
 
-  const checkedOption = groups
-    .find((group) => group.id === draft.provider)
-    ?.options.find((option) => option.model === draft.model)
-
-  // A dropdown group (OpenCode) lists its models only once it is the one being chosen from, since reading
-  // the list starts OpenCode's service (hooks/useOpencodeModels.ts).
   const draftGroup = groups.find((group) => group.id === draft.provider)
+  const shownDraftModel = draftGroup ? profileGridShownModel(draftGroup, draft.model) : draft.model
+  const checkedOption = draftGroup
+    ? profileGridAllOptions(draftGroup).find((option) => option.model === shownDraftModel)
+    : undefined
+
+  // Request lazy option lists: immediately for grid groups whose rows are visible on open, and on
+  // demand for dropdown groups (OpenCode, ACP) once the person selects that group.
+  useEffect(() => {
+    for (const group of groups) if (group.layout !== "dropdown") group.onRequestOptions?.()
+  }, [groups])
   useEffect(() => {
     if (draftGroup?.layout === "dropdown") draftGroup.onRequestOptions?.()
   }, [draftGroup])
@@ -127,10 +142,14 @@ export function MobileModelSheet({
           <div className="mx-auto mt-[10px] h-[4px] w-[36px] shrink-0 rounded-full bg-muted/35" />
           <div className="min-h-0 overflow-y-auto pt-2 scrollbar-none">
             <RadixDialog.Title className="px-[18px] pb-2.5 pt-1 text-[16px] font-semibold text-fg">Model</RadixDialog.Title>
-            {groups.map((group, gi) => (
+            {groups.map((group, gi) => {
+              const listed = profileGridListedOptions(group)
+              const listedMore = profileGridListedMoreOptions(group)
+              const moreOpen = Boolean(expandedMore[group.id])
+              return (
               <div key={group.id} role="radiogroup" aria-label={group.label}>
-                {profileGridListedOptions(group).map((option, oi) => {
-                  // OpenCode's configured model is checked on its own model's row (profileGridShownModel).
+                {listed.map((option, oi) => {
+                  // OpenCode's and Antigravity's configured model is checked on its own model's row.
                   const checked = draft.provider === group.id && profileGridShownModel(group, draft.model) === option.model
                   return (
                     <button
@@ -160,6 +179,44 @@ export function MobileModelSheet({
                     </button>
                   )
                 })}
+                {listedMore.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      aria-expanded={moreOpen}
+                      data-mobile-model-more={group.id}
+                      onClick={() => setExpandedMore((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
+                      className={`flex min-h-[44px] w-full items-center gap-3 px-[18px] text-left active:bg-hover ${
+                        gi > 0 && listed.length === 0 ? "border-t border-border" : ""
+                      }`}
+                    >
+                      <span className="w-[78px] shrink-0 truncate text-[12.5px] text-muted">{listed.length === 0 ? group.label : ""}</span>
+                      <span className="min-w-0 flex-1 truncate text-[14px] text-muted">{group.moreLabel ?? "Other models"}</span>
+                      {group.experimental && listed.length === 0 && <ExperimentalChip className="shrink-0" />}
+                      <ChevronDown aria-hidden size={16} className={`shrink-0 text-muted transition-transform ${moreOpen ? "rotate-180" : ""}`} />
+                    </button>
+                    {moreOpen && listedMore.map((option) => {
+                      const checked = draft.provider === group.id && profileGridShownModel(group, draft.model) === option.model
+                      return (
+                        <button
+                          key={option.model}
+                          type="button"
+                          role="radio"
+                          aria-checked={checked}
+                          data-mobile-model-row={option.model}
+                          onClick={() => setDraft({ provider: group.id, model: option.model, effort: effortFor(option, draft.effort) })}
+                          className="flex min-h-[48px] w-full items-center gap-3 px-[18px] text-left active:bg-hover"
+                        >
+                          <span className="w-[78px] shrink-0" />
+                          <span className="min-w-0 flex-1 truncate text-[15px] text-fg/90">
+                            <ModelName option={option} />
+                          </span>
+                          {checked && <Check aria-hidden size={18} strokeWidth={2.6} className="shrink-0 text-fg" />}
+                        </button>
+                      )
+                    })}
+                  </>
+                )}
                 {/* 18px of row padding, the 78px provider column and the row's 12px gap: under the model names. */}
                 {(group.loading || group.notice) && (
                   <div className="flex items-center gap-2 py-2 pl-[108px] pr-[18px] text-[13px] text-muted">
@@ -168,8 +225,9 @@ export function MobileModelSheet({
                   </div>
                 )}
               </div>
-            ))}
-            {groups.every((group) => group.options.length === 0) && (
+              )
+            })}
+            {groups.every((group) => profileGridAllOptions(group).length === 0) && (
               <div className="px-[18px] py-3 text-[14px] text-muted">No models available</div>
             )}
             <div className="px-[18px] pb-1.5 pt-4 text-[16px] font-semibold text-fg">Effort</div>
@@ -179,7 +237,8 @@ export function MobileModelSheet({
             // clipped last chip is the cue that there is more.
             <div role="radiogroup" aria-label="Effort" className="flex gap-1.5 overflow-x-auto px-[18px] pb-1.5 pt-1.5 scrollbar-none">
                 {checkedOption.efforts.map((effort) => {
-                  const on = draft.effort === effort
+                  const activeEffort = draft.effort === "" && checkedOption.allowDefaultEffort ? (checkedOption.defaultEffort ?? "") : draft.effort
+                  const on = activeEffort === effort
                   return (
                     <button
                       key={effort}

@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client"
 import { useState } from "react"
-import type { ClaudeModel, CodexModel } from "@frizz/shared"
+import type { AntigravityModels, ClaudeModel, CodexModel } from "@frizz/shared"
 import { ProfileGridSelector, type ProfileGridUpgrade } from "./components/ProfileGridSelector.tsx"
 import { dispatchProfileGroups } from "./lib/dispatchPreferences.ts"
 import "./styles.css"
@@ -35,13 +35,55 @@ const codexModels: CodexModel[] = [
   { slug: "gpt-6-sol", displayName: "GPT-6 Sol", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
 ]
 
+const antigravityMode = params.get("antigravity")
+const antigravityModels: AntigravityModels | undefined = antigravityMode === "ultra"
+  ? {
+      available: true,
+      version: "1.5.16",
+      defaultModel: "gemini-4-neon",
+      tier: "Google AI Ultra",
+      models: [
+        { id: "gemini-4-neon", name: "Gemini 4 Neon", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" },
+        { id: "gemini-4-carbon", name: "Gemini 4 Carbon", efforts: ["low", "medium", "high"], defaultEffort: "high" },
+        { id: "gemini-4-argon", name: "Gemini 4 Argon", efforts: ["low", "medium", "high"], defaultEffort: "high" },
+        { id: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" },
+        { id: "gemini-pro-orchestrator-neon", name: "Orchestrator (Neon)", efforts: [] },
+        { id: "gemini-pro-orchestrator", name: "Orchestrator (Carbon)", efforts: [] },
+        { id: "gemini-pro-orchestrator-argon", name: "Orchestrator (Argon)", efforts: [] },
+        { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+        { id: "claude-opus-5-5", name: "Claude Opus 5.5", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+        { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+        { id: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)", efforts: [] },
+      ],
+    }
+  : antigravityMode === "signed-out"
+    ? { available: true, models: [], error: "Antigravity is not signed in. Run `agy` in a terminal and sign in." }
+    : undefined
+
 // `?signedOut=codex` (or `claude,codex`) marks those providers signed out, as useDispatchProfile does.
-const allGroups = dispatchProfileGroups(codexModels, [], claudeModels, undefined, undefined, (params.get("signedOut") ?? "").split(",").filter(Boolean))
+const allGroups = dispatchProfileGroups(
+  codexModels,
+  [],
+  claudeModels,
+  undefined,
+  undefined,
+  (params.get("signedOut") ?? "").split(",").filter(Boolean),
+  undefined,
+  antigravityModels ? { installed: true, models: antigravityModels } : undefined,
+)
 // A running thread's picker holds only its own backend's rows (useThreadComposerControls).
-const threadGroups = allGroups.filter((group) => group.id === "claude")
+const threadGroups = allGroups.filter((group) => group.id === (antigravityModels ? "antigravity" : "claude"))
+
+const initialProfile = params.get("selected") === "gemini"
+  ? { provider: "antigravity", model: "antigravity:gemini-4-neon", effort: "high" }
+  : params.get("selected") === "other"
+    ? { provider: "antigravity", model: "antigravity:claude-opus-5-5", effort: "medium" }
+    : params.get("selected") === "orchestrator"
+      ? { provider: "antigravity", model: "antigravity:gemini-pro-orchestrator-neon", effort: "" }
+      : { provider: "claude", model: "opus", effort: "high" }
 
 function Fixture() {
-  const [profile, setProfile] = useState({ provider: "claude", model: "opus", effort: "high" })
+  const [profile, setProfile] = useState(initialProfile)
   const [upgraded, setUpgraded] = useState(false)
   const upgrade: ProfileGridUpgrade | undefined = view === "thread" && state !== "current"
     ? {

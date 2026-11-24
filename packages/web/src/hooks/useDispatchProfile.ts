@@ -124,7 +124,9 @@ export function useDispatchProfile(): {
   }), [opencodeModels.models, opencodeModels.loading, opencodeModels.request, resolved?.opencodeModel])
 
   const antigravityChosen = resolved?.backend === "antigravity"
-  const antigravityModels = useAntigravityModels(project, antigravityChosen)
+  // Eager when `agy` is installed so the Gemini effort rows are ready as soon as the model menu opens,
+  // matching `claudeModels` above; never runs on machines without `agy` or on read-and-answer hosts.
+  const antigravityModels = useAntigravityModels(project, (antigravityInstalled.installed && !readAndAnswerHost) || antigravityChosen)
   const antigravitySavedModel = antigravityChosen ? resolved.model : undefined
   const antigravitySavedEffort = antigravityChosen ? resolved.effort : undefined
   const antigravity = useMemo(() => ({

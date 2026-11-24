@@ -18,9 +18,9 @@ export function useAntigravityInstalled(project: string | undefined): { installe
 }
 
 // Antigravity's model list, asked of `project`. Reading it starts `agy` and opens a throwaway session on
-// the person's account, so it is read only when it is `wanted` (Antigravity is the chosen profile, or the
-// thread runs on it) or once someone opens the list (`request`), never because a model menu merely opened
-// on a machine that has `agy`.
+// the person's account (cached 10m server-side, zero tokens), so it runs when `wanted` (agy is installed
+// on this machine and the picker can show its Gemini grid, or the thread runs on Antigravity) or when
+// requested on menu open.
 export function useAntigravityModels(project: string | undefined, wanted: boolean): {
   models: AntigravityModels | undefined
   loading: boolean

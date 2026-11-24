@@ -8,7 +8,12 @@ export interface ProfileGridOption {
   edition?: string
   efforts: readonly string[]
   defaultEffort?: string
-  /** A DROPDOWN group's subheading for this option: OpenCode's provider ("opencode", "anthropic"). */
+  /** Accepts `effort: ""` (the model's own default level) as a known selection without adding a "Default"
+   *  column to the matrix. Used for providers whose stored profile may omit an explicit effort (e.g.
+   *  Antigravity threads or preferences saved before the effort grid). */
+  allowDefaultEffort?: boolean
+  /** A DROPDOWN group's subheading for this option: OpenCode's provider ("opencode", "anthropic"), or
+   *  Antigravity's fallback categories ("Orchestrator", "Third-party"). */
   section?: string
   /** What the trigger reads when this option is chosen, where it differs from the list's label. */
   triggerLabel?: string
@@ -25,6 +30,12 @@ export interface ProfileGridGroup {
   id: string
   label: string
   options: readonly ProfileGridOption[]
+  /** Fallback options kept off the main effort matrix behind a compact submenu on desktop (and a
+   *  collapsible section on phone): Antigravity's Orchestrator and third-party models, which sit beside
+   *  the native Gemini rows without cluttering the grid. */
+  moreOptions?: readonly ProfileGridOption[]
+  /** Label for the fallback submenu trigger when no fallback option is selected. Defaults to "Other models". */
+  moreLabel?: string
   /** Draws an Experimental chip beside the group's name. */
   experimental?: boolean
   /** `dropdown`: the menu draws a model dropdown and an effort dropdown for this group instead of grid
@@ -38,9 +49,14 @@ export interface ProfileGridGroup {
   /** The provider's account is signed out on this machine, so a thread on it stops at the sign-in. The
    *  group says so beside its name. The models stay listed and can be picked. */
   signedOut?: boolean
-  /** Asks for the options. Called when the group's model list is opened, so a provider whose list costs
-   *  something to read (OpenCode starts its service to answer) is never asked merely because a menu opened. */
+  /** Asks for the options. Called when the menu or group's model list is opened, so a provider whose list
+   *  costs something to read (OpenCode starts its service to answer) is fetched on demand. */
   onRequestOptions?: () => void
+}
+
+/** Every option a group knows, both primary and fallback. */
+export function profileGridAllOptions(group: ProfileGridGroup): ProfileGridOption[] {
+  return group.moreOptions?.length ? [...group.options, ...group.moreOptions] : [...group.options]
 }
 
 /** The groups the effort matrix lays out: every group but a dropdown one. */
@@ -67,11 +83,14 @@ export const PROFILE_GRID_COMPACT_TYPOGRAPHY_CLASS = PROMPT_CONTROL_TYPOGRAPHY_C
 // one uniform 14px gap the whole way across and a ring that is symmetric around every label.
 export const PROFILE_GRID_CELL_CLASS = `profile-grid-cell relative flex h-6 cursor-pointer select-none items-center justify-start rounded border border-transparent px-1 text-left text-muted outline-none transition-colors ${PROFILE_GRID_TYPOGRAPHY_CLASS} data-[highlighted]:border-border data-[highlighted]:bg-panel-2 data-[highlighted]:text-fg data-[highlighted]:outline data-[highlighted]:outline-1 data-[highlighted]:outline-offset-1 data-[highlighted]:outline-fg/55 data-[state=checked]:border-accent/70 data-[state=checked]:bg-accent/10 data-[state=checked]:font-medium data-[state=checked]:text-fg data-[state=checked]:ring-1 data-[state=checked]:ring-inset data-[state=checked]:ring-accent/90`
 
-// Effort tracks are `auto` with NO minimum: a track floor wider than the word it holds is slack, and
-// left-aligned slack all lands on one side. The row itself is `w-max` (see the component), so `auto`
-// resolves to max-content and every column is exactly as wide as its label plus the cell's padding.
+// Model column capped at 8.5rem (136px): fits the longest native model names ("Gemini 4 Hydrogen"
+// measures 129px at 12px petite-caps with px-1.5) without ellipsis while keeping effort columns aligned
+// across Claude Code, Codex, and Antigravity. Effort tracks are `auto` with NO minimum: a track floor
+// wider than the word it holds is slack, and left-aligned slack all lands on one side. The row itself is
+// `w-max` (see the component), so `auto` resolves to max-content and every column is exactly as wide as
+// its label plus the cell's padding.
 export function profileGridTemplateColumns(columnCount: number): string {
-  return `minmax(6rem, 7rem) repeat(${Math.max(0, columnCount)}, auto)`
+  return `minmax(6rem, 8.5rem) repeat(${Math.max(0, columnCount)}, auto)`
 }
 
 // The product's own word for an effort level, as the picker's cells print it: "X-high" for xhigh, the
@@ -96,7 +115,7 @@ const CEILING_EFFORTS = ["ultra", "ultracode"]
 const EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max", ...CEILING_EFFORTS]
 
 export function profileGridEfforts(groups: readonly ProfileGridGroup[]): string[] {
-  const efforts = new Set(profileGridMatrixGroups(groups).flatMap((group) => group.options.flatMap((option) => option.efforts)))
+  const efforts = new Set(profileGridMatrixGroups(groups).flatMap((group) => profileGridListedOptions(group).flatMap((option) => option.efforts)).filter(Boolean))
   return [...efforts].sort((a, b) => {
     const ai = EFFORT_ORDER.indexOf(a)
     const bi = EFFORT_ORDER.indexOf(b)
@@ -129,29 +148,39 @@ export function profileGridOptionEfforts(option: ProfileGridOption): readonly st
 }
 
 export function profileGridSelections(groups: readonly ProfileGridGroup[]): ProfileGridSelection[] {
-  return groups.flatMap((group) => group.options.flatMap((option) => profileGridOptionEfforts(option).map((effort) => ({
+  return groups.flatMap((group) => profileGridAllOptions(group).flatMap((option) => profileGridOptionEfforts(option).map((effort) => ({
     provider: group.id,
     model: option.model,
     effort,
   }))))
 }
 
-/** The options a list shows. An alias whose target is listed has no row of its own: the target's row is
- *  it, so OpenCode's configured model appears once, by its name. */
+/** The primary options a list shows. An alias whose target is listed has no row of its own: the target's
+ *  row is it, so a configured model appears once, by its name. */
 export function profileGridListedOptions(group: ProfileGridGroup): ProfileGridOption[] {
-  return group.options.filter((option) => !option.aliasOf || !group.options.some((target) => target.model === option.aliasOf))
+  const all = profileGridAllOptions(group)
+  return group.options.filter((option) => !option.aliasOf || !all.some((target) => target.model === option.aliasOf))
+}
+
+/** The fallback options a list shows, with resolved aliases filtered the same way as primary options. */
+export function profileGridListedMoreOptions(group: ProfileGridGroup): ProfileGridOption[] {
+  if (!group.moreOptions?.length) return []
+  const all = profileGridAllOptions(group)
+  return group.moreOptions.filter((option) => !option.aliasOf || !all.some((target) => target.model === option.aliasOf))
 }
 
 /** The listed row that stands for `model`: its alias's target when that is the row shown in its place. */
 export function profileGridShownModel(group: ProfileGridGroup, model: string | undefined): string | undefined {
-  const option = group.options.find((candidate) => candidate.model === model)
-  return option?.aliasOf && group.options.some((target) => target.model === option.aliasOf) ? option.aliasOf : model
+  const all = profileGridAllOptions(group)
+  const option = all.find((candidate) => candidate.model === model)
+  return option?.aliasOf && all.some((target) => target.model === option.aliasOf) ? option.aliasOf : model
 }
 
 /** The selection to store for a pick: an alias option's model with a level of its own becomes its target. */
 export function profileGridResolveSelection(groups: readonly ProfileGridGroup[], selection: ProfileGridSelection): ProfileGridSelection {
   if (!selection.effort) return selection
-  const option = groups.find((group) => group.id === selection.provider)?.options.find((candidate) => candidate.model === selection.model)
+  const group = groups.find((candidate) => candidate.id === selection.provider)
+  const option = group ? profileGridAllOptions(group).find((candidate) => candidate.model === selection.model) : undefined
   return option?.aliasOf ? { ...selection, model: option.aliasOf } : selection
 }
 
@@ -176,8 +205,26 @@ export function profileGridSelectionKnown(
   if (!selection?.model || selection.effort === undefined) return false
   return groups.some((group) =>
     (!selection.provider || group.id === selection.provider) &&
-    group.options.some((option) => option.model === selection.model && profileGridOptionEfforts(option).includes(selection.effort!)),
+    profileGridAllOptions(group).some((option) =>
+      option.model === selection.model
+      && (profileGridOptionEfforts(option).includes(selection.effort!) || (selection.effort === "" && option.allowDefaultEffort === true)),
+    ),
   )
+}
+
+/** The rendered grid cell key for `selection`: follows an alias to its listed row, and maps an omitted
+ *  default effort (`""`) onto that row's `defaultEffort` so the model's actual running level is checked. */
+export function profileGridActiveKey(
+  groups: readonly ProfileGridGroup[],
+  selection: Partial<ProfileGridSelection> | undefined,
+): string | undefined {
+  if (!selection?.provider || !selection.model || !profileGridSelectionKnown(groups, selection)) return undefined
+  const group = groups.find((candidate) => candidate.id === selection.provider)
+  if (!group) return undefined
+  const shown = profileGridShownModel(group, selection.model) ?? selection.model
+  const option = profileGridAllOptions(group).find((candidate) => candidate.model === shown)
+  const effort = selection.effort || (option?.efforts.length ? option.defaultEffort ?? "" : "")
+  return profileGridSelectionKey({ provider: selection.provider, model: shown, effort })
 }
 
 // The trigger's readout in parts, so the version can be set in the edition ink the menu's model column
@@ -203,7 +250,7 @@ export function profileGridDisplayParts(
   modelLabel?: string,
 ): ProfileGridDisplayParts {
   if (!selection?.model && !selection?.effort) return { name: placeholder }
-  const option = groups.flatMap((group) => group.options).find((candidate) => candidate.model === selection.model)
+  const option = groups.flatMap((group) => profileGridAllOptions(group)).find((candidate) => candidate.model === selection.model)
   if (!modelLabel && option?.triggerEdition) {
     return { name: option.triggerLabel ?? option.label, edition: option.triggerEdition, ...(selection.effort ? { effort: selection.effort } : {}) }
   }
@@ -242,7 +289,7 @@ export function moveProfileGridSelection(
 ): ProfileGridSelection | null {
   const columns = profileGridColumns(groups)
   const columnOf = (effort: string) => columns.findIndex((column) => column.includes(effort))
-  const rows = profileGridMatrixGroups(groups).flatMap((group) => group.options.map((option) => ({ provider: group.id, option })))
+  const rows = profileGridMatrixGroups(groups).flatMap((group) => profileGridListedOptions(group).map((option) => ({ provider: group.id, option })))
   const rowIndex = rows.findIndex((row) => row.provider === current.provider && row.option.model === current.model)
   if (rowIndex === -1) return null
   const row = rows[rowIndex]!
