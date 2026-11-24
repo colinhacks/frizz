@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { slugify } from "@frizz/shared/slug"
 import { frizzPaths, launchHostDir } from "./frizz-paths.ts"
-import { existingProjectId, isHomeDirectory, projectIdPath } from "./project-root.ts"
+import { ensureProjectIdFile, existingProjectId, isHomeDirectory, projectIdPath, writeProjectIdFile } from "./project-root.ts"
 
 // THE MACHINE'S LIST OF PROJECTS.
 //
@@ -383,6 +383,32 @@ export function backfillRegistry(
 }
 
 /**
+ * Ensure the built-in Home project (`$HOME`) is present in the registry.
+ *
+ * Called once at server boot after `backfillRegistry`, so every Frizz instance ships with a ready-to-use
+ * Home project (`/project/home`, keeping its Frizz folder out of `~/.frizz` via `projectFrizzDir`).
+ *
+ * Idempotent and non-disruptive: an already-registered Home project is returned untouched — keeping its
+ * id, slug, custom name, custom icon, order and recency. A newly ensured one starts with an epoch
+ * `lastOpenedAt` so it sits at the end of an existing machine's grid/rail rather than jumping ahead of
+ * projects the operator already works in, while still being the first (and only) project on a fresh
+ * machine.
+ */
+export function ensureHomeProject(home = homedir()): RegistryEntry {
+  const dir = canonicalPath(home)
+  const existing = findByPath(dir, home)
+  if (existing) return existing
+  const id = ensureProjectIdFile(dir, home, seedProjectId(dir, home, existingProjectId(dir, home)))
+  const epoch = () => new Date(0)
+  let registered = registerProject({ dir, id, now: epoch }, home)
+  if (registered.action === "duplicate") {
+    registered = registerProject({ dir, id: writeProjectIdFile(dir, randomUUID(), home), now: epoch }, home)
+  }
+  if (!registered.entry) throw new Error("Could not register the home directory project.")
+  return registered.entry
+}
+
+/**
  * The directory a state dir was last opened from, per the small JSON files a server and the launcher
  * leave.
  *
@@ -611,9 +637,15 @@ export function iconScanIsCurrent(
  * square requests the icon, and that request is the rescan.
  */
 export function projectIconStatus(
-  entry: Pick<RegistryEntry, "icon" | "iconScannedAt" | "iconScanVersion">,
+  entry: Pick<RegistryEntry, "icon" | "iconScannedAt" | "iconScanVersion"> & { path?: string; iconSource?: RegistryEntry["iconSource"] },
   now = Date.now(),
+  home = homedir(),
 ): "icon" | "none" | "unknown" {
+  // The built-in Home project carries its own glyph and never scans `$HOME` for a repo logo.
+  // Only an explicit custom upload is served as an image; any older detected scan is ignored.
+  if (entry.path && isHomeDirectory(entry.path, home)) {
+    return entry.icon && entry.iconSource === "custom" ? "icon" : "none"
+  }
   if (entry.icon) return "icon"
   return iconScanIsCurrent(entry, { now }) ? "none" : "unknown"
 }
@@ -722,6 +754,8 @@ export function resolveProjectIcon(
   if (entry.iconSource === "custom") {
     return entry.icon && existsSync(entry.icon) ? entry.icon : undefined
   }
+  // Never crawl `$HOME` looking for a repository logo — Home uses its built-in glyph unless customized.
+  if (isHomeDirectory(entry.path, home)) return undefined
 
   // A stored DETECTED pick goes stale exactly as a stored miss does. Improving the RANKING (not just
   // the search) means the file we settled on may no longer be the one this project should wear — bun
@@ -806,6 +840,7 @@ export function isLinkTo(link: string, dir: string): boolean {
 export function moveProjectDirectory(id: string, newBasename: string, home = homedir()): RegistryEntry {
   const entry = findById(id, home)
   if (!entry) throw new Error("No such project.")
+  if (isHomeDirectory(entry.path, home)) throw new Error("The home directory cannot be renamed.")
   const name = newBasename.trim()
   if (!name || name === "." || name === ".." || /[\\/\0]/u.test(name)) {
     throw new Error("A folder name cannot contain a slash.")
@@ -833,9 +868,10 @@ export function moveProjectDirectory(id: string, newBasename: string, home = hom
  */
 export function forgetProject(id: string, home = homedir()): boolean {
   const registry = readRegistry(home)
-  const before = registry.projects.length
+  const target = registry.projects.find((p) => p.id === id)
+  if (!target) return false
+  if (isHomeDirectory(target.path, home)) throw new Error("Home is a built-in project and cannot be deleted.")
   registry.projects = registry.projects.filter((p) => p.id !== id)
-  if (registry.projects.length === before) return false
   const stateRoot = join(frizzPaths({ home }).data, "projects")
   const forgotten = [...new Set([...(registry.forgotten ?? []), id])].filter((each) => existsSync(join(stateRoot, each)))
   if (forgotten.length > 0) registry.forgotten = forgotten

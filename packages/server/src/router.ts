@@ -276,7 +276,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { activeBandThread, boardAskThread, COMMAND_WATCH_FALLBACK, defaultAgentProfile, MONITOR_FALLBACK, ProjectCard, ProjectRailCounts, PROJECT_ICON_EXTENSIONS, PROJECT_ICON_MAX_BASE64_CHARS, boardQueuedThread } from "@frizz/shared"
 import { imageDimensions } from "./image-header.ts"
 import { homedir } from "node:os"
-import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, projectFrizzDir, writeProjectIdFile } from "./project-root.ts"
+import { chosenProjectRoot, ensureProjectIdFile, existingProjectId, isHomeDirectory, projectFrizzDir, writeProjectIdFile } from "./project-root.ts"
 import { resolveProjectLabel } from "./project-identity.ts"
 import { registerProject, seedProjectId } from "./project-registry.ts"
 import { detectProjectIcon } from "./project-icon.ts"
@@ -791,7 +791,8 @@ export async function stopAndForgetRegisteredRuntime(
  * both icon mutations): they went out of sync the moment the icon fields arrived, and a card whose
  * `iconVersion` is missing is a square that silently keeps showing the icon it just replaced.
  */
-function projectCard(entry: RegistryEntry, stale: boolean): ProjectCard {
+function projectCard(entry: RegistryEntry, stale: boolean, home = homedir()): ProjectCard {
+  const builtin = isHomeDirectory(entry.path, home) ? ("home" as const) : undefined
   return {
     id: entry.id,
     slug: entry.slug,
@@ -812,8 +813,9 @@ function projectCard(entry: RegistryEntry, stale: boolean): ProjectCard {
     // re-asked. Twice measured on the real registry: nub's `site/public/icon.svg` behind a
     // pre-versioning miss (2026-08-08), and three projects' new `logo.svg` behind a miss from that
     // morning (2026-10-11). `projectIconStatus` shares its predicate with the route's for that reason.
-    iconStatus: projectIconStatus(entry),
+    iconStatus: projectIconStatus(entry, undefined, home),
     iconIsCustom: entry.iconSource === "custom" ? true : undefined,
+    ...(builtin ? { builtin } : {}),
   }
 }
 
@@ -848,7 +850,7 @@ export function addProjectAtPath(input: string, home = homedir()): ProjectCard {
     registered = registerProject({ dir: root, id: writeProjectIdFile(root, randomUUID(), home), remoteOwner }, home)
   }
   if (!registered.entry) throw new Error("Could not register that folder.")
-  return projectCard(registered.entry, false)
+  return projectCard(registered.entry, false, home)
 }
 
 /** The audit fields for a project the add or the pick registered: the card names the real root. */
@@ -5729,6 +5731,9 @@ export function createRouter(ctx: AppContext) {
         async () => {
           const entry = findById(input.id)
           if (!entry) return { removed: false, deletedData: false, stoppedWorkers: 0 }
+          if (isHomeDirectory(entry.path)) {
+            throw new Error("Home is a built-in project and cannot be deleted.")
+          }
           const deleteData = input.deleteData === true
           if (ctx.launchProjectId === entry.id) {
             // The message deliberately does NOT name the project: the confirmation's title already
@@ -5873,6 +5878,9 @@ export function createRouter(ctx: AppContext) {
         const name = input.name.trim()
         let path = entry.path
         if (input.renameDirectory && name !== basename(entry.path)) {
+          if (isHomeDirectory(entry.path)) {
+            throw new Error("The home directory cannot be renamed.")
+          }
           if (ctx.launchProjectId === entry.id) {
             throw new Error("Frizz is running from this project's folder, so the folder cannot be renamed right now. Quit Frizz and start it from inside another project's folder first.")
           }

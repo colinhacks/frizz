@@ -104,6 +104,7 @@ export function ProjectSquare({ project, size }: { project: ProjectCard; size: n
   // it and the 6% padding inset it again, so a full-bleed square read as a stamp with a gap around it.
   // A real logo (.github/logo.webp, 300x331) is 9.4% off, so 5% separates the two cleanly.
   const [fills, setFills] = useState(seen ?? false)
+  const isHome = project.builtin === "home"
   const hue = monogramHue(project.id)
   // Draw the image unless we KNOW there is nothing to draw. Skipping it for a project that has simply
   // never been scanned deadlocks the feature — the image request is what triggers the lazy scan, so
@@ -120,23 +121,36 @@ export function ProjectSquare({ project, size }: { project: ProjectCard; size: n
   // never showed until a reload. A new `iconVersion` is a new URL, and gets its own request.
   const [failedSrc, setFailedSrc] = useState<string>()
   const failed = failedSrc === src
-  const showMonogram = !hasIcon || failed
+  const showFallback = !hasIcon || failed
   // Below ~22px two letters at 0.4em are 6–8px type, which is noise, not a monogram. A small square —
   // the Console's 16px row mark — carries the first letter alone, larger, the way Slack's do.
   const small = size < 22
+  const homeGlyphSize = size >= 56 ? 26 : size >= 34 ? Math.round(size * 0.45) : size >= 20 ? 12 : Math.max(7, Math.round(size * 0.62))
+  const homeStrokeWidth = size >= 56 ? 1.6 : size >= 34 ? 1.8 : size >= 20 ? 2 : 2.2
   return (
     <span
-      className="relative block overflow-hidden rounded-[30%] bg-elevated"
+      className={`relative block overflow-hidden rounded-[30%] bg-elevated ${
+        isHome && showFallback ? "border border-border" : ""
+      }`}
       style={{
         width: size,
         height: size,
         // Low saturation and lightness: these sit against a near-black rail and must read as a
         // surface with a letter on it, not as a colour chip. The letter carries the same hue at full
-        // brightness so the pairing stays legible at any hue.
-        background: hasIcon && !failed ? undefined : `hsl(${hue} 32% 24%)`,
+        // brightness so the pairing stays legible at any hue. The built-in Home tile uses the same
+        // elevated surface + hairline as All projects instead of a random-hue monogram.
+        background: hasIcon && !failed || isHome ? undefined : `hsl(${hue} 32% 24%)`,
       }}
     >
-      {showMonogram && (
+      {showFallback && (isHome ? (
+        <span
+          aria-hidden
+          data-home-project-icon=""
+          className="absolute inset-0 flex items-center justify-center text-fg/80"
+        >
+          <House size={homeGlyphSize} strokeWidth={homeStrokeWidth} />
+        </span>
+      ) : (
         <span
           aria-hidden
           className="absolute inset-0 flex items-center justify-center font-semibold leading-none"
@@ -160,7 +174,7 @@ export function ProjectSquare({ project, size }: { project: ProjectCard; size: n
             {small ? monogram(project.name).slice(0, 1) : monogram(project.name)}
           </span>
         </span>
-      )}
+      ))}
       {hasIcon && !failed && (
       <img
         src={src}
@@ -388,6 +402,7 @@ export function useProjectIconChange(project: ProjectCard): {
   reset: () => void
   warm: () => void
   uploading: boolean
+  canReset: boolean
   resetLabel: string
 } {
   const input = useRef<HTMLInputElement>(null)
@@ -456,7 +471,12 @@ export function useProjectIconChange(project: ProjectCard): {
     // is dropped — the click builds its own panel.
     warm: () => void rpc.projectIconPickWarm({ id: project.id }).catch(() => {}),
     uploading: set.isPending,
-    resetLabel: project.iconIsCustom ? "Use the detected icon" : "Look for an icon again",
+    canReset: !project.builtin || project.iconIsCustom === true,
+    resetLabel: project.builtin
+      ? "Use the default icon"
+      : project.iconIsCustom
+        ? "Use the detected icon"
+        : "Look for an icon again",
   }
 }
 

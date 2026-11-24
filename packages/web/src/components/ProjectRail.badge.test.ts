@@ -4,7 +4,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router"
 import type { ProjectCard, ProjectRailCounts } from "@frizz/shared"
-import { RailLink } from "./ProjectRail.tsx"
+import { ProjectSquare, RailLink } from "./ProjectRail.tsx"
 import { TooltipProvider } from "./Tooltip.tsx"
 
 // THE RAIL'S BADGE IS THE QUEUE, AND ONLY THE QUEUE (maintainer 2026-10-11: "showing just the number of
@@ -38,4 +38,18 @@ test("a project with running threads and an empty queue draws no badge", () => {
 test("running threads change nothing the square draws", () => {
   const still = render({ queued: 12, running: 0, asks: 0 })
   for (const running of [1, 12]) assert.equal(render({ queued: 12, running, asks: 0 }), still)
+})
+
+test("the built-in Home project renders its house glyph instead of a monogram, unless given a custom icon", () => {
+  const home = { ...project, id: "home-id", slug: "home", name: "Home", path: "/Users/test", builtin: "home" as const, iconStatus: "none" as const }
+  const html = renderToStaticMarkup(createElement(ProjectSquare, { project: home, size: 64 }))
+  assert.match(html, /data-home-project-icon/)
+  assert.match(html, /<svg/)
+  assert.doesNotMatch(html, /<img/)
+  assert.doesNotMatch(html, />HO</)
+
+  const custom = { ...home, iconStatus: "icon" as const, iconIsCustom: true, iconVersion: "abc123" }
+  const customHtml = renderToStaticMarkup(createElement(ProjectSquare, { project: custom, size: 64 }))
+  assert.doesNotMatch(customHtml, /data-home-project-icon/)
+  assert.match(customHtml, /<img/)
 })

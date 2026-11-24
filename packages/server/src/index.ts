@@ -59,7 +59,7 @@ import { openFrizzDatabase, type FrizzDatabase, type OpenFrizzDatabaseOptions } 
 import { startTenantPrime, type TenantPrimeRun } from "./tenant-prime.ts"
 import { findProjectBySegment, listProjects, registryPath } from "./project-registry.ts"
 import { announceProjectListChanges } from "./projects-changed.ts"
-import { backfillRegistry } from "./project-registry.ts"
+import { backfillRegistry, ensureHomeProject } from "./project-registry.ts"
 import { claimProjectServing, projectServedElsewhere } from "./project-serving.ts"
 import { deleteProjectState, stopProjectWorkers } from "./project-teardown.ts"
 
@@ -1151,6 +1151,11 @@ export async function startServer(opts: StartOptions = {}): Promise<StartedServe
       if (recovered > 0) frizzLog.info("server", `registry: recovered ${recovered} project(s) from existing state`)
     } catch (error) {
       frizzLog.warn("server", `registry backfill skipped: ${error instanceof Error ? error.message : error}`)
+    }
+    try {
+      ensureHomeProject()
+    } catch (error) {
+      frizzLog.warn("server", `home project setup skipped: ${error instanceof Error ? error.message : error}`)
     }
 
     // Resolve GitHub detection in the background. The original promise is retained and drained on

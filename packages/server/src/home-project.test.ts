@@ -7,7 +7,18 @@ import { delimiter, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { scratchDirRelPath, writeScratchDir } from "./dispatch.ts"
 import { frizzPaths, projectStateDir, resetFrizzRoots } from "./frizz-paths.ts"
-import { registerProject } from "./project-registry.ts"
+import {
+  ensureHomeProject,
+  forgetProject,
+  listProjects,
+  moveProjectDirectory,
+  projectIconStatus,
+  registerProject,
+  renameProject,
+  reorderProjects,
+  resolveProjectIcon,
+  setProjectIcon,
+} from "./project-registry.ts"
 import { discoverProjectRoot, ensureProjectIdFile, homeProjectFrizzDir, projectFrizzDir } from "./project-root.ts"
 import { remoteProjectDirs, remoteReadablePath } from "./remote-reads.ts"
 import { scratchFiles, scratchRoot } from "./scratch-files.ts"
@@ -140,5 +151,56 @@ test("a home worker whose data root cannot be told gets no scratch path, rather 
   const seed = runHook("session-seed.mjs", [], { session_id: SID, source: "startup" }, env)
   assert.match(seed, /the scratch directory named in your prompt/u)
   assert.equal(runHook("scratchpad.mjs", ["--mode=session-start"], { session_id: SID, source: "startup" }, { ...env, FRIZZ_THREAD: "" }), "")
+  assert.equal(existsSync(join(home, ".frizz")), false)
+})
+
+test("ensureHomeProject registers Home once, sits after existing projects, and never creates ~/.frizz", (t) => {
+  const home = withHome(t)
+  const repo = join(home, "alpha")
+  mkdirSync(repo)
+  const repoId = ensureProjectIdFile(repo, home)
+  registerProject({ dir: repo, id: repoId, now: () => new Date("2026-11-20T12:00:00Z") }, home)
+
+  const entry = ensureHomeProject(home)
+  assert.equal(entry.path, realpathSync(home))
+  assert.equal(entry.name, "Home")
+  assert.equal(entry.slug, "home")
+  assert.equal(existsSync(join(home, ".frizz")), false)
+
+  // Existing projects stay first; Home arrives at the end rather than displacing them.
+  assert.deepEqual(listProjects(home).map((p) => p.slug), ["alpha", "home"])
+
+  // Idempotent: a second boot leaves user customizations (order, rename, lastOpenedAt) untouched.
+  reorderProjects([entry.id, repoId], home)
+  renameProject(entry.id, { name: "Personal", slug: "personal" }, home)
+  const again = ensureHomeProject(home)
+  assert.equal(again.id, entry.id)
+  assert.equal(again.name, "Personal")
+  assert.equal(again.slug, "personal")
+  assert.deepEqual(listProjects(home).map((p) => p.id), [entry.id, repoId])
+  assert.equal(existsSync(join(home, ".frizz")), false)
+})
+
+test("the built-in Home project cannot be forgotten or directory-renamed, and never scans $HOME for an icon", (t) => {
+  const home = withHome(t)
+  const entry = ensureHomeProject(home)
+
+  assert.throws(() => forgetProject(entry.id, home), /built-in/i)
+  assert.throws(() => moveProjectDirectory(entry.id, "renamed-home", home), /home directory cannot be renamed/i)
+
+  // Never scans `$HOME`: status is `none` (built-in glyph) and `detect` is never invoked.
+  assert.equal(projectIconStatus(entry, Date.now(), home), "none")
+  let scanned = 0
+  assert.equal(resolveProjectIcon(entry.id, () => { scanned++; return join(home, "logo.png") }, { home }), undefined)
+  assert.equal(scanned, 0)
+
+  // An explicit custom icon still works and is served.
+  const custom = join(projectStateDir(entry.id, home), "icon.png")
+  mkdirSync(dirname(custom), { recursive: true })
+  writeFileSync(custom, "custom")
+  const withCustom = setProjectIcon(entry.id, custom, home)!
+  assert.equal(projectIconStatus(withCustom, Date.now(), home), "icon")
+  assert.equal(resolveProjectIcon(entry.id, () => { scanned++; return undefined }, { home }), custom)
+  assert.equal(scanned, 0)
   assert.equal(existsSync(join(home, ".frizz")), false)
 })

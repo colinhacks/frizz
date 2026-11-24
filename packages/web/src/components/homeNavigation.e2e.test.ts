@@ -7,8 +7,9 @@ import test from "node:test"
 //
 //   · Neither page draws a pill.
 //   · The grid's way to the Console is the All projects tile, second after "Add a project" (ProjectGrid.tsx
-//     AllProjectsTile), drawn once there are two projects: with one, the Console is that project's board
-//     again. It is a link, so ⌘-click works. The house is "Projects", so the two names never cross.
+//     AllProjectsTile), drawn once there are two projects: with one (e.g. only the built-in Home project),
+//     the Console is that project's board again. It is a link, so ⌘-click works. The house is "Projects",
+//     so the two names never cross.
 //   · The Console's way out is the house at the head of its status row, and like every house it goes to the
 //     grid even while the Console is the kept home.
 //   · A bare `/` forwards to a kept Console; the launcher's `/?add=<dir>` offer does not.
@@ -16,7 +17,8 @@ import test from "node:test"
 //   · A Console over projects that have never run a thread is the centred first-task box, as a new project's
 //     board is (maintainer 2026-11-10), with the Console's house over it and the chip inside it. The first task sent from it
 //     goes to the project the chip names, and the Console becomes the sidebar and the pane, a reload included.
-//   · With no project at all, `/console` forwards to the grid's welcome, which keeps the grid as home.
+//   · With only the built-in Home project remaining, the grid hides the All projects tile (since Home is
+//     the only project) and refuses deleting Home.
 //
 // Real server, one project with no threads, and the scripted stand-in for `claude` (it holds no login, so it
 // raises no keychain dialog). The test adds a second project, sends one scripted task to it, takes the
@@ -43,8 +45,11 @@ test("no switcher: the grid links to the Console once there are two projects, an
   const { createRpcClient } = await import("../../../../scripts/lib/rpc-client.mjs")
   const api = createRpcClient(`${baseUrl}/`)
   await api.waitForHealth()
-  const [launching] = (await api.query("projectsList")) as Project[]
+  const initial = (await api.query("projectsList")) as Project[]
+  const launching = initial.find((p) => p.slug !== "home")
+  const home = initial.find((p) => p.slug === "home")
   assert.ok(launching, "the stack registers its project")
+  assert.ok(home, "the server provides the built-in Home project")
   const browser = await launchHeadless()
   const errors: string[] = []
   const open = async (width = 1440) => {
@@ -55,13 +60,19 @@ test("no switcher: the grid links to the Console once there are two projects, an
   }
   let added: Project | undefined
   try {
-    // ONE PROJECT: the grid draws its icons in the middle of the page, no pill, and no Console link.
+    // TWO PROJECTS AT BOOT (launching + built-in Home): the grid draws its icons in the middle of the page,
+    // no pill, and the All projects tile right after "Add a project".
     const page = await open()
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle2" })
     await onGrid(page)
     await page.waitForSelector(`[data-home-tile="${launching.slug}"]`)
+    await page.waitForSelector(`[data-home-tile="${home.slug}"]`)
     assert.equal(await pills(page), 0, "the grid draws no pill")
-    assert.equal(await page.$("[data-home-console]"), null, "one project: the Console would be its board again")
+    await page.waitForSelector("[data-home-console]")
+    assert.equal(await page.$eval("[data-home-console]", (a) => a.getAttribute("href")), "/console")
+    assert.equal(await page.$eval("[data-home-console-name]", (el) => el.textContent), "All projects")
+    assert.equal(await page.$eval("[data-home-grid]", (grid) => grid.children[1]?.matches("[data-home-console]")), true, "second, after Add a project")
+    assert.equal(await page.$$eval("[data-home-console-folder] > *", (squares) => squares.length), 2, "the folder holds both projects")
     const centre = await page.evaluate(() => {
       const cells = [...document.querySelectorAll("[data-home-grid] > *")].map((el) => el.getBoundingClientRect())
       const left = Math.min(...cells.map((r) => r.left))
@@ -70,16 +81,12 @@ test("no switcher: the grid links to the Console once there are two projects, an
     })
     assert.ok(Math.abs(centre) < 1, `the icons stand in the middle of the page (off by ${centre})`)
 
-    // TWO PROJECTS: the All projects tile, right after "Add a project", links to the Console.
+    // ADD ANOTHER PROJECT: the Console lists open projects, and All projects opens /console.
     added = (await api.mutate("projectAdd", { path: addDir })) as Project
     // The Console lists the projects the server has opened, and a test stack opens one on its first read.
     await createRpcClient(`${baseUrl}/`, added.id).query("board")
     await page.reload({ waitUntil: "networkidle2" })
     await page.waitForSelector("[data-home-console]")
-    assert.equal(await page.$eval("[data-home-console]", (a) => a.getAttribute("href")), "/console")
-    assert.equal(await page.$eval("[data-home-console-name]", (el) => el.textContent), "All projects")
-    assert.equal(await page.$eval("[data-home-grid]", (grid) => grid.children[1]?.matches("[data-home-console]")), true, "second, after Add a project")
-    assert.equal(await page.$$eval("[data-home-console-folder] > *", (squares) => squares.length), 2, "the folder holds both projects")
     await page.click("[data-home-console]")
     await page.waitForFunction(() => location.pathname === "/console", { timeout: 15_000 })
     await page.waitForSelector(HOUSE)
@@ -172,17 +179,17 @@ test("no switcher: the grid links to the Console once there are two projects, an
     await page.reload({ waitUntil: "networkidle2" })
     await page.waitForSelector("[data-console-sidebar] [data-sidebar-item]", { timeout: 15_000 })
 
-    // NO PROJECT AT ALL: the Console has nothing to show and nowhere to send a prompt, so it forwards to the
-    // welcome, and the grid becomes the kept home (or a bare `/` would bounce back).
-    // With its threads, so a second run starts from a project that has never run one.
+    // ONE PROJECT LEFT (only the built-in Home project): All projects disappears because the Console
+    // would only be Home's board again, and deleting Home is refused.
     await api.mutate("projectRemove", { id: added.id, deleteData: true })
     added = undefined
     await api.mutate("projectRemove", { id: launching.id })
+    await assert.rejects(() => api.mutate("projectRemove", { id: home.id }), /built-in/i)
     try {
-      await page.goto(`${baseUrl}/console`, { waitUntil: "networkidle2" })
-      await page.waitForFunction(() => location.pathname === "/" && document.body.textContent?.includes("Welcome to Frizz"), { timeout: 15_000 })
-      assert.equal(await kept(page), "projects")
-      assert.equal(await page.$("[data-console-sidebar]"), null, "no empty Console sidebar is left behind")
+      await page.goto(`${baseUrl}/?home=projects`, { waitUntil: "networkidle2" })
+      await onGrid(page)
+      await page.waitForSelector(`[data-home-tile="${home.slug}"]`)
+      assert.equal(await page.$("[data-home-console]"), null, "one project: the Console would be its board again")
     } finally {
       await api.mutate("projectAdd", { path: launching.path })
     }

@@ -43,9 +43,11 @@ import { SettingsDrawer } from "./SettingsDrawer.tsx"
  */
 const MARK_PX = 76
 
-/** `/Users/me/code/nub` → `~/code/nub`. The home prefix is noise on every row. */
+/** `/Users/me/code/nub` → `~/code/nub`, `/Users/me` → `~`. The home prefix is noise on every row. */
 function shortPath(path: string, home: string | undefined): string {
-  return home && path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path
+  if (!home) return path
+  if (path === home) return "~"
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path
 }
 
 // The empty page's "Add a project" card: the one card left on this page, drawn only on an empty machine.
@@ -222,16 +224,20 @@ function ProjectTile({
               <MenuItem icon={<ImagePlus size={13} />} onSelect={icon.choose}>
                 {icon.uploading ? "Uploading…" : "Choose an icon…"}
               </MenuItem>
-              <MenuItem icon={<RotateCcw size={13} />} onSelect={icon.reset}>
-                {icon.resetLabel}
-              </MenuItem>
+              {icon.canReset ? (
+                <MenuItem icon={<RotateCcw size={13} />} onSelect={icon.reset}>
+                  {icon.resetLabel}
+                </MenuItem>
+              ) : null}
               <MenuSeparator />
               <MenuItem icon={<Pencil size={13} />} onSelect={() => setRenaming(true)}>
                 Rename…
               </MenuItem>
-              <MenuItem icon={<Trash2 size={13} />} danger onSelect={() => setConfirmingDelete(true)}>
-                Delete project…
-              </MenuItem>
+              {!project.builtin ? (
+                <MenuItem icon={<Trash2 size={13} />} danger onSelect={() => setConfirmingDelete(true)}>
+                  Delete project…
+                </MenuItem>
+              ) : null}
             </MenuContent>
           </Menu>
         }
@@ -427,7 +433,8 @@ function RenameProjectDialog({
   const folder = folderName(project.path)
   const parent = project.path.slice(0, project.path.length - folder.length)
   // Offered only when the folder already tracks the name AND the new name would leave it behind.
-  const offerFolder = folder === project.name && trimmed.length > 0 && trimmed !== folder
+  // Built-in Home never offers to rename `$HOME` itself.
+  const offerFolder = !project.builtin && folder === project.name && trimmed.length > 0 && trimmed !== folder
   const slug = slugify(trimmed)
 
   return (
@@ -1008,7 +1015,9 @@ export function ProjectGrid() {
     refetchInterval: 5_000,
   })
   // The home directory is only ever used to shorten a path for display, so a miss costs a longer row.
-  const home = data?.[0]?.path.match(/^(\/(?:Users|home)\/[^/]+)\//u)?.[1]
+  const home =
+    data?.find((p) => p.builtin === "home")?.path
+    ?? data?.map((p) => p.path.match(/^(\/(?:Users|home)\/[^/]+)\//u)?.[1]).find(Boolean)
   const empty = data !== undefined && data.length === 0
   const isMobile = useIsMobile()
   const gridRef = useRef<HTMLDivElement>(null)

@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 import type { AppContext } from "./context.ts"
 import { projectStateDir } from "./frizz-paths.ts"
-import { listProjects, registerProject } from "./project-registry.ts"
+import { ensureHomeProject, listProjects, registerProject } from "./project-registry.ts"
 import { deleteProjectState } from "./project-teardown.ts"
 import { createRouter } from "./router.ts"
 
@@ -209,4 +209,24 @@ test("a server with no tenant map still forgets the entry", async (t) => {
     stoppedWorkers: 0,
   })
   assert.equal(listProjects(home).length, 0)
+})
+
+test("removing or folder-renaming the built-in Home project is refused through the router", async (t) => {
+  const home = homeSandbox(t)
+  const entry = ensureHomeProject(home)
+  const { router, calls } = harness({ home })
+  await assert.rejects(
+    () => router.projectRemove.handler({ input: { id: entry.id } }),
+    /built-in/i,
+  )
+  await assert.rejects(
+    () => router.projectRemove.handler({ input: { id: entry.id, deleteData: true } }),
+    /built-in/i,
+  )
+  await assert.rejects(
+    () => router.projectRename.handler({ input: { id: entry.id, name: "Other", renameDirectory: true } }),
+    /home directory cannot be renamed/i,
+  )
+  assert.deepEqual(calls, [])
+  assert.equal(listProjects(home).length, 1)
 })

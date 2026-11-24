@@ -8219,6 +8219,8 @@ export const ProjectCard = z.object({
   iconStatus: z.enum(["icon", "none", "unknown"]),
   /** An operator's uploaded icon, rather than one the scan found. Drives what the menu offers. */
   iconIsCustom: z.boolean().optional(),
+  /** Built-in project kind, when Frizz provides this project automatically (e.g. `"home"` for `$HOME`). */
+  builtin: z.literal("home").optional(),
 })
 export type ProjectCard = z.infer<typeof ProjectCard>
 

@@ -2131,6 +2131,8 @@ test("projectAdd: the home directory is the Home project, and ~/.frizz is never 
     assert.equal(card.path, realpathSync(home))
     assert.equal(card.name, "Home")
     assert.equal(card.slug, "home")
+    assert.equal(card.builtin, "home")
+    assert.equal(card.iconStatus, "none")
     assert.equal(existsSync(join(home, ".frizz")), false)
     assert.equal(readFileSync(join(homeProjectFrizzDir(home), ".id"), "utf8").trim(), card.id)
     // Adding it again finds the same project rather than minting a second.
