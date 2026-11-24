@@ -3259,9 +3259,6 @@ function humanStepsOf(state: FoldState): HumanStep[] | undefined {
   return folded
 }
 
-// What ends FoldState.operatorStopped: the thread moving again.
-const STOP_CLEARING_KINDS: ReadonlySet<NormalizedEvent["kind"]> = new Set(["turn-start", "user-message", "assistant-text", "tool-call", "tool-result", "reasoning", "provider-error", "agent-report"])
-
 // Fold one NORMALIZED event into the backend-neutral accumulator — the codex-facing counterpart to
 // applyRecord (which folds raw Claude records). A backend whose turn model maps cleanly onto
 // NormalizedEvent (codex's explicit task_started/task_complete brackets) drives its fold as
@@ -3278,10 +3275,6 @@ export function applyEvent(state: FoldState, ev: NormalizedEvent): void {
   // A tool call, a user turn or a new turn ends the assistant message in progress (see the field): the
   // next text is another message, and a closing bracket after it does not echo this one.
   if (ev.kind === "tool-call" || ev.kind === "tool-result" || ev.kind === "user-message" || ev.kind === "turn-start") state.assistantMessage = undefined
-  // A Stop describes only the rest it ended: the next turn, message or output is the thread moving again.
-  // (Bookkeeping that rides after it, a title or a usage reading, leaves it standing.)
-  if (ev.kind === "turn-end") state.operatorStopped = ev.stoppedBy === "operator" || undefined
-  else if (STOP_CLEARING_KINDS.has(ev.kind)) state.operatorStopped = undefined
   switch (ev.kind) {
     case "provider-error":
       state.sawRecords = true
@@ -7030,7 +7023,7 @@ export function createTailer(deps: TailerDeps): Tailer {
     // thread has no row and reads as legacy, which is what `questionFencesLive` does with unknown.
     const pendingQuestion = s.lastAssistantHasQuestion && questionFencesLive(row?.spawned_at)
     const nowMs = now()
-    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, wakeTokens: s.wakeTokens, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs, sidecarDirOnGrain(s, row)), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastAssistantFenceAlone: s.lastAssistantFenceAlone, lastAssistantFencesOnly: s.lastAssistantFencesOnly, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: heldTypedAt(s, row), handoffAt: s.handoffAt, stepsDoneAt: s.stepsDoneAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, repairAskedAt: s.repairAskedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, strayFence: s.strayFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, operatorStopped: s.operatorStopped, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
+    return { turn: s.turn, permPrompt: s.permPrompt, permPolicy: s.permPolicy, permDenies: s.permDenies, model: s.model, effort: s.effort, profileAt: s.profileAt, profileRevision: s.profileRevision, permissionMode: s.permissionMode, permissionModeAt: s.permissionModeAt, permissionModeRevision: s.permissionModeRevision, lastActivityAt: s.lastActivityAt, wakeTokens: s.wakeTokens, lastAssistantAt: s.lastAssistantAt, lastAssistant: s.lastAssistant, lastAssistantLine: s.lastAssistantLine, liveTool: newestLiveTool(s), aiTitle: s.aiTitle, customTitle: s.customTitle, customTitleRevision: s.customTitleRevision, subAgents: subAgentViews(s, nowMs, sidecarDirOnGrain(s, row)), droppedReports: [...s.queuedReports.values()], bgShells: [...bgShellViews(s), ...codexBgShellViews(s)], retiredShells: retiredShellViews(s), retiredSubAgents: retiredSubAgentViews(s), questionSightings: s.questionSightings, pendingAsk: s.pendingAsk, pendingQuestion, lastAssistantAllDone: s.lastAssistantAllDone, lastAssistantFenceAlone: s.lastAssistantFenceAlone, lastAssistantFencesOnly: s.lastAssistantFencesOnly, lastUserAt: s.lastUserAt, lastMidTurnDeliveryAt: s.lastMidTurnDeliveryAt, restFromAt: heldTypedAt(s, row), handoffAt: s.handoffAt, stepsDoneAt: s.stepsDoneAt, humanSteps: humanStepsOf(s), questionCorrectedAt: s.questionCorrectedAt, repairAskedAt: s.repairAskedAt, lastUserText: s.lastUserText, firstUserText: s.firstUserText, lastFence: s.lastFence, strayFence: s.strayFence, noTranscript: s.noTranscript, authFault: s.authFault, apiFault: s.apiFault, providerError: s.providerError, limitFault: s.limitFault, contextTokens: s.contextTokens, contextWindow: s.contextWindow, lastCompactionAt: s.lastCompactionAt }
   }
 
   // ---- telemetryMemo: the SAME object while nothing about the thread changed ---------------------------

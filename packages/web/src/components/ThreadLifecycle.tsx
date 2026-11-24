@@ -114,9 +114,12 @@ export function LifecycleReadout({
 // differs, via `className` or `iconOnly`. There is deliberately NO Reopen state: reopening a thread is done by
 // sending it another message, so the button is always "Mark as done".
 //
-// ON A PINNED THREAD IT ASKS FIRST whether to unpin it too (UnpinAsk), every time, before anything is
-// filed (maintainer 2026-11-24: "When you mark a pinned thread as done, it should show you a pop-up
-// asking you if you want to unpin it"). Asking BEFORE the completion keeps the question on the thread it
+// ON A PINNED THREAD IT ASKS FIRST whether to unpin it too (UnpinAsk), before anything is filed
+// (maintainer 2026-11-24: "When you mark a pinned thread as done, it should show you a pop-up asking you
+// if you want to unpin it"), until the answer is "Leave pinned": the thread remembers that for good
+// (ThreadView.leavePinned, written by the completion that carried it), and its later Dones keep the pin
+// without asking, with "Unpin" on offer in the toast (same day: "after somebody says 'leave pinned,' it
+// should remember that forever for that particular thread"). Asking BEFORE the completion keeps the question on the thread it
 // is about: the header's check dismisses the pane on success, so a question asked after it would land
 // over whatever thread came next. It replaced a split button on the done card (colinhacks/frizz#72)
 // whose caret ticked a per-browser choice of what every later Done did to a pin.
@@ -181,7 +184,7 @@ export function StateButton({
     const expectsArchive = terminateLive || completionArchivesImmediately(thread)
     if (expectsArchive) markArchived(thread.id)
     rpc
-      .completeThread({ slug: thread.id, sessionId: thread.sessionId ?? "", terminateLive })
+      .completeThread({ slug: thread.id, sessionId: thread.sessionId ?? "", terminateLive, ...(unpin === false ? { leavePinned: true } : {}) })
       .then((result) => {
         if (result.needsConfirmation) {
           clearArchived(thread.id) // mispredicted: the server wants the dialog, so the row stays put
@@ -214,7 +217,7 @@ export function StateButton({
   // The click: a pinned thread asks about its pin first, and its answer runs the same completion.
   const start = () => {
     unpinRef.current = undefined
-    if (isPinned(thread)) setUnpinAskOpen(true)
+    if (isPinned(thread) && !thread.leavePinned) setUnpinAskOpen(true)
     else complete(false, canOptimistic)
   }
   const answer = (unpin: boolean) => {

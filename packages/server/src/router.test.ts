@@ -1260,6 +1260,28 @@ test("Mark as done asks before ending a running Codex turn, then actually interr
   h.storage.close()
 })
 
+// "Leave pinned" is remembered for the thread, but only by a completion that lands: the first ask here is
+// declined for confirmation, and a Done the human then cancels must not have recorded their answer.
+test("Mark as done remembers Leave pinned once the completion lands, and only for that thread", async () => {
+  const h = harness()
+  codexSessionRow(h.storage, "kept", "app-server")
+  codexSessionRow(h.storage, "plain", "app-server")
+  const stub = bridgeStub({ turnLive: true })
+  ;(h.ctx as { codexAppServer?: unknown }).codexAppServer = stub.bridge
+
+  const asked = await h.router.completeThread.handler({ input: { slug: "kept", sessionId: "sid-kept", terminateLive: false, leavePinned: true } })
+  assert.equal(asked.needsConfirmation, true)
+  assert.equal(h.storage.getSession("kept")?.leave_pinned_at ?? null, null, "a declined completion records nothing")
+
+  await h.router.completeThread.handler({ input: { slug: "kept", sessionId: "sid-kept", terminateLive: true, leavePinned: true } })
+  assert.equal(h.storage.getSession("kept")?.state, "archived")
+  assert.match(h.storage.getSession("kept")?.leave_pinned_at ?? "", /^\d{4}-\d{2}-\d{2}T/)
+
+  await h.router.completeThread.handler({ input: { slug: "plain", sessionId: "sid-plain", terminateLive: true } })
+  assert.equal(h.storage.getSession("plain")?.leave_pinned_at ?? null, null, "a Done that did not answer Leave pinned remembers nothing")
+  h.storage.close()
+})
+
 test("Mark as done on a Codex thread whose interrupt fails leaves it open, not archived", async () => {
   const h = harness()
   const slug = "codex-done-fails"
@@ -2403,11 +2425,9 @@ test("the new-thread box's skills are asked of the agent its model chip picks, a
   } finally { h.storage.close() }
 })
 
-test("an Antigravity thread's turn can be stopped, its slash commands are its agent's, and its models are asked of agy", async () => {
-  const { h, slug, sessionId, calls, bridge } = antigravityHarness("in-flight")
+test("an Antigravity thread's slash commands are its agent's, and its models are asked of agy", async () => {
+  const { h, slug, calls, bridge } = antigravityHarness("in-flight")
   try {
-    await h.router.stopThreadTurn.handler({ input: { slug, sessionId } })
-    assert.deepEqual(calls.at(-1), ["interruptTurn", [slug, sessionId]])
     const skills = await h.router.threadSkills.handler({ input: { slug } })
     assert.deepEqual(skills.skills.map((skill: { name: string }) => skill.name), ["compact"])
     // Whether agy is installed is answered without starting it; the list itself is the bridge's probe.

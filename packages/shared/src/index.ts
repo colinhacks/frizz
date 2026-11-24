@@ -4523,9 +4523,6 @@ export const ThreadView = z.object({
   // ISO8601 of the newest REAL user interaction (answer/steer/dispatch) — the chronological listing
   // sort key. Optional; the listing falls back to spawnedAt when absent (a dispatch IS an interaction).
   lastUserAt: z.string().optional(),
-  // The thread's last turn ended because a person pressed Stop, and nothing has happened since. Its rest
-  // is the human's act, so it is not drawn as one without a sign-off. Absent otherwise.
-  operatorStopped: z.boolean().optional(),
   // Runtime provider-auth rejection (claude-auth plan): the session's provider positively rejected
   // its credential (Claude: synthetic isApiErrorMessage 401 record, or the 401/login text on a
   // boot-failed pane). Bounded by design — only the typed category travels, never raw provider/pane
@@ -4580,6 +4577,9 @@ export const ThreadView = z.object({
   // project's board, nor the other way round. The instant is the Console's pinned band's order across
   // every project, and like the project pin it outranks every derived state.
   consolePinnedAt: z.string().optional(),
+  // The human answered "Leave pinned" to Mark as done's pin question once, so Done on this thread keeps
+  // its pin without asking again, whichever shelf it is on (absent = ask).
+  leavePinned: z.literal(true).optional(),
   /** CHILD THREADS (Settings.childThreads): the thread that spawned this one with `frizzctl spawn-child`.
    *  Present only while that thread still exists. A child is never a row of its own on the board — not in
    *  any band, the queue, a count or a badge — and is drawn under its parent instead, unless it stands at a

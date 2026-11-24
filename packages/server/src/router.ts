@@ -4147,7 +4147,10 @@ export function createRouter(ctx: AppContext) {
     // “Mark as done” stops a resting provider shell and archives in one action. The server—not the
     // client—asks for confirmation only when current telemetry shows an executing/ambiguous turn.
     completeThread: mutation({
-      input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1), terminateLive: z.boolean().default(false) }).strict(),
+      // `leavePinned`: the human answered "Leave pinned" to the pin question this Done asked, which the
+      // thread remembers once the completion lands (SessionRow.leave_pinned_at), so its next Done asks
+      // nothing.
+      input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1), terminateLive: z.boolean().default(false), leavePinned: z.boolean().optional() }).strict(),
       // `hold` rides along only with needsConfirmation:true — it is the evidence the dialog names.
       output: z.object({ needsConfirmation: z.boolean(), hold: CompletionHold.optional() }),
       handler: async ({ input }) => {
@@ -4156,6 +4159,7 @@ export function createRouter(ctx: AppContext) {
           ctx.storage, row, input.terminateLive, cachedLivenessTerminator, ctx.tailer.get(input.slug), ctx.codexAppServer, ctx.claudeBroker, acpTransportTerminator(ctx), ctx.opencodeBridge,
         )
         if (!result.needsConfirmation) {
+          if (input.leavePinned && !row.leave_pinned_at) ctx.storage.setLeavePinnedAt(input.slug, new Date().toISOString())
           ctx.board.refresh()
           // Whatever an ACP thread was still holding fails now, not at the next sweep.
           if (backendUsesAcpTransport(row.backend)) void releaseHeldFollowUps(input.slug)
@@ -5591,33 +5595,6 @@ export function createRouter(ctx: AppContext) {
         ctx.board.refresh()
         return { title: title.trim() }
       },
-    }),
-
-    // STOP THE TURN, and only the turn: the thread stays where it is, ready for the next message. OpenCode
-    // and Antigravity, the backends whose stop leaves the session open and nothing to reattach.
-    stopThreadTurn: mutation({
-      input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1) }).strict(),
-      output: z.object({ interrupted: z.boolean() }),
-      handler: ({ input }) => audit(
-        "stopThreadTurn",
-        { project: thisProject, thread: input.slug },
-        async () => {
-          const row = currentOwnedSession(input.slug, input.sessionId)
-          if (!row) throw new Error("This thread is no longer the session this tab is looking at")
-          // Antigravity's `session/cancel` ends the turn and leaves the session and its agent in place.
-          if (row.backend === "antigravity") {
-            if (!ctx.antigravityBridge) throw new Error("The Antigravity bridge is unavailable; cannot stop this turn")
-            const result = await ctx.antigravityBridge.interruptTurn(input.slug, row.session_id)
-            ctx.board.refresh()
-            return result
-          }
-          if (row.backend !== "opencode") throw new Error("This thread's runtime has no stop for a single turn")
-          if (!ctx.opencodeBridge) throw new Error("The OpenCode bridge is unavailable; cannot stop this turn")
-          const result = await ctx.opencodeBridge.interruptTurn(input.slug, row.session_id, row.agent_session_id, ctx.project.dir)
-          ctx.board.refresh()
-          return result
-        },
-      ),
     }),
 
     killAgent: mutation({

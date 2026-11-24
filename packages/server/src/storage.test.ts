@@ -1293,6 +1293,34 @@ test("pinned_at: a pre-pin unified file gains the column, the pin persists, and 
   }
 })
 
+test("leave_pinned_at: a file from before it gains the column, and the answer outlives a restart and an unpin", () => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-storage-leave-pinned-"))
+  const path = join(dir, "ui.db")
+  const before = new Database(path)
+  const stripped = STORAGE_SCHEMA.replace(/^\s*-- SessionRow\.leave_pinned_at\..*\n\s*leave_pinned_at\s+TEXT,\n/m, "")
+  assert.notEqual(stripped, STORAGE_SCHEMA, "the strip found the column line (keep this regex with the DDL)")
+  before.exec(stripped)
+  before.close()
+
+  const at = "2026-11-24T21:00:00.000Z"
+  let s = createStorage(path, "p")
+  try {
+    s.upsertSession(row({ slug: "kept", state: "open" }))
+    assert.equal(s.getSession("kept")?.leave_pinned_at ?? null, null)
+    s.setPinnedAt("kept", "2026-11-24T20:00:00.000Z")
+    s.setLeavePinnedAt("kept", at)
+    s.close()
+
+    s = createStorage(path, "p")
+    assert.equal(s.getSession("kept")?.leave_pinned_at, at, "the answer survives a server restart")
+    s.setPinnedAt("kept", null)
+    assert.equal(s.getSession("kept")?.leave_pinned_at, at, "an unpin leaves the answer for the next pin")
+  } finally {
+    s.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("reorderPinned re-deals the shelf's own instants onto the dragged order, and a new pin still lands last", () => {
   const dir = mkdtempSync(join(tmpdir(), "frizz-storage-pin-order-"))
   const s = createStorage(join(dir, "ui.db"), "p")

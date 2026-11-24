@@ -93,6 +93,11 @@ export interface SessionRow {
   // The same, for the CONSOLE's "By status" view — a second shelf, independent of `pinned_at`, whose
   // instants order the Console's pinned band across every project (ThreadView.consolePinnedAt).
   console_pinned_at?: string | null
+  // When the human answered "Leave pinned" to Mark as done's pin question (null/absent = never). Once
+  // set, Done on this thread keeps its pin without asking, for good (maintainer 2026-11-24: "after
+  // somebody says 'leave pinned,' it should remember that forever for that particular thread").
+  // Written by completeThread alone, and nothing clears it: an unpin and a later re-pin keep it too.
+  leave_pinned_at?: string | null
   // When the thread was marked done: stamped by every write that archives it (setState, setStateIfCurrent,
   // completeIfCurrent), kept if it was already archived, and cleared on reopen. The Done band's order
   // (ThreadView.archivedAt). NULL on a row archived before the column existed (2026-10-23).
@@ -805,6 +810,9 @@ export interface Storage {
   reorderPinned(slugs: readonly string[]): void
   // The Console's pin, the same way: the instant orders the Console's pinned band, null clears it.
   setConsolePinnedAt(slug: string, at: string | null): void
+  // Remember that Done on this thread leaves its pin alone (SessionRow.leave_pinned_at). Unguarded: the
+  // completion RPC resolves the owning session first.
+  setLeavePinnedAt(slug: string, at: string): void
   // Write the instants a drag in the Console's pinned band dealt out (the browser deals them, since the
   // band spans projects — shared ReorderConsolePinnedThreadsInput). Only a slug already pinned on the
   // Console is written, so a reorder can never pin anything.
@@ -1252,6 +1260,8 @@ export const STORAGE_SCHEMA = `
       child_reported_at TEXT,
       -- SessionRow.held_releases. Also in the ALTER list below.
       held_releases TEXT,
+      -- SessionRow.leave_pinned_at. Also in the ALTER list below.
+      leave_pinned_at TEXT,
       -- THE RECURRING PROMPT (scheduler.ts SOURCES 4, 5 and 7): one text, three independent triggers —
       -- every time the thread rests, every N ms on a clock, and/or every time its context is compacted.
       -- All flags 0 = off; there is no separate enable column, because another flag could only ever
@@ -1586,7 +1596,7 @@ export function ensureStorageSchema(db: Database): void {
   // a file that already exists, and every live install predates any column below — so each rides one
   // additive ALTER here, exactly the stack the schema comment above says the unified file was born
   // without. Keep the list append-only; the try/catch is the "already there" case.
-  for (const column of ["pinned_at TEXT", "acp_agent TEXT", "worker_surface TEXT", "console_pinned_at TEXT", "archived_at TEXT", "running_since TEXT", "parent_slug TEXT", "child_reported_at TEXT", "held_releases TEXT"]) {
+  for (const column of ["pinned_at TEXT", "acp_agent TEXT", "worker_surface TEXT", "console_pinned_at TEXT", "archived_at TEXT", "running_since TEXT", "parent_slug TEXT", "child_reported_at TEXT", "held_releases TEXT", "leave_pinned_at TEXT"]) {
     try {
       db.exec(`ALTER TABLE session ADD COLUMN ${column}`)
     } catch {
@@ -2045,6 +2055,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     })
   })
   const consolePinnedAtStmt = scope.prepare("UPDATE session SET console_pinned_at = ? WHERE project_id = @project_id AND slug = ?")
+  const leavePinnedAtStmt = scope.prepare("UPDATE session SET leave_pinned_at = ? WHERE project_id = @project_id AND slug = ?")
   const placeConsolePinStmt = scope.prepare(
     "UPDATE session SET console_pinned_at = ? WHERE project_id = @project_id AND slug = ? AND console_pinned_at IS NOT NULL",
   )
@@ -3120,6 +3131,7 @@ export function createStorage(source: string | Database, projectId: string): Sto
     setRunningSince: (slug, at) => void runningSinceStmt.run(at, slug),
     reorderPinned: (slugs) => reorderPinned(slugs),
     setConsolePinnedAt: (slug, at) => void consolePinnedAtStmt.run(at, slug),
+    setLeavePinnedAt: (slug, at) => void leavePinnedAtStmt.run(at, slug),
     placeConsolePins: (pins) => placeConsolePins(pins),
     setBgSnoozeRestedAtIfCurrent: (slug, sessionId, generation, restedAt) =>
       bgSnoozeRestedAtIfCurrentStmt.run(restedAt, slug, sessionId, generation).changes === 1,

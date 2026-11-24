@@ -402,7 +402,6 @@ export interface Api {
   repairThread(input: { file: string }): Promise<{ slug: string }>
   archiveThread(input: { slug: string }): Promise<void>
   killAgent(input: { slug: string }): Promise<void>
-  stopThreadTurn(input: { slug: string; sessionId: string }): Promise<{ interrupted: boolean }>
   renameThread(input: RenameThreadInput): Promise<void>
   aiRenameThread(input: { slug: string }): Promise<AiRenameThreadResult>
   // The selectable Codex models + per-model effort options, read server-side from the authoritative
@@ -606,7 +605,6 @@ export const PROCEDURES = {
   repairThread: "mutation",
   archiveThread: "mutation",
   killAgent: "mutation",
-  stopThreadTurn: "mutation",
   renameThread: "mutation",
   aiRenameThread: "mutation",
   codexModels: "query",
