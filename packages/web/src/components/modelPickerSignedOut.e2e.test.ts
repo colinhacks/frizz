@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import test, { after } from "node:test"
+import type { Browser } from "puppeteer"
 
 // A SIGNED-OUT PROVIDER IN THE MODEL PICKER. Its models were listed like any other's, and the first sign
 // that a thread on one would not start was the sign-in at Send. The picker now says so beside the
@@ -11,10 +12,20 @@ import test from "node:test"
 // the server's own reading of each credential.
 const baseUrl = process.env.FRIZZ_MODEL_PICKER_SIGNED_OUT_E2E_URL
 
-async function launch(query: string, phone = false) {
-  const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
-  const browser = await launchHeadless()
-  const page = await browser.newPage()
+let sharedBrowser: Browser | undefined
+after(async () => {
+  if (!sharedBrowser) return
+  const b = sharedBrowser
+  sharedBrowser = undefined
+  await b.close()
+})
+
+async function openPage(query: string, phone = false) {
+  if (!sharedBrowser) {
+    const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
+    sharedBrowser = await launchHeadless({ protocolTimeout: 30_000 })
+  }
+  const page = await sharedBrowser.newPage()
   await page.setViewport(phone ? { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true } : { width: 900, height: 700, deviceScaleFactor: 1 })
   const errors: string[] = []
   page.on("console", (m) => { if (m.type() === "error" && !/404|favicon/i.test(m.text())) errors.push(m.text()) })
@@ -22,10 +33,10 @@ async function launch(query: string, phone = false) {
   try {
     await page.goto(`${baseUrl}/model-edition-fixture.html?view=dispatch${query}`, { waitUntil: "networkidle0" })
   } catch (error) {
-    await browser.close()
+    await page.close()
     throw error
   }
-  return { browser, page, errors }
+  return { page, errors }
 }
 
 /** Each provider heading in the open desktop menu: its name, and the note beside it if it has one. */
@@ -40,7 +51,7 @@ const headings = (page: import("puppeteer").Page) =>
   )
 
 test("the desktop menu names a signed-out provider beside its heading, and its models can still be picked", { skip: !baseUrl, timeout: 60_000 }, async () => {
-  const { browser, page, errors } = await launch("&signedOut=codex")
+  const { page, errors } = await openPage("&signedOut=codex")
   try {
     await page.click(".profile-grid-trigger")
     await page.waitForSelector(".profile-grid-menu")
@@ -51,24 +62,24 @@ test("the desktop menu names a signed-out provider beside its heading, and its m
     assert.match(await page.$eval(".profile-grid-trigger", (el) => el.textContent ?? ""), /GPT-6 Astra/i)
     assert.deepEqual(errors, [])
   } finally {
-    await browser.close()
+    await page.close()
   }
 })
 
 test("a signed-in machine's menu says nothing", { skip: !baseUrl, timeout: 60_000 }, async () => {
-  const { browser, page, errors } = await launch("")
+  const { page, errors } = await openPage("")
   try {
     await page.click(".profile-grid-trigger")
     await page.waitForSelector(".profile-grid-menu")
     assert.deepEqual(await headings(page), [{ name: "Claude Code", note: null }, { name: "Codex", note: null }])
     assert.deepEqual(errors, [])
   } finally {
-    await browser.close()
+    await page.close()
   }
 })
 
 test("the phone's sheet says it on the row that carries the provider's name", { skip: !baseUrl, timeout: 60_000 }, async () => {
-  const { browser, page, errors } = await launch("&signedOut=codex", true)
+  const { page, errors } = await openPage("&signedOut=codex", true)
   try {
     await page.waitForSelector("button")
     await page.tap("button")
@@ -80,34 +91,39 @@ test("the phone's sheet says it on the row that carries the provider's name", { 
     assert.equal(rows.find((row) => row.note)!.note, "Not signed in")
     assert.deepEqual(errors, [])
   } finally {
-    await browser.close()
+    await page.close()
   }
 })
 
 test("Antigravity lists regular Gemini models in the effort grid and keeps Orchestrator and third-party models under Other models", { skip: !baseUrl, timeout: 60_000 }, async () => {
-  const { browser, page, errors } = await launch("&antigravity=ultra&selected=gemini")
+  const { page, errors } = await openPage("&antigravity=ultra&selected=gemini")
   try {
     await page.click(".profile-grid-trigger")
     await page.waitForSelector(".profile-grid-menu")
-    // Regular Gemini models sit directly in the matrix, none truncated.
+    // Regular Gemini models sit directly in the matrix, abbreviated to <Family> <edition>, none truncated.
     const geminiRows = await page.$$eval("[data-profile-grid-row^='antigravity:']", (rows) =>
       rows.map((row) => {
         const label = row.querySelector(".profile-grid-model-label") as HTMLElement
-        return { model: row.getAttribute("data-profile-grid-row"), truncated: label.scrollWidth > label.clientWidth + 0.5 }
+        return {
+          model: row.getAttribute("data-profile-grid-row"),
+          text: label.textContent?.trim(),
+          edition: label.querySelector(".profile-grid-edition")?.textContent?.trim() ?? null,
+          truncated: label.scrollWidth > label.clientWidth + 0.5,
+        }
       }),
     )
-    assert.deepEqual(geminiRows.map((r) => r.model), [
-      "antigravity:gemini-4-neon",
-      "antigravity:gemini-4-carbon",
-      "antigravity:gemini-4-argon",
-      "antigravity:gemini-4-hydrogen",
-      "antigravity:gemini-3.8-flash",
+    assert.deepEqual(geminiRows.map((r) => [r.model, r.text, r.edition]), [
+      ["antigravity:gemini-4-neon", "Neon 4", "4"],
+      ["antigravity:gemini-4-carbon", "Carbon 4", "4"],
+      ["antigravity:gemini-4-argon", "Argon 4", "4"],
+      ["antigravity:gemini-4-hydrogen", "Hydrogen 4", "4"],
+      ["antigravity:gemini-3.8-flash", "Flash 3.8", "3.8"],
     ])
     assert.deepEqual(geminiRows.filter((r) => r.truncated), [], "every native Gemini row fits without ellipsis")
     // One click picks a Gemini model and effort directly.
     await page.click("[data-profile-grid-row='antigravity:gemini-4-hydrogen'] [role='menuitemradio'][aria-label*='X-high']")
     await page.waitForSelector(".profile-grid-menu", { hidden: true })
-    assert.match(await page.$eval(".profile-grid-trigger", (el) => el.textContent ?? ""), /Gemini 4 Hydrogen › xhigh/i)
+    assert.match(await page.$eval(".profile-grid-trigger", (el) => el.textContent ?? ""), /Hydrogen 4 › xhigh/i)
 
     // Non-Gemini models live under Other models and keep the Antigravity prefix in the trigger.
     await page.click(".profile-grid-trigger")
@@ -129,12 +145,12 @@ test("Antigravity lists regular Gemini models in the effort grid and keeps Orche
     assert.match(await page.$eval(".profile-grid-trigger", (el) => el.textContent ?? ""), /Antigravity Claude Opus 5\.5/i)
     assert.deepEqual(errors, [])
   } finally {
-    await browser.close()
+    await page.close()
   }
 })
 
 test("on a phone Antigravity shows regular Gemini rows first and collapses Other models behind a toggle", { skip: !baseUrl, timeout: 60_000 }, async () => {
-  const { browser, page, errors } = await launch("&antigravity=ultra&selected=gemini", true)
+  const { page, errors } = await openPage("&antigravity=ultra&selected=gemini", true)
   try {
     await page.waitForSelector("[data-phone-profile-chip]")
     await page.tap("[data-phone-profile-chip]")
@@ -158,6 +174,44 @@ test("on a phone Antigravity shows regular Gemini rows first and collapses Other
     assert.match(await page.$eval("[data-phone-profile-chip]", (el) => el.textContent ?? ""), /Antigravity Orchestrator \(Neon\)/i)
     assert.deepEqual(errors, [])
   } finally {
-    await browser.close()
+    await page.close()
+  }
+})
+
+test("Codex lists only the frontier models in the grid, folds older versions under Other models, and Antigravity appears before OpenCode", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { page, errors } = await openPage("&codex=full&antigravity=ultra&opencode=native")
+  try {
+    await page.click(".profile-grid-trigger")
+    await page.waitForSelector(".profile-grid-menu")
+    const groupNames = (await headings(page)).map((h) => h.name.replace(/\s*Experimental$/i, "").trim())
+    assert.deepEqual(groupNames, ["Claude Code", "Codex", "Antigravity", "OpenCode"])
+    const codexRows = await page.$$eval("[data-profile-grid-row^='gpt-']", (rows) =>
+      rows.map((row) => row.getAttribute("data-profile-grid-row")),
+    )
+    assert.deepEqual(codexRows, ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6-luna"])
+    // Open Codex's Other models submenu and pick an older version: commits with its defaultEffort ("medium"), never "".
+    await page.hover("[data-profile-grid-more='codex'] .profile-grid-dropdown")
+    await page.waitForSelector(".profile-grid-submenu")
+    const olderLabels = await page.$$eval('.profile-grid-submenu [role="menuitemradio"]', (els) => els.map((el) => el.textContent?.trim()))
+    assert.deepEqual(olderLabels, ["GPT-6.1 Sol", "GPT-6 Astra", "GPT-6 Sol", "GPT-5.6 Sol", "GPT-5.6 Terra", "GPT-5.6 Luna"])
+    await page.evaluate(() => [...document.querySelectorAll('.profile-grid-submenu [role="menuitemradio"]')].find((el) => el.textContent?.trim() === "GPT-6 Astra")!.setAttribute("data-pick", ""))
+    await page.click(".profile-grid-submenu [data-pick]")
+    await page.waitForSelector(".profile-grid-menu", { hidden: true })
+    assert.match(await page.$eval(".profile-grid-trigger", (el) => el.textContent ?? ""), /GPT-6 Astra › medium/i)
+
+    // Reopening shows GPT-6 Astra active in the Other models row with its reasoning-level submenu.
+    await page.click(".profile-grid-trigger")
+    await page.waitForSelector(".profile-grid-menu")
+    const moreTriggers = await page.$$eval("[data-profile-grid-more='codex'] .profile-grid-dropdown", (els) => els.map((el) => el.textContent?.trim()))
+    assert.deepEqual(moreTriggers, ["GPT-6 Astra", "Medium"])
+    await page.hover("[data-profile-grid-more='codex'] [aria-label='Codex reasoning level']")
+    await page.waitForSelector(".profile-grid-submenu")
+    await page.evaluate(() => [...document.querySelectorAll('.profile-grid-submenu [role="menuitemradio"]')].find((el) => el.textContent?.trim() === "X-high")!.setAttribute("data-pick", ""))
+    await page.click(".profile-grid-submenu [data-pick]")
+    await page.waitForSelector(".profile-grid-menu", { hidden: true })
+    assert.match(await page.$eval(".profile-grid-trigger", (el) => el.textContent ?? ""), /GPT-6 Astra › xhigh/i)
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.close()
   }
 })

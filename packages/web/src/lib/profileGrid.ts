@@ -83,14 +83,14 @@ export const PROFILE_GRID_COMPACT_TYPOGRAPHY_CLASS = PROMPT_CONTROL_TYPOGRAPHY_C
 // one uniform 14px gap the whole way across and a ring that is symmetric around every label.
 export const PROFILE_GRID_CELL_CLASS = `profile-grid-cell relative flex h-6 cursor-pointer select-none items-center justify-start rounded border border-transparent px-1 text-left text-muted outline-none transition-colors ${PROFILE_GRID_TYPOGRAPHY_CLASS} data-[highlighted]:border-border data-[highlighted]:bg-panel-2 data-[highlighted]:text-fg data-[highlighted]:outline data-[highlighted]:outline-1 data-[highlighted]:outline-offset-1 data-[highlighted]:outline-fg/55 data-[state=checked]:border-accent/70 data-[state=checked]:bg-accent/10 data-[state=checked]:font-medium data-[state=checked]:text-fg data-[state=checked]:ring-1 data-[state=checked]:ring-inset data-[state=checked]:ring-accent/90`
 
-// Model column capped at 8.5rem (136px): fits the longest native model names ("Gemini 4 Hydrogen"
-// measures 129px at 12px petite-caps with px-1.5) without ellipsis while keeping effort columns aligned
-// across Claude Code, Codex, and Antigravity. Effort tracks are `auto` with NO minimum: a track floor
-// wider than the word it holds is slack, and left-aligned slack all lands on one side. The row itself is
-// `w-max` (see the component), so `auto` resolves to max-content and every column is exactly as wide as
-// its label plus the cell's padding.
+// Model column capped at 7rem (112px): fits the longest primary model names ("GPT-6.2 Astra" measures
+// 99.2px with px-1.5 at 12px petite-caps, "Hydrogen 4" 85.7px) without ellipsis while keeping effort
+// columns aligned across Claude Code, Codex, and Antigravity. Effort tracks are `auto` with NO minimum:
+// a track floor wider than the word it holds is slack, and left-aligned slack all lands on one side. The
+// row itself is `w-max` (see the component), so `auto` resolves to max-content and every column is exactly
+// as wide as its label plus the cell's padding.
 export function profileGridTemplateColumns(columnCount: number): string {
-  return `minmax(6rem, 8.5rem) repeat(${Math.max(0, columnCount)}, auto)`
+  return `minmax(6rem, 7rem) repeat(${Math.max(0, columnCount)}, auto)`
 }
 
 // The product's own word for an effort level, as the picker's cells print it: "X-high" for xhigh, the
@@ -225,6 +225,26 @@ export function profileGridActiveKey(
   const option = profileGridAllOptions(group).find((candidate) => candidate.model === shown)
   const effort = selection.effort || (option?.efforts.length ? option.defaultEffort ?? "" : "")
   return profileGridSelectionKey({ provider: selection.provider, model: shown, effort })
+}
+
+/** The initial effort committed when picking a model from a group's "Other models" submenu.
+ *  Options whose ladder accepts "" (Antigravity fallbacks) keep an already-picked fallback effort if
+ *  supported and otherwise start on "" (the model's own default). Concrete-effort options (older Codex
+ *  models) carry no "" level, so they keep the group's current effort when supported and otherwise fall
+ *  back to the model's own default (or first supported) effort. */
+export function profileGridMorePickEffort(
+  candidate: ProfileGridOption,
+  active: ProfileGridOption | undefined,
+  currentEffort: string | undefined,
+  sameGroup: boolean,
+): string {
+  if (candidate.efforts.length === 0) return ""
+  if (candidate.efforts.includes("")) {
+    return active && currentEffort && candidate.efforts.includes(currentEffort) ? currentEffort : ""
+  }
+  if (sameGroup && currentEffort && candidate.efforts.includes(currentEffort)) return currentEffort
+  if (candidate.defaultEffort && candidate.efforts.includes(candidate.defaultEffort)) return candidate.defaultEffort
+  return candidate.efforts[0] ?? ""
 }
 
 // The trigger's readout in parts, so the version can be set in the edition ink the menu's model column

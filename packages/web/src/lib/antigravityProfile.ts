@@ -7,8 +7,9 @@ import type { ProfileGridGroup, ProfileGridOption, ProfileGridSelection } from "
 //
 // The group is therefore a GRID group, like Claude Code and Codex:
 //   - Regular Gemini models (Gemini 4 Neon, Carbon, Argon, Hydrogen, 3.8 Flash, …) sit directly in the
-//     effort matrix with their concrete thinking levels (low..xhigh), and their trigger reads the model
-//     name directly ("Gemini 4 Neon › high"), matching "Opus 5.5 › high" and "GPT-6.2 Sol › low".
+//     effort matrix with their concrete thinking levels (low..xhigh). As with Claude Code ("Opus 5.5",
+//     not "Claude Opus 5.5"), their readout drops the "Gemini" prefix and trails the version in the
+//     edition ink ("Neon 4 › high", "Flash 3.8 › medium").
 //   - Everything else `agy` serves (Orchestrator modes, partner Claude models, GPT-OSS) sits behind a
 //     compact "Other models" submenu at the bottom of the group (and a collapsible section on phone),
 //     prefixed with "Antigravity" in the trigger so Antigravity's Claude models are never mistaken for
@@ -18,6 +19,27 @@ import type { ProfileGridGroup, ProfileGridOption, ProfileGridSelection } from "
 // Antigravity's levels (low..xhigh) are Frizz's own words. "" is the model's own default level, kept
 // valid on native Gemini rows via `allowDefaultEffort` so existing threads and preferences saved without
 // an explicit level still resolve cleanly.
+
+const GEMINI_VARIANT_PATTERN = /^Gemini\s+(\d+(?:\.\d+)*)\s+([^()]+?)(?:\s+(\([^()]+\)))?$/i
+const GEMINI_BARE_VERSION_PATTERN = /^Gemini\s+(\d+(?:\.\d+)*)$/i
+
+/** Abbreviate a native Gemini model's display name to match Claude Code's `<Family> <edition>` form:
+ *  "Gemini 4 Neon" → `{ label: "Neon 4", edition: "4" }`, "Gemini 3.8 Flash" → `{ label: "Flash 3.8", edition: "3.8" }`.
+ *  Unrecognised shapes keep their original name untouched. */
+export function abbreviateGeminiModelLabel(name: string): { label: string; edition?: string } {
+  const trimmed = name.trim()
+  const variant = GEMINI_VARIANT_PATTERN.exec(trimmed)
+  if (variant) {
+    const version = variant[1]!
+    const family = variant[2]!.trim()
+    const suffix = variant[3]
+    if (suffix) return { label: `${family} ${version} ${suffix}` }
+    return { label: `${family} ${version}`, edition: version }
+  }
+  const bare = GEMINI_BARE_VERSION_PATTERN.exec(trimmed)
+  if (bare) return { label: trimmed, edition: bare[1]! }
+  return { label: trimmed }
+}
 
 /** Whether a model listed by `agy` is a regular Gemini model shown directly in the effort grid.
  *  Excludes Orchestrator planner/executor modes (`gemini-pro-orchestrator*`) and partner models. */
@@ -62,9 +84,11 @@ export function antigravityProfileGroup({ models, loading = false, saved, onRequ
   for (const model of listed) {
     const slug = antigravityModelSlug(model.id)
     if (isAntigravityNativeModel(model)) {
+      const { label, edition } = abbreviateGeminiModelLabel(model.name)
       options.push({
         model: slug,
-        label: model.name,
+        label,
+        ...(edition ? { edition } : {}),
         efforts: [...model.efforts],
         ...(model.defaultEffort ? { defaultEffort: model.defaultEffort } : {}),
         ...(model.efforts.length ? { allowDefaultEffort: true } : {}),
@@ -89,9 +113,11 @@ export function antigravityProfileGroup({ models, loading = false, saved, onRequ
   // list arrives (or on error), keep a visible fallback row only when needed (error, or bare slug saved).
   if (defaultListed) {
     const nativeDefault = isAntigravityNativeModel(defaultListed)
+    const nativeNamed = nativeDefault ? abbreviateGeminiModelLabel(defaultListed.name) : undefined
     const alias: ProfileGridOption = {
       model: ANTIGRAVITY_MODEL_PREFIX,
-      label: defaultListed.name,
+      label: nativeNamed?.label ?? defaultListed.name,
+      ...(nativeNamed?.edition ? { edition: nativeNamed.edition } : {}),
       ...(nativeDefault ? {} : fallbackNamed(defaultListed.name)),
       efforts: nativeDefault ? [] : fallbackEfforts(defaultListed.efforts),
       ...(defaultListed.defaultEffort ? { defaultEffort: defaultListed.defaultEffort } : {}),

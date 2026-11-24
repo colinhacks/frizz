@@ -17,6 +17,7 @@ import type { ProfileGridGroup, ProfileGridSelection } from "./profileGrid.ts"
 import { opencodeProfileGroup, opencodeSelection, opencodeSlugOf } from "./opencodeProfile.ts"
 import { acpProfileGroup, acpSelection, isAcpGroupId } from "./acpProfile.ts"
 import { antigravityProfileGroup, antigravitySelection } from "./antigravityProfile.ts"
+import { codexProfileGroupFromModels } from "./codexProfile.ts"
 import type { AcpAgentModelLists } from "../hooks/useAcpAgentModels.ts"
 import {
   CLAUDE_MODELS,
@@ -139,19 +140,9 @@ export function dispatchProfileGroups(
         efforts: claudeEfforts(option.value),
       })),
     },
-    {
-      id: "codex",
-      label: "Codex",
-      signedOut: signedOut.includes("codex") || undefined,
-      options: codexModels.map((model) => ({
-        model: model.slug,
-        label: model.displayName,
-        defaultEffort: model.defaultEffort,
-        efforts: model.efforts,
-      })),
-    },
-    ...(opencodeNative ? [opencodeProfileGroup(opencode ?? {})] : []),
+    codexProfileGroupFromModels({ models: codexModels, signedOut: signedOut.includes("codex") }),
     ...(antigravity?.installed ? [antigravityProfileGroup(antigravity)] : []),
+    ...(opencodeNative ? [opencodeProfileGroup(opencode ?? {})] : []),
     ...acpGroups,
   ]
   return firstGroup ? [...groups.filter((group) => group.id === firstGroup), ...groups.filter((group) => group.id !== firstGroup)] : groups

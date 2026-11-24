@@ -13,6 +13,7 @@ import {
   profileGridEffortLabel,
   profileGridListedMoreOptions,
   profileGridListedOptions,
+  profileGridMorePickEffort,
   profileGridResolveSelection,
   profileGridShownModel,
   profileGridSelectionFromKey,
@@ -691,7 +692,9 @@ function ProfileGridMoreRow({ group, options, value, typography, menuZClass, onP
           title={active ? active.label : `Additional models offered by ${group.label}`}
           className={`${trigger} max-w-[15rem] ${active ? "" : "text-muted-65"}`}
         >
-          <span className="min-w-0 truncate">{triggerText}</span>
+          <span className="min-w-0 truncate">
+            {active ? <ModelLabel label={active.label} edition={active.edition} /> : triggerText}
+          </span>
           {/* Lowered 0.5px: petite-caps text sits slightly below box centre, so the chevron measured -0.6px high (dark/light, dsf 2). */}
           <ChevronDown aria-hidden="true" size={12} className="shrink-0 translate-y-[0.5px] text-fg/55" />
         </RadixMenu.SubTrigger>
@@ -712,11 +715,15 @@ function ProfileGridMoreRow({ group, options, value, typography, menuZClass, onP
                       title={candidate.model}
                       onSelect={(event) => {
                         event.preventDefault()
-                        onPick({ provider: group.id, model: candidate.model, effort: candidate.efforts.includes(effort) ? effort : "" })
+                        onPick({
+                          provider: group.id,
+                          model: candidate.model,
+                          effort: profileGridMorePickEffort(candidate, active, value?.effort, chosenGroup),
+                        })
                       }}
                       className={item}
                     >
-                      <span className="min-w-0 truncate">{candidate.label}</span>
+                      <span className="min-w-0 truncate"><ModelLabel label={candidate.label} edition={candidate.edition} /></span>
                       {indicator}
                     </RadixMenu.RadioItem>
                   ))}

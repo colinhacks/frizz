@@ -186,6 +186,13 @@ test("the group a signed-out machine leads with goes first, and each ACP agent i
   assert.deepEqual(two.slice(-2).map((group) => [group.id, group.label, group.layout]), [["acp:opencode", "OpenCode", "dropdown"], ["acp:kilo", "Kilo", "dropdown"]])
 })
 
+test("Antigravity appears before OpenCode in the model menu", () => {
+  const nativeOpencode = { id: "opencode", label: "OpenCode", command: "opencode", available: true, native: true }
+  const cursor = { id: "cursor", label: "Cursor", command: "cursor-agent", available: true }
+  const groups = dispatchProfileGroups(models, [nativeOpencode, cursor], [], undefined, undefined, [], undefined, { installed: true })
+  assert.deepEqual(groups.map((group) => group.id), ["claude", "codex", "antigravity", "opencode", "acp:cursor"])
+})
+
 test("only the native OpenCode group is marked experimental", () => {
   const agent = { id: "opencode", label: "OpenCode", command: "opencode", args: ["acp"], available: true }
   const native = dispatchProfileGroups(models, [{ ...agent, native: true }])

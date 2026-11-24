@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { AntigravityModels, DispatchPreferences } from "@frizz/shared"
-import { antigravityProfileGroup, antigravitySelection, isAntigravityNativeModel } from "./antigravityProfile.ts"
+import { abbreviateGeminiModelLabel, antigravityProfileGroup, antigravitySelection, isAntigravityNativeModel } from "./antigravityProfile.ts"
 import { applyDispatchPreferenceUpdate, dispatchProfileGroups, dispatchProfileUpdate, dispatchProfileValue, resolveDispatchPreferences } from "./dispatchPreferences.ts"
 import { dispatchProfileError } from "./githubDispatch.ts"
 import { backendForModel } from "./options.ts"
@@ -83,6 +83,18 @@ test("a selection is the slug and the thinking level, which rides the profile's 
   assert.deepEqual(dispatchProfileUpdate({ provider: "antigravity", model: "antigravity:claude-sonnet-4-6", effort: "" }), { field: "profile", backend: "antigravity", model: "antigravity:claude-sonnet-4-6", effort: undefined })
 })
 
+test("native Gemini models are abbreviated to <Family> <edition>, matching Claude Code's readout", () => {
+  assert.deepEqual(abbreviateGeminiModelLabel("Gemini 4 Neon"), { label: "Neon 4", edition: "4" })
+  assert.deepEqual(abbreviateGeminiModelLabel("Gemini 4 Carbon"), { label: "Carbon 4", edition: "4" })
+  assert.deepEqual(abbreviateGeminiModelLabel("Gemini 4 Argon"), { label: "Argon 4", edition: "4" })
+  assert.deepEqual(abbreviateGeminiModelLabel("Gemini 4 Hydrogen"), { label: "Hydrogen 4", edition: "4" })
+  assert.deepEqual(abbreviateGeminiModelLabel("Gemini 3.8 Flash"), { label: "Flash 3.8", edition: "3.8" })
+  assert.deepEqual(abbreviateGeminiModelLabel("Gemini 2.5 Flash Lite"), { label: "Flash Lite 2.5", edition: "2.5" })
+  assert.deepEqual(abbreviateGeminiModelLabel("Gemini 3.8 Flash (Thinking)"), { label: "Flash 3.8 (Thinking)" })
+  assert.deepEqual(abbreviateGeminiModelLabel("Gemini 4"), { label: "Gemini 4", edition: "4" })
+  assert.deepEqual(abbreviateGeminiModelLabel("Gemini Pro"), { label: "Gemini Pro" })
+})
+
 test("regular Gemini models sit in the effort grid while Orchestrator and third-party models live in Other models", () => {
   const group = antigravityProfileGroup({ models: ultra })
   assert.deepEqual(
@@ -91,12 +103,12 @@ test("regular Gemini models sit in the effort grid while Orchestrator and third-
   )
   assert.deepEqual(profileGridMatrixGroups([group]).map((g) => g.id), ["antigravity"])
   assert.deepEqual(profileGridColumns([group]), [["low"], ["medium"], ["high"], ["xhigh"]])
-  assert.deepEqual(profileGridListedOptions(group).map((o) => [o.model, o.label, o.efforts]), [
-    ["antigravity:gemini-4-neon", "Gemini 4 Neon", ["low", "medium", "high", "xhigh"]],
-    ["antigravity:gemini-4-carbon", "Gemini 4 Carbon", ["low", "medium", "high"]],
-    ["antigravity:gemini-4-argon", "Gemini 4 Argon", ["low", "medium", "high"]],
-    ["antigravity:gemini-4-hydrogen", "Gemini 4 Hydrogen", ["low", "medium", "high", "xhigh"]],
-    ["antigravity:gemini-3.8-flash", "Gemini 3.8 Flash", ["low", "medium", "high"]],
+  assert.deepEqual(profileGridListedOptions(group).map((o) => [o.model, o.label, o.edition, o.efforts]), [
+    ["antigravity:gemini-4-neon", "Neon 4", "4", ["low", "medium", "high", "xhigh"]],
+    ["antigravity:gemini-4-carbon", "Carbon 4", "4", ["low", "medium", "high"]],
+    ["antigravity:gemini-4-argon", "Argon 4", "4", ["low", "medium", "high"]],
+    ["antigravity:gemini-4-hydrogen", "Hydrogen 4", "4", ["low", "medium", "high", "xhigh"]],
+    ["antigravity:gemini-3.8-flash", "Flash 3.8", "3.8", ["low", "medium", "high"]],
   ])
   assert.deepEqual(profileGridListedMoreOptions(group).map((o) => [o.model, o.label, o.section, o.efforts]), [
     ["antigravity:gemini-pro-orchestrator-neon", "Orchestrator (Neon)", "Orchestrator", []],
@@ -131,11 +143,12 @@ test("regular Gemini models sit in the effort grid while Orchestrator and third-
   )
 })
 
-test("native Gemini models read directly in the trigger; fallback models keep the Antigravity prefix", () => {
+test("native Gemini models read directly in the trigger with dim edition; fallback models keep the Antigravity prefix", () => {
   const group = antigravityProfileGroup({ models: ultra })
-  assert.deepEqual(profileGridDisplayParts([group], { provider: "antigravity", model: "antigravity:gemini-4-neon", effort: "high" }), { name: "Gemini 4 Neon", effort: "high" })
-  assert.equal(profileGridDisplayLabel([group], { provider: "antigravity", model: "antigravity:gemini-4-neon", effort: "high" }), "Gemini 4 Neon › high")
-  assert.equal(profileGridDisplayLabel([group], { provider: "antigravity", model: "antigravity:", effort: "" }), "Gemini 4 Neon")
+  assert.deepEqual(profileGridDisplayParts([group], { provider: "antigravity", model: "antigravity:gemini-4-neon", effort: "high" }), { name: "Neon", edition: "4", effort: "high" })
+  assert.equal(profileGridDisplayLabel([group], { provider: "antigravity", model: "antigravity:gemini-4-neon", effort: "high" }), "Neon 4 › high")
+  assert.deepEqual(profileGridDisplayParts([group], { provider: "antigravity", model: "antigravity:", effort: "" }), { name: "Neon", edition: "4" })
+  assert.equal(profileGridDisplayLabel([group], { provider: "antigravity", model: "antigravity:", effort: "" }), "Neon 4")
   // Orchestrator and third-party models keep "Antigravity" + dim model name so Antigravity's Claude is
   // never confused with Claude Code.
   assert.deepEqual(profileGridDisplayParts([group], { provider: "antigravity", model: "antigravity:gemini-pro-orchestrator-neon", effort: "" }), { name: "Antigravity", edition: "Orchestrator (Neon)" })

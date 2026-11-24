@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client"
 import { useState } from "react"
-import type { AntigravityModels, ClaudeModel, CodexModel } from "@frizz/shared"
+import { CODEX_MODELS_FALLBACK, type AcpAgent, type AntigravityModels, type ClaudeModel, type CodexModel, type OpencodeModels } from "@frizz/shared"
 import { ProfileGridSelector, type ProfileGridUpgrade } from "./components/ProfileGridSelector.tsx"
 import { dispatchProfileGroups } from "./lib/dispatchPreferences.ts"
 import "./styles.css"
@@ -30,10 +30,24 @@ const claudeModels: ClaudeModel[] = [
   { alias: "sonnet", label: "Sonnet 5", resolvedModel: "claude-sonnet-5", edition: "5" },
   { alias: "haiku", label: "Haiku 4.5", resolvedModel: "claude-haiku-4-5-20251001", edition: "4.5" },
 ]
-const codexModels: CodexModel[] = [
-  { slug: "gpt-6-astra", displayName: "GPT-6 Astra", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-  { slug: "gpt-6-sol", displayName: "GPT-6 Sol", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-]
+const codexModels: CodexModel[] = params.get("codex") === "full"
+  ? CODEX_MODELS_FALLBACK
+  : [
+      { slug: "gpt-6-astra", displayName: "GPT-6 Astra", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+      { slug: "gpt-6-sol", displayName: "GPT-6 Sol", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+    ]
+
+const opencodeNative = params.get("opencode") === "native"
+const acpAgents: AcpAgent[] = opencodeNative
+  ? [{ id: "opencode", label: "OpenCode", command: "opencode", available: true, native: true }]
+  : []
+const opencodeModels: OpencodeModels | undefined = opencodeNative
+  ? {
+      available: true,
+      defaultModel: "opencode:opencode/big-pickle",
+      models: [{ providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] }],
+    }
+  : undefined
 
 const antigravityMode = params.get("antigravity")
 const antigravityModels: AntigravityModels | undefined = antigravityMode === "ultra"
@@ -63,10 +77,10 @@ const antigravityModels: AntigravityModels | undefined = antigravityMode === "ul
 // `?signedOut=codex` (or `claude,codex`) marks those providers signed out, as useDispatchProfile does.
 const allGroups = dispatchProfileGroups(
   codexModels,
-  [],
+  acpAgents,
   claudeModels,
   undefined,
-  undefined,
+  opencodeModels ? { models: opencodeModels } : undefined,
   (params.get("signedOut") ?? "").split(",").filter(Boolean),
   undefined,
   antigravityModels ? { installed: true, models: antigravityModels } : undefined,

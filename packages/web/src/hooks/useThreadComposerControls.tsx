@@ -18,6 +18,7 @@ import { useOpencodeModels } from "./useOpencodeModels.ts"
 import { acpProfileGroup, acpSelection } from "../lib/acpProfile.ts"
 import { useAcpAgentModels } from "./useAcpAgentModels.ts"
 import { antigravityProfileGroup, antigravitySelection } from "../lib/antigravityProfile.ts"
+import { codexProfileGroup } from "../lib/codexProfile.ts"
 import { useAntigravityModels } from "./useAntigravityModels.ts"
 
 // One control strip for every place a registered thread can be steered: the model/effort selector, and
@@ -109,7 +110,11 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   const { modelSelectable } = threadProfileControlState(profileOptions, model, effort, thread.runtime === "exited")
   const catalogLoaded = profiles.data !== undefined
   const acpAgentLabel = acpAgents.data?.find((agent) => agent.id === acpAgentId)?.label ?? acpAgentId
-  const profileGroups = [{ id: backend, label: backend === "codex" ? "Codex" : "Claude Code", options: profileOptions }]
+  const profileGroups = [
+    backend === "codex"
+      ? codexProfileGroup({ options: profileOptions })
+      : { id: backend, label: "Claude Code", options: profileOptions },
+  ]
   const composerStatus = threadComposerStatus(profiles.isError ? (profiles.error as Error).message : undefined)
 
   // WHAT THE OPERATOR IS LOOKING AT, and it is deliberately not `thread.permissionMode` raw: a thread

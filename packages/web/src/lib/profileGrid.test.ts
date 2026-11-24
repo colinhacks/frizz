@@ -120,9 +120,9 @@ test("profile grid cells use pointer affordance and icon-free selection ring/tin
 })
 
 test("profile grid keeps the model column bounded and lets every effort column hug its label", () => {
-  // 8.5rem holds the longest native model names (e.g. "Gemini 4 Hydrogen", 129px with padding) without
+  // 7rem holds the longest primary model names (e.g. "GPT-6.2 Astra", 99px with padding) without
   // truncating; no effort track minimum so left-aligned labels leave no trailing slack.
-  assert.equal(profileGridTemplateColumns(5), "minmax(6rem, 8.5rem) repeat(5, auto)")
+  assert.equal(profileGridTemplateColumns(5), "minmax(6rem, 7rem) repeat(5, auto)")
 })
 
 test("profile grid cells hug their label rather than a fixed minimum", () => {
