@@ -1,13 +1,16 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname, isAbsolute } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { DISPATCH_TASK_BANNER_MARKER } from "@frizz/shared"
-import { acpWorkerContract, buildClaudeCommand, claudeContractOptions, claudeWorkerSystemPrompt, codexWorkerBaseInstructions, opencodeWorkerContract, launchableWorkerPluginDir, loadWorkerPrompt, composePrompt, monitorScriptsDir, resolveWorkerPluginDir, scratchpadOrientation, workerPluginDir, frizzConfigBlock, workerDispatchPermission, WORKER_DISPATCH_PERMISSION } from "./dispatch.ts"
+import { DISPATCH_TASK_BANNER_MARKER, Settings } from "@frizz/shared"
+import { acpWorkerContract, buildClaudeCommand, claudeContractOptions, claudeWorkerSystemPrompt, codexWorkerBaseInstructions, createDispatcher, opencodeWorkerContract, launchableWorkerPluginDir, loadWorkerPrompt, composePrompt, monitorScriptsDir, resolveWorkerPluginDir, scratchpadOrientation, workerPluginDir, frizzConfigBlock, workerDispatchPermission, WORKER_DISPATCH_PERMISSION } from "./dispatch.ts"
 import { parseTranscript } from "./transcript.ts"
 import { FRIZZ_MCP } from "./backend/types.ts"
+import { createStorage } from "./storage.ts"
+import type { BoardManager } from "./board.ts"
+import type { AntigravityBridge } from "./backend/antigravity-bridge.ts"
 
 // The worker's MCP config, read from the owner-only FILE its argv names. Never inline JSON: the config
 // carries credentials, and an argv is readable through `ps` by every local process.
@@ -955,4 +958,46 @@ test("buildClaudeCommand carries bypassPermissions through to --permission-mode"
     argv.slice(argv.indexOf("--permission-mode"), argv.indexOf("--permission-mode") + 2),
     ["--permission-mode", "bypassPermissions"],
   )
+})
+
+test("antigravity dispatch normalizes bare model ids, infers backend from `antigravity:`, and never inherits Claude's settings.model", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-agy-dispatch-"))
+  const storage = createStorage(join(dir, "ui.db"), "proj-agy")
+  t.after(() => {
+    storage.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const calls: Array<{ modelId?: string | null; effort?: string | null; permissionMode?: string | null }> = []
+  const antigravityBridge = {
+    spawnDispatch: async (input: { modelId?: string | null; effort?: string | null; permissionMode?: string | null }) => {
+      calls.push({ modelId: input.modelId, effort: input.effort, permissionMode: input.permissionMode })
+      return { agySessionId: `agy-${calls.length}`, model: input.modelId ?? "gemini-4-neon", effort: input.effort ?? undefined }
+    },
+    releaseSession: () => {},
+  } as unknown as AntigravityBridge
+  const dispatcher = createDispatcher({
+    project: { dir, id: "proj-agy", name: "proj", label: "proj", stateDir: dir, cwdSlug: "proj" },
+    storage,
+    board: { rebuild: async () => ({ threads: [] }) } as unknown as BoardManager,
+    getSettings: () => Settings.parse({ permissionMode: "auto", notifications: false, projectRail: false, childThreads: false, model: "opus", effort: "high" }),
+    antigravityBridge,
+  })
+
+  // Unprefixed model with explicit `backend: "antigravity"` passes the real modelId and stores `antigravity:<id>`.
+  const first = await dispatcher.dispatch({ prompt: "Check with Neon", model: "gemini-4-neon", effort: "xhigh", backend: "antigravity" }, { backend: "antigravity" })
+  assert.deepEqual(calls[0], { modelId: "gemini-4-neon", effort: "xhigh", permissionMode: "bypassPermissions" })
+  assert.equal(storage.getSession(first.slug)?.backend, "antigravity")
+  assert.equal(storage.getSession(first.slug)?.model, "antigravity:gemini-4-neon")
+  assert.equal(storage.getSession(first.slug)?.effort, "xhigh")
+
+  // Omitted `opts.backend` infers `antigravity` from `antigravity:` prefix.
+  const second = await dispatcher.dispatch({ prompt: "Check with Flash", model: "antigravity:gemini-3.8-flash" })
+  assert.deepEqual(calls[1], { modelId: "gemini-3.8-flash", effort: null, permissionMode: "bypassPermissions" })
+  assert.equal(storage.getSession(second.slug)?.backend, "antigravity")
+  assert.equal(storage.getSession(second.slug)?.model, "antigravity:gemini-3.8-flash")
+
+  // Omitted `model` on `backend: "antigravity"` stores `antigravity:` rather than inheriting Claude's `opus`.
+  const third = await dispatcher.dispatch({ prompt: "Default agy model", backend: "antigravity" }, { backend: "antigravity" })
+  assert.deepEqual(calls[2], { modelId: null, effort: null, permissionMode: "bypassPermissions" })
+  assert.equal(storage.getSession(third.slug)?.model, "antigravity:")
 })

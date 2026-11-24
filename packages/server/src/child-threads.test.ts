@@ -260,6 +260,10 @@ test("spawn-child links the child, tells it whose it is, and starts it in its pa
 
   await h.router.spawnChild.handler({ input: { ...ask, model: "gpt-5.6-sol", backend: "codex", from: "parent" } })
   assert.deepEqual(h.dispatched[1]!.opts, { backend: "codex", parentSlug: "parent" }, "a mode does not cross harnesses")
+
+  await h.router.spawnChild.handler({ input: { prompt: "Review with Gemini", model: "gemini-4-neon", effort: "high", backend: "antigravity", from: "parent" } })
+  assert.deepEqual(h.dispatched[2]!.opts, { backend: "antigravity", parentSlug: "parent" }, "an Antigravity child starts in Antigravity's dispatch default")
+  assert.equal(h.dispatched[2]!.input.model, "antigravity:gemini-4-neon", "bare Antigravity model id is normalized to `antigravity:<id>`")
 })
 
 test("a child cannot start children of its own", async (t) => {

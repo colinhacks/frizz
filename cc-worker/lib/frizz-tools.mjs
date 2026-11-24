@@ -83,23 +83,31 @@ const SPAWN_THREAD = {
           "review, the fix that must land), `sonnet` (ordinary substantive implementation/research), `haiku` " +
           "(simple, fully-specified mechanical work). Do NOT pick `fable`: Opus 5 is just as good and cheaper, " +
           "so a high-intensity task takes `opus` at a higher `effort`, not a different model — `fable` only " +
-          "when the human explicitly asks for it. For " +
-          "the `codex` backend use a codex model id instead (e.g. `gpt-5.6-sol`/`gpt-5.6-terra`/`gpt-5.6-luna`). " +
-          "Match the model to the backend you choose. Bias toward Opus/a strong model when the task is " +
-          "non-trivial or its outcome is load-bearing.",
+          "when the human explicitly asks for it. For the `codex` backend use a codex model id instead (e.g. " +
+          "`gpt-5.6-sol`/`gpt-5.6-terra`/`gpt-5.6-luna`). For the `antigravity` backend use an Antigravity " +
+          "model id (e.g. `gemini-4-neon`, `gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen`, " +
+          "`gemini-3.8-flash`, or an orchestrator; `antigravity:<id>` is accepted too and infers `--backend " +
+          "antigravity`). Run `frizzctl models antigravity` (or `frizzctl models`) to see the exact models and " +
+          "thinking levels this machine's account offers. Match the model to the backend you choose. Bias toward " +
+          "Opus/a strong model when the task is non-trivial or its outcome is load-bearing.",
       },
       effort: {
         type: "string",
         enum: ["low", "medium", "high", "xhigh", "max"],
         description:
-          "REQUIRED — reasoning effort, pick by complexity; no default. `low` only for trivial tasks; " +
-          "`medium` for routine work; `high` for ordinary substantive work; `xhigh` for hard coding/agentic " +
-          "work; `max` for the single hardest problems. (Codex also accepts `ultra`.)",
+          "Reasoning effort, pick by complexity. REQUIRED for `claude` and `codex` (no default): `low` only " +
+          "for trivial tasks; `medium` for routine work; `high` for ordinary substantive work; `xhigh` for hard " +
+          "coding/agentic work; `max` for the single hardest problems. (Codex also accepts `ultra`.) For " +
+          "`antigravity`, thinking levels are per-model (e.g. `low`/`medium`/`high`/`xhigh` on Gemini 4 Neon; " +
+          "orchestrators take none): optional — omit it for a model with no thinking levels or to use the " +
+          "model's default.",
       },
       backend: {
         type: "string",
-        enum: ["claude", "codex"],
-        description: "Optional agent backend (default `claude`). If `codex`, `model` must be a codex model id.",
+        enum: ["claude", "codex", "antigravity"],
+        description:
+          "Optional agent backend (default `claude`). Use `codex` with a codex model id, or `antigravity` with " +
+          "an Antigravity model id (such as a Gemini model). An `antigravity:<id>` model infers `antigravity`.",
       },
       title: { type: "string", description: "Optional short title for the new thread (else derived from the prompt)." },
       project: {
@@ -110,7 +118,7 @@ const SPAWN_THREAD = {
           "project. The new thread is told which project you are on, so it can `steer` results back.",
       },
     },
-    required: ["prompt", "model", "effort"],
+    required: ["prompt", "model"],
   },
 }
 
@@ -120,20 +128,21 @@ const SPAWN_CHILD = {
   name: "spawn_child",
   description:
     "AN EXPERIMENT, switched on in Frizz's Settings (refused, exit 2, while it is off). Start a CHILD THREAD: a " +
-    "new thread on YOUR board, on Claude Code or Codex, that works for YOU. It is a full Frizz thread — its own " +
-    "session, scratch directory and watchers — dispatched like any other, so it runs on its harness's own runtime " +
-    "with the project's skills and instructions, and it can rest, own a PR watcher and be woken by it. What makes " +
-    "it a child: every rest of its that would have gone to the human's queue — its `done`, a `needs_input` " +
-    "handoff, a crash — is handed to YOU instead, as a message that wakes you, and it sits under your thread on " +
-    "the board rather than in the queue. Answer it, or give it more work, with `frizzctl steer <slug>`. Only a " +
-    "permission approval, a secret it needs and a usage-limit stop still go to the human directly. " +
+    "new thread on YOUR board, on Claude Code, Codex or Antigravity, that works for YOU. It is a full Frizz " +
+    "thread — its own session, scratch directory and watchers — dispatched like any other, so it runs on its " +
+    "harness's own runtime with the project's skills and instructions, and it can rest, own a PR watcher and be " +
+    "woken by it. What makes it a child: every rest of its that would have gone to the human's queue — its " +
+    "`done`, a `needs_input` handoff, a crash — is handed to YOU instead, as a message that wakes you, and it " +
+    "sits under your thread on the board rather than in the queue. Answer it, or give it more work, with " +
+    "`frizzctl steer <slug>`. Only a permission approval, a secret it needs and a usage-limit stop still go to " +
+    "the human directly. " +
     "WHEN TO USE IT, and when not: an in-session sub-agent is still the tool for a helper that finishes inside your " +
     "turn — a review, a research prong, a verification pass — because it is cheaper (no worker prompt, no cold " +
     "start, no process of its own). A child thread is for work a sub-agent structurally cannot do: work that must " +
-    "REST and be woken (a pull request it opened and must shepherd through CI and review rounds), work on the OTHER " +
-    "harness, or work that must survive your process. Rest on a running child with `threads: [<slug>]` in your " +
-    "```awaiting fence. A child cannot start children of its own. You MUST choose `model` and `effort` by the " +
-    "child's task, as for `spawn-thread`.",
+    "REST and be woken (a pull request it opened and must shepherd through CI and review rounds), work on another " +
+    "harness (Codex or Antigravity), or work that must survive your process. Rest on a running child with `threads: " +
+    "[<slug>]` in your ```awaiting fence. A child cannot start children of its own. You MUST choose `model` (and " +
+    "`effort` for Claude/Codex or thinking-enabled Antigravity models) by the child's task, as for `spawn-thread`.",
   inputSchema: {
     type: "object",
     properties: {
@@ -145,14 +154,15 @@ const SPAWN_CHILD = {
       effort: SPAWN_THREAD.inputSchema.properties.effort,
       backend: {
         type: "string",
-        enum: ["claude", "codex"],
+        enum: ["claude", "codex", "antigravity"],
         description:
-          "Optional harness (default `claude`). If `codex`, `model` must be a codex model id. A child on your own " +
-          "harness starts in your current permission mode; one on the other starts in that harness's default.",
+          "Optional harness (default `claude`). Use `codex` with a codex model id, or `antigravity` with an " +
+          "Antigravity model id (run `frizzctl models antigravity` to list them). A child on your own harness " +
+          "starts in your current permission mode; one on another starts in that harness's default.",
       },
       title: { type: "string", description: "Optional short title for the child (else derived from the prompt)." },
     },
-    required: ["prompt", "model", "effort"],
+    required: ["prompt", "model"],
   },
 }
 
@@ -1098,10 +1108,40 @@ const THREADS = {
   },
 }
 
+const MODELS = {
+  name: "models",
+  description:
+    "LIST THE MODELS AND EFFORT LEVELS THIS MACHINE CAN SPAWN — for Claude Code, Codex, and Antigravity " +
+    "(Gemini and other models offered by the signed-in Google account). Use this before `frizzctl spawn-thread` " +
+    "or `frizzctl spawn-child` when targeting Codex or Antigravity, whose available model ids and thinking " +
+    "levels depend on the installed CLI and account plan.\n\n" +
+    "Pass a backend name (`claude`, `codex`, or `antigravity`) to query only that one; omit it to list all " +
+    "three. `--json` prints the raw catalogue for `jq`. It only reads: nothing is started on the board.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      backend: {
+        type: "string",
+        enum: ["claude", "codex", "antigravity"],
+        description: "Optional backend to list (`claude`, `codex`, or `antigravity`). Omitted ⇒ lists all three.",
+      },
+      refresh: {
+        type: "boolean",
+        description: "Bypass Antigravity's 10-minute model cache and re-probe `agy`.",
+      },
+      json: {
+        type: "boolean",
+        description: "Print the catalogue as JSON instead of text.",
+      },
+    },
+    required: [],
+  },
+}
+
 // WATCH_ISSUE rides at the END (2026-09-14), and SECRET, STEER, WATCH_COMMAND, MONITOR and THREADS after it: the tool list is
 // read by position in frizz-mcp.test.ts, and a worker's runtime reads it by name, so the order costs nothing and appending
 // breaks nothing.
-const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR, THREADS, SPAWN_CHILD, MCP, WORKTREE]
+const TOOLS = [SPAWN_THREAD, GOAL, TIMER, WATCH_PR, WATCH, UNWATCH, ASK, UNASK, DONE, TITLE, ACTIVITY, LINK, UNLINK, WATCH_ISSUE, SECRET, STEER, WATCH_COMMAND, MONITOR, THREADS, SPAWN_CHILD, MCP, WORKTREE, MODELS]
 
 /** @type {Record<string, (args: Record<string, unknown>) => Promise<string>>} */
 const HANDLERS = {
@@ -1127,6 +1167,7 @@ const HANDLERS = {
   [WATCH_COMMAND.name]: watchCommand,
   [MONITOR.name]: monitor,
   [THREADS.name]: threads,
+  [MODELS.name]: models,
 }
 
 // The slug out of whatever a worker has in hand for a thread: the slug itself, the `[title](/thread/<slug>)`
@@ -1683,23 +1724,60 @@ function projectSegment() {
   }
 }
 
+const SPAWN_BACKENDS = ["claude", "codex", "antigravity"]
+
+/** Validate a `--backend` value, rejecting unknown names instead of silently falling back to Claude.
+ * @param {unknown} raw @returns {"claude" | "codex" | "antigravity" | undefined} */
+function parseSpawnBackend(raw) {
+  if (raw === undefined || raw === null || raw === "") return undefined
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : ""
+  if (value === "claude" || value === "codex" || value === "antigravity") return value
+  const hint = value === "gemini" || value === "agy" || value === "anti-gravity"
+    ? " — use `--backend antigravity` for Antigravity/Gemini threads"
+    : ""
+  throw new Error(`\`backend\` must be one of ${SPAWN_BACKENDS.map((b) => `"${b}"`).join(", ")}, not ${JSON.stringify(raw)}${hint}`)
+}
+
+/** Validate and normalize the shared arguments of `spawn-thread` and `spawn-child`.
+ * @param {Record<string, unknown>} args @param {"thread" | "child"} role */
+function parseSpawnArgs(args, role) {
+  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : ""
+  if (!prompt) throw new Error("`prompt` is required and must be a non-empty string")
+  // model + effort are REQUIRED (no default) for Claude/Codex so the caller must choose by task
+  // complexity — a defaulted model (e.g. the project's cheap default) is exactly the bug this guards.
+  // For Antigravity, model is required (run `frizzctl models antigravity` to list ids) and effort is
+  // optional because some models (orchestrators, GPT-OSS) have no thinking levels.
+  const rawModel = typeof args.model === "string" ? args.model.trim() : ""
+  if (!rawModel) {
+    const scope = role === "child" ? "the child's task" : "the new task's complexity"
+    throw new Error(
+      `\`model\` is required — choose one by ${scope} (claude: opus/sonnet/haiku, opus being the top tier; ` +
+      "codex: a gpt-5.6 model id; antigravity: e.g. gemini-4-neon — run `frizzctl models antigravity` to list them). There is no default.",
+    )
+  }
+  const explicitBackend = parseSpawnBackend(args.backend)
+  const hasAntigravityPrefix = rawModel.startsWith("antigravity:")
+  if (hasAntigravityPrefix && explicitBackend && explicitBackend !== "antigravity") {
+    throw new Error(`\`--model ${rawModel}\` is an Antigravity model slug, which disagrees with \`--backend ${explicitBackend}\`. Pass \`--backend antigravity\` (or omit \`--backend\`).`)
+  }
+  const backend = explicitBackend ?? (hasAntigravityPrefix ? "antigravity" : undefined)
+  const model = backend === "antigravity" && !hasAntigravityPrefix ? `antigravity:${rawModel}` : rawModel
+  const effort = typeof args.effort === "string" ? args.effort.trim() : ""
+  if (!effort && backend !== "antigravity") {
+    throw new Error("`effort` is required — choose one by complexity (low/medium/high/xhigh/max). There is no default.")
+  }
+  /** @type {Record<string, unknown>} */
+  const body = { prompt, model, ...(effort ? { effort } : {}) }
+  const title = typeof args.title === "string" ? args.title.trim() : ""
+  if (title) body.title = title
+  if (backend) body.backend = backend
+  return { body, title }
+}
+
 /** The `spawn_thread` handler: POST `spawnThread` as the calling thread, return the worker-facing result text.
  * @param {Record<string, unknown>} args @returns {Promise<string>} */
 async function spawnThread(args) {
-  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : ""
-  if (!prompt) throw new Error("`prompt` is required and must be a non-empty string")
-  // model + effort are REQUIRED (no default) so the caller must choose by task complexity — a defaulted
-  // model (e.g. the project's cheap default) is exactly the bug this guards. Enforced server-side too,
-  // not only in the tool schema, so a lenient client can't skip the decision.
-  const model = typeof args.model === "string" ? args.model.trim() : ""
-  if (!model) throw new Error("`model` is required — choose one by the new task's complexity (claude: opus/sonnet/haiku, opus being the top tier; codex: a gpt-5.6 model id). There is no default.")
-  const effort = typeof args.effort === "string" ? args.effort.trim() : ""
-  if (!effort) throw new Error("`effort` is required — choose one by complexity (low/medium/high/xhigh/max). There is no default.")
-
-  /** @type {Record<string, unknown>} */
-  const body = { prompt, model, effort }
-  if (typeof args.title === "string" && args.title.trim()) body.title = args.title.trim()
-  if (args.backend === "claude" || args.backend === "codex") body.backend = args.backend
+  const { body } = parseSpawnArgs(args, "thread")
   const rawProject = typeof args.project === "string" ? args.project.trim() : ""
 
   // A THREAD'S SPAWN GOES THROUGH ITS OWN PROJECT'S `spawnThread`, for this board or another project's.
@@ -1724,17 +1802,8 @@ async function spawnThread(args) {
 }
 
 async function spawnChild(args) {
-  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : ""
-  if (!prompt) throw new Error("`prompt` is required and must be a non-empty string")
-  const model = typeof args.model === "string" ? args.model.trim() : ""
-  if (!model) throw new Error("`model` is required — choose one by the child's task (claude: opus/sonnet/haiku, opus being the top tier; codex: a gpt-5.6 model id). There is no default.")
-  const effort = typeof args.effort === "string" ? args.effort.trim() : ""
-  if (!effort) throw new Error("`effort` is required — choose one by complexity (low/medium/high/xhigh/max). There is no default.")
-  /** @type {Record<string, unknown>} */
-  const body = { prompt, model, effort, from: threadSlug() }
-  const title = typeof args.title === "string" ? args.title.trim() : ""
-  if (title) body.title = title
-  if (args.backend === "claude" || args.backend === "codex") body.backend = args.backend
+  const { body, title } = parseSpawnArgs(args, "child")
+  body.from = threadSlug()
   // The server writes the footer that tells the child it is one (shared childThreadFooter): only it can
   // name this thread by its board title.
   const result = (await callRpc("spawnChild", body))?.result
@@ -1747,6 +1816,64 @@ async function spawnChild(args) {
     `\`threads: [${result.slug}]\`.\n\nIt sits under your thread on the board; this link opens it:\n\n` +
     `[${title || result.slug}](/thread/${result.slug})`
   )
+}
+
+/** The `models` handler: list available models and effort levels from Frizz's model-catalogue RPCs.
+ * @param {Record<string, unknown>} args @returns {Promise<string>} */
+async function models(args) {
+  const only = parseSpawnBackend(args.backend)
+  const want = (/** @type {"claude" | "codex" | "antigravity"} */ b) => !only || only === b
+  const refresh = args.refresh === true
+  const [claude, codex, antigravity] = await Promise.all([
+    want("claude") ? queryRpc("claudeModels").then((p) => p?.result) : Promise.resolve(undefined),
+    want("codex") ? queryRpc("codexModels").then((p) => p?.result) : Promise.resolve(undefined),
+    want("antigravity") ? queryRpc("antigravityModels", refresh ? { refresh: true } : undefined).then((p) => p?.result) : Promise.resolve(undefined),
+  ])
+  if (args.json === true) {
+    const out = only === "claude" ? claude : only === "codex" ? codex : only === "antigravity" ? antigravity : { claude, codex, antigravity }
+    return JSON.stringify(out, null, 2)
+  }
+  const sections = []
+  if (want("claude")) {
+    const list = Array.isArray(claude) ? claude : []
+    const rows = list.map((/** @type {any} */ m) => {
+      const efforts = m.alias === "haiku" ? "low, medium, high, xhigh, max" : "low, medium, high, xhigh, max, ultracode"
+      const note = m.alias === "fable" ? "  (only when explicitly asked)" : ""
+      return `  ${String(m.alias).padEnd(10)}${String(m.label ?? m.alias).padEnd(14)}efforts: ${efforts}${note}`
+    })
+    sections.push(`Claude Code (\`--backend claude\`, default)\n${rows.length ? rows.join("\n") : "  (none reported)"}`)
+  }
+  if (want("codex")) {
+    const list = Array.isArray(codex) ? codex : []
+    const pad = Math.max(14, ...list.map((/** @type {any} */ m) => String(m.slug ?? "").length + 2))
+    const rows = list.map((/** @type {any} */ m) => {
+      const efforts = Array.isArray(m.efforts) && m.efforts.length ? `efforts: ${m.efforts.join(", ")}${m.defaultEffort ? ` (default: ${m.defaultEffort})` : ""}` : ""
+      return `  ${String(m.slug).padEnd(pad)}${String(m.displayName ?? m.slug).padEnd(20)}${efforts}`.trimEnd()
+    })
+    sections.push(`Codex (\`--backend codex\`)\n${rows.length ? rows.join("\n") : "  (none reported)"}`)
+  }
+  if (want("antigravity")) {
+    const meta = [antigravity?.tier, antigravity?.version ? `agy ${antigravity.version}` : ""].filter(Boolean).join(", ")
+    const head = `Antigravity (\`--backend antigravity\`${meta ? ` — ${meta}` : ""})`
+    const list = Array.isArray(antigravity?.models) ? antigravity.models : []
+    if (!antigravity?.available || (antigravity?.error && list.length === 0)) {
+      sections.push(`${head}\n  unavailable: ${antigravity?.error ?? "Antigravity is not installed"}`)
+    } else if (list.length === 0) {
+      sections.push(`${head}\n  (no models listed)`)
+    } else {
+      const idPad = Math.max(18, ...list.map((/** @type {any} */ m) => String(m.id ?? "").length + 2))
+      const namePad = Math.max(18, ...list.map((/** @type {any} */ m) => String(m.name ?? "").length + 2))
+      const rows = list.map((/** @type {any} */ m) => {
+        const levels = Array.isArray(m.efforts) && m.efforts.length
+          ? `efforts: ${m.efforts.join(", ")}${m.defaultEffort ? ` (default: ${m.defaultEffort})` : ""}`
+          : "no thinking levels (omit --effort)"
+        const def = antigravity?.defaultModel && m.id === antigravity.defaultModel ? "  [default]" : ""
+        return `  ${String(m.id).padEnd(idPad)}${String(m.name ?? m.id).padEnd(namePad)}${levels}${def}`
+      })
+      sections.push(`${head}\n${rows.join("\n")}`)
+    }
+  }
+  return `${sections.join("\n\n")}\n\nSpawn with \`frizzctl spawn-thread --backend <backend> --model <id> [--effort <level>] --prompt-file <file>\` (or \`frizzctl spawn-child\`). \`--json\` prints raw JSON.`
 }
 
 /** What the spawner reads back. `project` is the new thread's project slug when it is not ours.
@@ -1798,6 +1925,34 @@ async function serverLockPortWaiting() {
 
 async function callRpc(procedure, body) {
   return postRpc(await serverLockPortWaiting(), procedure, body)
+}
+
+/** GET a read-only Frizz query RPC procedure (`claudeModels`, `codexModels`, `antigravityModels`).
+ * @param {string} procedure @param {unknown} [input] @returns {Promise<any>} */
+async function queryRpc(procedure, input) {
+  return getRpc(await serverLockPortWaiting(), procedure, input)
+}
+
+/** One GET to Frizz's query RPC surface, sharing `postRpc`'s timeout and error translation.
+ * @param {number} port @param {string} procedure @param {unknown} [input] */
+async function getRpc(port, procedure, input) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), DISPATCH_TIMEOUT_MS)
+  const query = input !== undefined ? `?input=${encodeURIComponent(JSON.stringify(input))}` : ""
+  let res
+  try {
+    res = await fetch(`http://127.0.0.1:${port}${rpcPath(procedure)}${query}`, {
+      method: "GET",
+      headers: { "sec-fetch-site": "same-origin" },
+      signal: controller.signal,
+    })
+  } catch (err) {
+    throw controller.signal.aborted ? unanswered(procedure) : unreachable(procedure, err)
+  } finally {
+    clearTimeout(timer)
+  }
+  if (!res.ok) throw await notOk(procedure, res)
+  return await res.json().catch(() => null)
 }
 
 /** One POST to Frizz's RPC surface, and the one place a request that went wrong is put into words.
@@ -2906,6 +3061,7 @@ const CLI = {
     examples: [
       'frizzctl spawn-thread --model opus --effort high --title "Port the relay to Bun" --prompt-file prompt.md',
       'frizzctl spawn-thread --project nub --model opus --effort high --title "Bump the SDK pin" --prompt-file prompt.md',
+      'frizzctl spawn-thread --backend antigravity --model gemini-4-neon --effort high --title "Audit with Gemini" --prompt-file prompt.md',
     ],
   },
   spawn_child: {
@@ -2914,6 +3070,17 @@ const CLI = {
     examples: [
       'frizzctl spawn-child --model opus --effort high --title "Fix the resolver and shepherd its PR" --prompt-file prompt.md',
       'frizzctl spawn-child --backend codex --model gpt-5.6-sol --effort high --prompt-file prompt.md',
+      'frizzctl spawn-child --backend antigravity --model gemini-4-neon --effort high --prompt-file prompt.md',
+    ],
+  },
+  models: {
+    group: "Other threads",
+    summary: "List available models and effort levels for spawning threads (Claude, Codex, Antigravity)",
+    positional: ["backend"],
+    examples: [
+      "frizzctl models",
+      "frizzctl models antigravity",
+      "frizzctl models antigravity --json",
     ],
   },
 }

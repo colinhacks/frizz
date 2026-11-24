@@ -261,3 +261,63 @@ test("refusals name the fix and start nothing: an unknown caller, an unknown pro
   assert.equal(frizz.dispatched.length + nub.dispatched.length + zod.dispatched.length, 0, "a refused spawn starts no thread")
   assert.deepEqual(frizz.audited.map((r) => [r.action, r.outcome]), Array(4).fill(["spawnThread", "refused"]))
 })
+
+test("a Claude thread can spawn an Antigravity Gemini thread with normalized model, bypass permissions, and catalogue validation", async (t) => {
+  const home = homeSandbox(t)
+  const frizz = tenant(home, FRIZZ, "frizz")
+  const nub = tenant(home, NUB, "nub")
+  t.after(serve(frizz, nub))
+  frizz.thread("opus-caller", "Opus caller", { backend: "claude", permission_mode: "default" })
+
+  let catalogue = {
+    available: true,
+    version: "1.5.16",
+    tier: "Google AI Pro",
+    defaultModel: "gemini-4-neon",
+    models: [
+      { id: "gemini-4-neon", name: "Gemini 4 Neon", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" },
+      { id: "gemini-pro-orchestrator-neon", name: "Orchestrator (Neon)", efforts: [] as string[] },
+    ],
+  }
+  ;(frizz.ctx as { antigravityBridge?: unknown }).antigravityBridge = { models: async () => catalogue }
+
+  // Unprefixed model id normalizes to `antigravity:<id>`, and starts in Bypass (Antigravity's dispatch floor)
+  // even when the Claude spawner is narrowed to `default`.
+  await frizz.router.spawnThread.handler({
+    input: { prompt: "Audit with Gemini", backend: "antigravity", model: "gemini-4-neon", effort: "xhigh", from: "opus-caller" },
+  })
+  assert.equal(frizz.dispatched.length, 1)
+  assert.equal(frizz.dispatched[0]!.backend, "antigravity")
+  assert.equal(frizz.dispatched[0]!.input.model, "antigravity:gemini-4-neon")
+  assert.equal(frizz.dispatched[0]!.input.effort, "xhigh")
+  assert.equal(frizz.dispatched[0]!.permissionMode, "bypassPermissions")
+
+  // Cross-project spawn with `antigravity:` prefix and omitted `backend` + omitted `effort` (orchestrator).
+  const cross = await frizz.router.spawnThread.handler({
+    input: { prompt: "Run orchestrator on nub", model: "antigravity:gemini-pro-orchestrator-neon", from: "opus-caller", project: "nub" },
+  })
+  assert.equal(cross.project, "nub")
+  assert.equal(nub.dispatched.length, 1)
+  assert.equal(nub.dispatched[0]!.backend, "antigravity")
+  assert.equal(nub.dispatched[0]!.input.model, "antigravity:gemini-pro-orchestrator-neon")
+  assert.equal(nub.dispatched[0]!.permissionMode, "bypassPermissions")
+
+  // Contradictory backend/model, unknown model, unsupported effort (`max`), and missing `agy` are all refused cleanly.
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "claude", model: "antigravity:gemini-4-neon", effort: "high", from: "opus-caller" } }),
+    /is an Antigravity model slug and cannot be used with backend `claude`/,
+  )
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "antigravity", model: "gemini-2.5-pro", effort: "high", from: "opus-caller" } }),
+    /Antigravity does not offer model `gemini-2\.5-pro`.*`gemini-4-neon` \(low\/medium\/high\/xhigh\)/,
+  )
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "antigravity", model: "gemini-4-neon", effort: "max", from: "opus-caller" } }),
+    /Antigravity model `gemini-4-neon` does not accept effort `max`\. Supported efforts: low, medium, high, xhigh \(default: high\)/,
+  )
+  catalogue = { available: false, version: "", tier: "", defaultModel: "", models: [], error: "Antigravity is not installed: `agy` is not on PATH." } as typeof catalogue
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "antigravity", model: "gemini-4-neon", from: "opus-caller" } }),
+    /Antigravity is not installed/,
+  )
+})

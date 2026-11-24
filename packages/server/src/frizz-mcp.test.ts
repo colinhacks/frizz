@@ -70,12 +70,13 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     rpc.send({ jsonrpc: "2.0", method: "notifications/initialized" })
     rpc.send({ jsonrpc: "2.0", id: 2, method: "tools/list" })
     const list = await rpc.next(2)
-    assert.deepEqual(list.result.tools.map((t: { name: string }) => t.name), ["spawn_thread", "goal", "timer", "watch_pr", "watch", "unwatch", "ask", "unask", "done", "title", "activity", "link", "unlink", "watch_issue", "secret", "steer", "watch_command", "monitor", "threads", "spawn_child", "mcp", "worktree"])
+    assert.deepEqual(list.result.tools.map((t: { name: string }) => t.name), ["spawn_thread", "goal", "timer", "watch_pr", "watch", "unwatch", "ask", "unask", "done", "title", "activity", "link", "unlink", "watch_issue", "secret", "steer", "watch_command", "monitor", "threads", "spawn_child", "mcp", "worktree", "models"])
     assert.deepEqual(list.result.tools.find((t: { name: string }) => t.name === "link").inputSchema.required, ["label", "target"])
     assert.deepEqual(list.result.tools.find((t: { name: string }) => t.name === "unlink").inputSchema.required, ["id"])
-    for (const required of ["prompt", "model", "effort"]) {
+    for (const required of ["prompt", "model"]) {
       assert.ok(list.result.tools[0].inputSchema.required.includes(required))
     }
+    assert.deepEqual(list.result.tools[0].inputSchema.properties.backend.enum, ["claude", "codex", "antigravity"])
     // `goal` requires only `action` — `prompt` and a valid `every_seconds` are required for
     // `start` alone, enforced in the handler so a lenient client cannot skip them either (asserted
     // below). It exposes NO THREAD parameter: the slug comes from the server's env, never from the
@@ -142,7 +143,7 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     // `wch_…` id of any watch holding one. It takes NOTHING: there is no thread parameter and no filter,
     // because the only correct answer is "everything you have running", and a worker that has lost its
     // ids cannot be trusted to name them.
-    assert.equal(list.result.tools.length, 22)
+    assert.equal(list.result.tools.length, 23)
     // `monitor` (2026-10-11 as `watch_command`) — `action` alone is required, and NO thread parameter: the
     // command runs for the calling thread only, under that thread's own permission gate.
     assert.deepEqual(list.result.tools[17].inputSchema.required, ["action"])
@@ -208,12 +209,23 @@ test("`spawn_thread` POSTs the real dispatch RPC and returns the thread's drawer
     assert.match(call.result.content[0].text, /\[Child\]\(\/thread\/spawned-child\)/)
     assert.deepEqual(seen, [{ url: "/_frizz/rpc/dispatch", body: { prompt: "do the thing", model: "opus", effort: "high", title: "Child" } }])
 
-    // model/effort stay REQUIRED server-side, not only in the schema — a lenient client must not be
-    // able to skip the deliberate choice.
+    // model/effort stay REQUIRED server-side for Claude/Codex, not only in the schema — a lenient client
+    // must not be able to skip the deliberate choice. Antigravity allows omitting `effort` (orchestrators
+    // take no thinking level) and normalizes the model id to `antigravity:<id>`.
     rpc.send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "spawn_thread", arguments: { prompt: "x" } } })
     const bad = await rpc.next(3)
     assert.equal(bad.result.isError, true)
     assert.match(bad.result.content[0].text, /`spawn_thread` failed: `model` is required/)
+
+    rpc.send({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "spawn_thread", arguments: { prompt: "x", model: "opus" } } })
+    const noEffort = await rpc.next(4)
+    assert.equal(noEffort.result.isError, true)
+    assert.match(noEffort.result.content[0].text, /`effort` is required/)
+
+    rpc.send({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "spawn_thread", arguments: { prompt: "audit it", backend: "antigravity", model: "gemini-4-neon" } } })
+    const agy = await rpc.next(5)
+    assert.equal(agy.result.isError, undefined)
+    assert.deepEqual(seen.at(-1), { url: "/_frizz/rpc/dispatch", body: { prompt: "audit it", backend: "antigravity", model: "antigravity:gemini-4-neon" } })
   } finally {
     rpc.kill()
     http.close()

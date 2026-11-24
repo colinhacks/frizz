@@ -289,5 +289,9 @@ test("an Antigravity contract names its own tools, the Auto sandbox, and the tur
   // It is not told what only another harness does: a Claude interrupt, a monitor, an MCP tool list.
   assert.doesNotMatch(prompt, /cuts a tool call short/)
   assert.doesNotMatch(prompt, /frizzctl monitor|monitors:/)
-  for (const other of ["claude", "codex", "acp", "opencode"] as const) assert.doesNotMatch(buildWorkerPrompt(other), /Antigravity|run_command/, other)
+  for (const other of ["claude", "codex", "acp", "opencode"] as const) {
+    assert.doesNotMatch(buildWorkerPrompt(other), /You are an Antigravity session|run_command/, other)
+    assert.match(buildWorkerPrompt(other), /--backend claude\|codex\|antigravity/, other)
+    assert.match(buildWorkerPrompt(other), /`frizzctl models`/, other)
+  }
 })

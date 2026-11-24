@@ -36,7 +36,7 @@ import type { OpencodeBridge } from "./backend/opencode-bridge.ts"
 import { opencodeModeOf } from "./backend/opencode-types.ts"
 import type { AntigravityBridge } from "./backend/antigravity-bridge.ts"
 import { acpAgentIdFromModel } from "./backend/acp-agents.ts"
-import { acpModelIdFromModel, antigravityModelId, opencodeModelRef } from "@frizz/shared"
+import { ANTIGRAVITY_MODEL_PREFIX, acpModelIdFromModel, antigravityModelId, antigravityModelSlug, isAntigravityModel, opencodeModelRef } from "@frizz/shared"
 import { claudeBrokerBridgeEnabled, type ClaudeAgentBrokerBridge } from "./backend/claude-agent-broker-bridge.ts"
 import { claudeUltracodeFlags, resolveClaudeEffort } from "./backend/claude-effort.ts"
 import { ProviderAuthRequiredError } from "./backend/auth-status.ts"
@@ -1136,7 +1136,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       // without traversing the RPC parser. Reject malformed explicit slugs before scratch/spawn/SQLite.
       input = DispatchInput.parse(input)
       const settings = deps.getSettings()
-      const kind: BackendKind = opts?.backend ?? "claude"
+      const kind: BackendKind = opts?.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
       // Auth preflight (Slice A): block ONLY on a positive "signed-out" — "unknown" (flaky read,
       // missing binary, timeout) fails OPEN so a network blip never traps a logged-in user. Runs
       // before the scratchpad/spawn/registry so a rejected dispatch leaves zero trace; the browser
@@ -1384,9 +1384,16 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
             throw new Error("The Antigravity bridge is unavailable; cannot start this thread.")
           }
+          // Normalize both `gemini-4-neon` and `antigravity:gemini-4-neon` to the canonical prefixed
+          // slug so resumes, the UI profile picker, and the quota gauge always see the chosen model.
+          // Never inherit Claude's `settings.model` when no Antigravity model was named.
+          const rawModel = input.model?.trim()
+          const agyModel = rawModel
+            ? (isAntigravityModel(rawModel) ? rawModel : antigravityModelSlug(rawModel))
+            : ANTIGRAVITY_MODEL_PREFIX
           const level = input.effort ?? null
           try {
-            const spawned = await bridge.spawnDispatch({ threadSlug: slug, sessionId, cwd: deps.project.dir, modelId: antigravityModelId(model) ?? null, effort: level, permissionMode, prompt, userText: input.prompt })
+            const spawned = await bridge.spawnDispatch({ threadSlug: slug, sessionId, cwd: deps.project.dir, modelId: antigravityModelId(agyModel) ?? null, effort: level, permissionMode, prompt, userText: input.prompt })
             deps.storage.upsertSession({
               slug,
               session_id: sessionId,
@@ -1404,7 +1411,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
               meta: null,
               seen_at: null,
               transcript_id: null,
-              model: model ?? null,
+              model: agyModel,
               // What the session actually runs at: the level asked for, or the model's own default.
               effort: spawned.effort ?? null,
               permission_mode: permissionMode,

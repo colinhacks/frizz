@@ -53,6 +53,9 @@ function plausible(procedure: string, body: any): unknown {
     case "setOwnThreadTimer": return { id: "tmr_1", fireAt: "2026-10-11T20:00:00.000Z", prompt: body.prompt, timers: [] }
     case "cancelOwnThreadTimer": return { cancelled: true, timers: [] }
     case "setOwnThreadRecurringPrompt": return { recurringPrompt: body.action === "stop" ? null : { prompt: body.prompt, stopHook: !!body.stopHook, postCompaction: !!body.postCompaction } }
+    case "claudeModels": return [{ alias: "opus", label: "Opus 5.5" }, { alias: "sonnet", label: "Sonnet 5.5" }, { alias: "haiku", label: "Haiku 4.5" }]
+    case "codexModels": return [{ slug: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] }]
+    case "antigravityModels": return { available: true, version: "1.5.16", tier: "Google AI Pro", defaultModel: "gemini-4-neon", models: [{ id: "gemini-4-neon", name: "Gemini 4 Neon", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" }, { id: "gemini-pro-orchestrator-neon", name: "Orchestrator (Neon)", efforts: [] }] }
     default: return {}
   }
 }
@@ -67,7 +70,7 @@ async function fakeFrizz(answer: (procedure: string, body: any) => { status?: nu
       const body = raw ? JSON.parse(raw) : undefined
       const url = req.url ?? ""
       seen.push({ url, body })
-      const procedure = url.split("/rpc/")[1] ?? ""
+      const procedure = (url.split("/rpc/")[1] ?? "").split("?")[0] ?? ""
       const custom = answer(procedure, body)
       if (custom?.silent) return
       res.writeHead(custom?.status ?? 200, { "content-type": "application/json" })
@@ -990,7 +993,8 @@ test("every example in every command's help runs as written", async () => {
           child.on("close", (code) => resolve({ code, stdout, stderr }))
         })
         assert.equal(ran.code, 0, `${name}: \`${example.split("\n")[0]}\` exited ${ran.code}: ${ran.stderr}`)
-        assert.equal(fake.seen.length, 1, `${name}: \`${example.split("\n")[0]}\` made ${fake.seen.length} calls`)
+        const expectedCalls = name === "models" && example.trim() === "frizzctl models" ? 3 : 1
+        assert.equal(fake.seen.length, expectedCalls, `${name}: \`${example.split("\n")[0]}\` made ${fake.seen.length} calls`)
       }
     }
   } finally {
@@ -1100,4 +1104,81 @@ test("worktree register sends the checkout's path resolved against the worker's 
     assert.equal(dropped.code, 0, dropped.stderr)
     assert.deepEqual(fake.seen.find((s) => s.url.endsWith("/rpc/dropOwnWorktree"))?.body, { slug: "the-caller", target: "wtr_1" })
   } finally { fake.close() }
+})
+
+test("`spawn-thread` and `spawn-child` support `--backend antigravity`, normalize `antigravity:` slugs, and reject unknown or mismatched backends", async () => {
+  const fake = await fakeFrizz()
+  try {
+    // Bare Antigravity model id is normalized to `antigravity:<id>` on the wire.
+    const bare = await run(["spawn-thread", "--backend", "antigravity", "--model", "gemini-4-neon", "--effort", "high", "--title", "Gemini pass", "--prompt", "check it"], { env: worker(fake) })
+    assert.equal(bare.code, 0, bare.stderr)
+    assert.deepEqual(fake.seen.at(-1), {
+      url: "/_frizz/proj-1/rpc/spawnThread",
+      body: { prompt: "check it", model: "antigravity:gemini-4-neon", effort: "high", title: "Gemini pass", backend: "antigravity", from: "the-caller" },
+    })
+
+    // Already-prefixed `antigravity:<id>` infers `--backend antigravity`, and `--effort` is optional (e.g. orchestrators).
+    fake.seen.length = 0
+    const inferred = await run(["spawn-thread", "--model", "antigravity:gemini-pro-orchestrator-neon", "--prompt", "orchestrate it"], { env: worker(fake) })
+    assert.equal(inferred.code, 0, inferred.stderr)
+    assert.deepEqual(fake.seen.at(-1), {
+      url: "/_frizz/proj-1/rpc/spawnThread",
+      body: { prompt: "orchestrate it", model: "antigravity:gemini-pro-orchestrator-neon", backend: "antigravity", from: "the-caller" },
+    })
+
+    // `spawn-child` accepts Antigravity the same way.
+    fake.seen.length = 0
+    const child = await run(["spawn-child", "--backend", "antigravity", "--model", "gemini-4-neon", "--effort", "xhigh", "--prompt", "review it"], { env: worker(fake) })
+    assert.equal(child.code, 0, child.stderr)
+    assert.deepEqual(fake.seen.at(-1), {
+      url: "/_frizz/proj-1/rpc/spawnChild",
+      body: { prompt: "review it", model: "antigravity:gemini-4-neon", effort: "xhigh", backend: "antigravity", from: "the-caller" },
+    })
+
+    // Unknown backend fails loudly instead of silently dropping to Claude, and hints `antigravity` for `gemini`.
+    fake.seen.length = 0
+    const gemini = await run(["spawn-thread", "--backend", "gemini", "--model", "gemini-4-neon", "--effort", "high", "--prompt", "x"], { env: worker(fake) })
+    assert.equal(gemini.code, 1)
+    assert.match(gemini.stderr, /use `--backend antigravity`/)
+
+    const mismatch = await run(["spawn-thread", "--backend", "claude", "--model", "antigravity:gemini-4-neon", "--effort", "high", "--prompt", "x"], { env: worker(fake) })
+    assert.equal(mismatch.code, 1)
+    assert.match(mismatch.stderr, /disagrees with `--backend claude`/)
+    assert.deepEqual(fake.seen, [], "neither invalid call reached the server")
+  } finally {
+    fake.close()
+  }
+})
+
+test("`frizzctl models` lists models across backends, supports filtering, `--refresh`, `--json`, and unavailable Antigravity", async () => {
+  const fake = await fakeFrizz()
+  try {
+    const all = await run(["models"], { env: worker(fake) })
+    assert.equal(all.code, 0, all.stderr)
+    assert.match(all.stdout, /Claude Code \(`--backend claude`, default\)/)
+    assert.match(all.stdout, /opus\s+Opus 5\.5/)
+    assert.match(all.stdout, /Codex \(`--backend codex`\)/)
+    assert.match(all.stdout, /gpt-5\.6-sol/)
+    assert.match(all.stdout, /Antigravity \(`--backend antigravity` — Google AI Pro, agy 1\.5\.16\)/)
+    assert.match(all.stdout, /gemini-4-neon\s+Gemini 4 Neon\s+efforts: low, medium, high, xhigh \(default: high\)\s+\[default\]/)
+    assert.match(all.stdout, /gemini-pro-orchestrator-neon\s+Orchestrator \(Neon\)\s+no thinking levels \(omit --effort\)/)
+
+    fake.seen.length = 0
+    const agyJson = await run(["models", "antigravity", "--refresh", "--json"], { env: worker(fake) })
+    assert.equal(agyJson.code, 0, agyJson.stderr)
+    assert.equal(fake.seen.length, 1)
+    assert.equal(fake.seen[0]?.url, `/_frizz/proj-1/rpc/antigravityModels?input=${encodeURIComponent(JSON.stringify({ refresh: true }))}`)
+    assert.equal(JSON.parse(agyJson.stdout).defaultModel, "gemini-4-neon")
+  } finally {
+    fake.close()
+  }
+
+  const noAgy = await fakeFrizz((proc) => proc === "antigravityModels" ? { result: { available: false, models: [], error: "Antigravity is not installed: `agy` is not on PATH." } } : undefined)
+  try {
+    const out = await run(["models", "antigravity"], { env: worker(noAgy) })
+    assert.equal(out.code, 0, out.stderr)
+    assert.match(out.stdout, /unavailable: Antigravity is not installed/)
+  } finally {
+    noAgy.close()
+  }
 })

@@ -2013,7 +2013,9 @@ lands on another card and never reaches you. Use \`spawn-thread\` ONLY for a dis
 effort that deserves its own card and whose output you do not need.
 
 Give it a self-contained prompt (\`--prompt-file\`) and choose \`--model\` + \`--effort\` by the new task's complexity (both
-required). It starts on YOUR project's board; \`--project <slug>\` (the slug that project's board URL
+required for Claude and Codex; \`--effort\` is optional for Antigravity). Pass \`--backend claude|codex|antigravity\`
+to choose the harness (default \`claude\`; run \`frizzctl models\` to list available models and efforts, including
+Antigravity's Gemini models). It starts on YOUR project's board; \`--project <slug>\` (the slug that project's board URL
 shows) starts it on another project's board instead, in that repo's checkout. It prints a
 \`[title](/thread/<slug>)\` link, or \`[title](/project/<slug>/thread/<slug>)\` for another project — put that
 in your handoff so the human can open it.
@@ -2036,7 +2038,7 @@ finished but the thread found more**.`
 // (shared childThreadFooter), not this section: this one is for the thread that might spawn one.
 const CHILD_THREADS = `## Child threads (an experiment the operator switched on)
 
-\`frizzctl spawn-child\` starts a CHILD THREAD: a full Frizz thread on your board, on Claude Code or Codex, that
+\`frizzctl spawn-child\` starts a CHILD THREAD: a full Frizz thread on your board, on Claude Code, Codex or Antigravity, that
 works for YOU. It runs on its harness's own runtime with the project's skills and instructions, rests like any
 thread, and owns its own watchers. Every rest of its that would have gone to the human — its \`done\`, a
 \`needs_input\` handoff, a stop or a crash — comes to YOU instead, as a \`<thread-message>\` that wakes you; answer

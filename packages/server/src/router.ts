@@ -201,8 +201,11 @@ import {
   AntigravityModels,
   AntigravityModelsInput,
   AntigravityQuotaInput,
+  ANTIGRAVITY_MODEL_PREFIX,
   antigravityModelId,
+  antigravityModelSlug,
   isAntigravityModel,
+  type Backend,
   backendFollowUps,
   AcpAgentModels,
   AcpAgentModelsInput,
@@ -1112,23 +1115,67 @@ export function createRouter(ctx: AppContext) {
     return { backend: (row.backend ?? "claude") as ThreadPermission["backend"], ...(mode.success ? { permissionMode: mode.data } : {}) }
   }
 
+  /** Normalize backend + model for a worker-initiated spawn (`spawnThread` / `spawnChild`). Infers
+   *  `antigravity` from an `antigravity:` model slug when `backend` is omitted, refuses a contradictory
+   *  backend/model pairing, and normalizes unprefixed Antigravity model ids to `antigravity:<id>`. */
+  function resolveSpawnTarget(input: { backend?: Backend; model?: string }): { backend: Backend; dispatchBackend?: Backend; model?: string } {
+    if (input.backend && input.backend !== "antigravity" && isAntigravityModel(input.model)) {
+      throw new RpcRefusal(`model \`${input.model}\` is an Antigravity model slug and cannot be used with backend \`${input.backend}\`. Pass \`--backend antigravity\` (or omit \`--backend\`)`)
+    }
+    const inferred = !input.backend && isAntigravityModel(input.model)
+    const backend: Backend = input.backend ?? (inferred ? "antigravity" : "claude")
+    const dispatchBackend = input.backend ?? (inferred ? "antigravity" : undefined)
+    if (backend === "antigravity") {
+      const raw = input.model?.trim()
+      const model = raw ? (isAntigravityModel(raw) ? raw : antigravityModelSlug(raw)) : ANTIGRAVITY_MODEL_PREFIX
+      return { backend, dispatchBackend: "antigravity", model }
+    }
+    return { backend, dispatchBackend, model: input.model }
+  }
+
+  /** Validate an Antigravity model and thinking level against the signed-in account's live catalogue
+   *  before starting a thread, so a mistyped model id or unsupported effort fails with exit 2 and names
+   *  what the account actually offers instead of silently launching the default model. */
+  async function validateAntigravitySpawn(model: string, effort: string | undefined): Promise<void> {
+    if (!ctx.antigravityBridge) return
+    const catalogue = await ctx.antigravityBridge.models(ctx.project.dir)
+    if (!catalogue.available) {
+      throw new RpcRefusal(catalogue.error ?? "Antigravity is not installed on this machine (`agy` is not on PATH)")
+    }
+    if (catalogue.error && catalogue.models.length === 0) {
+      throw new RpcRefusal(catalogue.error)
+    }
+    const modelId = antigravityModelId(model)
+    if (!modelId || catalogue.models.length === 0) return
+    const entry = catalogue.models.find((m) => m.id === modelId)
+    if (!entry) {
+      const available = catalogue.models.map((m) => (m.efforts.length ? `\`${m.id}\` (${m.efforts.join("/")})` : `\`${m.id}\``)).join(", ")
+      throw new RpcRefusal(`Antigravity does not offer model \`${modelId}\` on this account. Available models: ${available}. Run \`frizzctl models antigravity\` for details`)
+    }
+    if (effort && entry.efforts.length > 0 && !entry.efforts.includes(effort)) {
+      const def = entry.defaultEffort ? ` (default: ${entry.defaultEffort})` : ""
+      throw new RpcRefusal(`Antigravity model \`${modelId}\` does not accept effort \`${effort}\`. Supported efforts: ${entry.efforts.join(", ")}${def}`)
+    }
+  }
+
   // THE RECEIVING HALF OF `frizzctl spawn-thread`: this project's own dispatch, for a worker in this
   // project or another one. Audited HERE as a `dispatch` naming the spawner, because this is the board
   // the thread lands on, and so the log a reader of this project checks first. The new thread starts no
   // looser than the thread that asked for it (dispatch.ts spawnedThreadPermission).
   function spawnForThread({ from, input, spawner }: Parameters<ThreadSpawner>[0]): Promise<{ slug: string; sessionId: string }> {
-    const permissionMode = spawnedThreadPermission(input.backend ?? "claude", spawner, ctx.getSettings())
+    const resolvedBackend = input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
+    const permissionMode = spawnedThreadPermission(resolvedBackend, spawner, ctx.getSettings())
     return audit(
       "dispatch",
       {
         project: thisProject,
         detail: {
-          prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null,
+          prompt: textDigest(input.prompt), backend: resolvedBackend, model: input.model ?? null, effort: input.effort ?? null,
           spawnedBy: { thread: from.slug, ...(from.project ? { project: from.project } : {}) },
           permissionMode,
         },
       },
-      () => ctx.dispatcher.dispatch(input, { backend: input.backend, permissionMode }),
+      () => ctx.dispatcher.dispatch(input, { backend: input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : undefined), permissionMode }),
       (result) => ({ thread: result.slug, detail: { sessionId: result.sessionId } }),
     )
   }
@@ -3168,15 +3215,18 @@ export function createRouter(ctx: AppContext) {
       // Omitted ⇒ the dispatcher defaults to "claude", so an old client (no backend field) is
       // byte-identical. The resume path needs NO analog — resume reads the backend from the row's
       // `backend` column (backendFor(row.backend)), which dispatch already stamped for a codex thread.
-      handler: ({ input }) => audit(
-        "dispatch",
-        {
-          project: thisProject,
-          detail: { prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null },
-        },
-        () => ctx.dispatcher.dispatch(input, { backend: input.backend }),
-        (result) => ({ thread: result.slug, detail: { sessionId: result.sessionId, permissionMode: ctx.storage.getSession(result.slug)?.permission_mode ?? null } }),
-      ),
+      handler: ({ input }) => {
+        const backend = input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
+        return audit(
+          "dispatch",
+          {
+            project: thisProject,
+            detail: { prompt: textDigest(input.prompt), backend, model: input.model ?? null, effort: input.effort ?? null },
+          },
+          () => ctx.dispatcher.dispatch(input, { backend: input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : undefined) }),
+          (result) => ({ thread: result.slug, detail: { sessionId: result.sessionId, permissionMode: ctx.storage.getSession(result.slug)?.permission_mode ?? null } }),
+        )
+      },
     }),
 
     // Cold-adopt a pre-existing thread (no session row): spawn a fresh worker on its file.
@@ -3278,31 +3328,41 @@ export function createRouter(ctx: AppContext) {
     spawnThread: mutation({
       input: SpawnThreadInput,
       output: SpawnThreadResult,
-      handler: ({ input }) => audit("spawnThread", {
-        project: thisProject,
-        thread: input.from,
-        detail: { ...(input.project ? { toProject: input.project } : {}), prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null },
-      }, async () => {
-        const sender = ctx.storage.getSession(input.from)
-        if (!sender) throw new RpcRefusal(`the calling thread ${input.from} is not registered in this project`)
-        // A registered project nobody has opened yet is opened now, as a request addressed to it would
-        // be: a steer needs a thread that already exists, but a spawn exists to start work there.
-        const named = input.project ? findProjectBySegment(input.project) : undefined
-        if (named && named.id !== ctx.project.id && !otherOpenProjects().some((open) => open.project.id === named.id)) {
-          await ctx.openProject?.(named.id)
-        }
-        const open = input.project ? openProjectNamed(input.project, "no thread can be started there from here") : undefined
-        if (open && !open.threadSpawner) {
-          throw new RpcRefusal(`project \`${projectSlugOf(open.project.id)}\` is open in Frizz but not taking new threads yet; retry in a moment`)
-        }
-        const from: ThreadMessageSender = { slug: sender.slug, title: threadTitleOf(sender), ...(open ? { project: projectSlugOf(ctx.project.id) } : {}) }
-        const { from: _from, project: _project, ...rest } = input
-        const dispatch = { ...rest, prompt: input.prompt + spawnedThreadFooter(from) }
-        const spawner = threadPermissionOf(sender)
-        if (!open) return spawnForThread({ from, input: dispatch, spawner })
-        const made = await open.threadSpawner!({ from, input: dispatch, spawner })
-        return { ...made, project: projectSlugOf(open.project.id) }
-      }, (result: SpawnThreadResult) => ({ detail: { spawned: result.slug, ...(result.project ? { spawnedIn: result.project } : {}) } })),
+      handler: ({ input }) => {
+        const auditBackend = input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
+        return audit("spawnThread", {
+          project: thisProject,
+          thread: input.from,
+          detail: { ...(input.project ? { toProject: input.project } : {}), prompt: textDigest(input.prompt), backend: auditBackend, model: input.model ?? null, effort: input.effort ?? null },
+        }, async () => {
+          const sender = ctx.storage.getSession(input.from)
+          if (!sender) throw new RpcRefusal(`the calling thread ${input.from} is not registered in this project`)
+          const target = resolveSpawnTarget(input)
+          if (target.backend === "antigravity") await validateAntigravitySpawn(target.model!, input.effort)
+          // A registered project nobody has opened yet is opened now, as a request addressed to it would
+          // be: a steer needs a thread that already exists, but a spawn exists to start work there.
+          const named = input.project ? findProjectBySegment(input.project) : undefined
+          if (named && named.id !== ctx.project.id && !otherOpenProjects().some((open) => open.project.id === named.id)) {
+            await ctx.openProject?.(named.id)
+          }
+          const open = input.project ? openProjectNamed(input.project, "no thread can be started there from here") : undefined
+          if (open && !open.threadSpawner) {
+            throw new RpcRefusal(`project \`${projectSlugOf(open.project.id)}\` is open in Frizz but not taking new threads yet; retry in a moment`)
+          }
+          const from: ThreadMessageSender = { slug: sender.slug, title: threadTitleOf(sender), ...(open ? { project: projectSlugOf(ctx.project.id) } : {}) }
+          const { from: _from, project: _project, ...rest } = input
+          const dispatch = {
+            ...rest,
+            ...(target.dispatchBackend !== undefined ? { backend: target.dispatchBackend } : {}),
+            ...(target.model !== undefined ? { model: target.model } : {}),
+            prompt: input.prompt + spawnedThreadFooter(from),
+          }
+          const spawner = threadPermissionOf(sender)
+          if (!open) return spawnForThread({ from, input: dispatch, spawner })
+          const made = await open.threadSpawner!({ from, input: dispatch, spawner })
+          return { ...made, project: projectSlugOf(open.project.id) }
+        }, (result: SpawnThreadResult) => ({ detail: { spawned: result.slug, ...(result.project ? { spawnedIn: result.project } : {}) } }))
+      },
     }),
 
     // CHILD THREADS — `frizzctl spawn-child` (Settings.childThreads, 2026-11-04). A new thread on THIS board,
@@ -3319,31 +3379,41 @@ export function createRouter(ctx: AppContext) {
     spawnChild: mutation({
       input: SpawnChildInput,
       output: SpawnChildResult,
-      handler: ({ input }) => audit("spawnChild", {
-        project: thisProject,
-        thread: input.from,
-        detail: { prompt: textDigest(input.prompt), backend: input.backend ?? "claude", model: input.model ?? null, effort: input.effort ?? null },
-      }, async (): Promise<SpawnChildResult> => {
-        if (!ctx.getSettings().childThreads) {
-          return { refused: "child threads are an experiment that is switched off on this machine (Settings → Child threads). Use an in-session sub-agent, or `frizzctl spawn-thread` for separate work" }
-        }
-        const sender = ctx.storage.getSession(input.from)
-        if (!sender) throw new RpcRefusal(`the calling thread ${input.from} is not registered in this project`)
-        if (sender.parent_slug && ctx.storage.getSession(sender.parent_slug)) {
-          return { refused: "this thread is itself a child thread, and children cannot start children of their own. Use an in-session sub-agent, or hand the work back to your parent in your handoff" }
-        }
-        const kind = input.backend ?? "claude"
-        const inherited = kind === (sender.backend ?? "claude")
-          ? PermissionMode.safeParse(sender.permission_pending ?? sender.permission_mode)
-          : undefined
-        const from: ThreadMessageSender = { slug: sender.slug, title: threadTitleOf(sender) }
-        const { from: _from, ...rest } = input
-        const made = await ctx.dispatcher.dispatch(
-          { ...rest, prompt: input.prompt + childThreadFooter(from) },
-          { backend: kind, parentSlug: sender.slug, ...(inherited?.success ? { permissionMode: inherited.data } : {}) },
-        )
-        return { slug: made.slug, sessionId: made.sessionId }
-      }, (result: SpawnChildResult) => ({ detail: "refused" in result ? { refused: result.refused } : { spawned: result.slug } })),
+      handler: ({ input }) => {
+        const auditBackend = input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
+        return audit("spawnChild", {
+          project: thisProject,
+          thread: input.from,
+          detail: { prompt: textDigest(input.prompt), backend: auditBackend, model: input.model ?? null, effort: input.effort ?? null },
+        }, async (): Promise<SpawnChildResult> => {
+          if (!ctx.getSettings().childThreads) {
+            return { refused: "child threads are an experiment that is switched off on this machine (Settings → Child threads). Use an in-session sub-agent, or `frizzctl spawn-thread` for separate work" }
+          }
+          const sender = ctx.storage.getSession(input.from)
+          if (!sender) throw new RpcRefusal(`the calling thread ${input.from} is not registered in this project`)
+          if (sender.parent_slug && ctx.storage.getSession(sender.parent_slug)) {
+            return { refused: "this thread is itself a child thread, and children cannot start children of their own. Use an in-session sub-agent, or hand the work back to your parent in your handoff" }
+          }
+          const target = resolveSpawnTarget(input)
+          if (target.backend === "antigravity") await validateAntigravitySpawn(target.model!, input.effort)
+          const kind = target.backend
+          const inherited = kind === (sender.backend ?? "claude")
+            ? PermissionMode.safeParse(sender.permission_pending ?? sender.permission_mode)
+            : undefined
+          const from: ThreadMessageSender = { slug: sender.slug, title: threadTitleOf(sender) }
+          const { from: _from, ...rest } = input
+          const made = await ctx.dispatcher.dispatch(
+            {
+              ...rest,
+              ...(target.dispatchBackend !== undefined ? { backend: target.dispatchBackend } : {}),
+              ...(target.model !== undefined ? { model: target.model } : {}),
+              prompt: input.prompt + childThreadFooter(from),
+            },
+            { backend: kind, parentSlug: sender.slug, ...(inherited?.success ? { permissionMode: inherited.data } : {}) },
+          )
+          return { slug: made.slug, sessionId: made.sessionId }
+        }, (result: SpawnChildResult) => ({ detail: "refused" in result ? { refused: result.refused } : { spawned: result.slug } }))
+      },
     }),
 
     // The × on a FAILED send's bubble, and the second half of its Edit (the client has already put the
