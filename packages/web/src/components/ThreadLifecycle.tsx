@@ -292,9 +292,10 @@ export function StateButton({
 }
 
 // THE PIN QUESTION a pinned thread's Done asks first (StateButton). The title is the whole question, so
-// it draws no body. Either answer marks the thread done; Cancel, Escape and the × mark nothing done, so
-// closing it is never a silent "keep". Focus starts on Unpin, the yes to the question asked, so Enter
-// answers it.
+// it draws no body. Either answer marks the thread done; Escape and the × mark nothing done, so closing
+// it is never a silent "leave pinned". No Cancel button: the × beside the title is that verb already
+// (maintainer 2026-11-24: "You don't need 'Cancel' when the X is right there"). Focus starts on Unpin,
+// the yes to the question asked, so Enter answers it.
 function UnpinAsk({ open, onOpenChange, onAnswer }: { open: boolean; onOpenChange: (open: boolean) => void; onAnswer: (unpin: boolean) => void }) {
   const unpinButton = useRef<HTMLButtonElement>(null)
   const button = "button-outline rounded-md px-3 py-1.5 text-[12px] outline-none focus-visible:ring-1 focus-visible:ring-focus-ink-60"
@@ -310,11 +311,8 @@ function UnpinAsk({ open, onOpenChange, onAnswer }: { open: boolean; onOpenChang
       }}
       footer={
         <>
-          <button type="button" data-unpin-ask="cancel" onClick={() => onOpenChange(false)} className={`${button} text-muted transition-colors hover:bg-panel-2 hover:text-fg`}>
-            Cancel
-          </button>
           <button type="button" data-unpin-ask="keep" onClick={() => onAnswer(false)} className={`${button} text-fg/80 transition-colors hover:bg-panel-2 hover:text-fg`}>
-            Keep pinned
+            Leave pinned
           </button>
           <button ref={unpinButton} type="button" data-unpin-ask="unpin" onClick={() => onAnswer(true)} className={`${button} bg-fg font-medium text-bg transition-opacity hover:opacity-90`}>
             Unpin
