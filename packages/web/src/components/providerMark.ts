@@ -18,34 +18,22 @@ export interface ProviderMarkDefinition {
 /**
  * Provider-specific optical sizing is intentionally part of the component contract. The OpenAI
  * knot fills its viewBox more densely than the Claude Code asterisk, so matching nominal boxes
- * makes Codex read too large. The Codex knot also needs no downward baseline correction: at this
- * compact size that correction left it reading one pixel low beside title text.
+ * makes Codex read too large.
  *
- * Every ACP mark below was MEASURED the same way (visual-review cap-band probe on
- * provider-mark-fixture.html, 13px system-ui title, dsf 6) and the numbers are in the comment beside
- * it — re-measure rather than re-guess if a glyph, the type scale or the rail's font changes.
+ * The sidebar keeps these sizes but replaces the default vertical nudges with the measured
+ * cap-band alignment in `.sidebar-provider-mark` (styles.css). Other uses keep the defaults.
  */
 export const PROVIDER_MARK_GEOMETRY: Record<ProviderMarkKey, string> = {
   claude: "size-[11px] translate-y-px",
   codex: "size-[10px]",
-  // lucide's plug, cropped to its ink (ProviderMark's AcpMark sets the viewBox), so the box IS the ink
-  // and the caller's `ml-1` is 4px of ink gap like the two marks above (uncropped, the 24-unit box
-  // carried 2.75px of dead space per side and drew 6.75px). Ink 9.17px tall against a 9.16px cap
-  // height, riding 0.92px HIGH of the cap band before `translate-y-px` — the same 1px drop the Claude
-  // asterisk needs.
+  // The plug's box matches its cropped viewBox, so the sidebar's 4px margin isn't padded out by
+  // the 2.75px of empty space the original viewBox carried on each side.
   acp: "h-[11px] w-[6.65px] translate-y-px",
-  // The Gemini spark, with the geometry measured for it below. Read again where Antigravity draws it
-  // (the global `optical-spacing` skill's ink-align.mjs, dsf 8, sans, dark and light, 2026-11-20): 0.31 to
-  // 0.38px HIGH of the cap band beside a 13px sidebar title, 0.25 to 0.31px LOW beside the quota panel's
-  // 11px name. Sub-pixel both ways and opposite in sign, so the one box serves both.
+  // The Gemini spark also serves Antigravity. Beside its 11px quota label it measured 0.25–0.31px
+  // below the cap band (2026-11-20, sans dark and light, DSF 8), so the 10px box needs no nudge there.
   antigravity: "size-[10px]",
-  // The brand marks take the Codex knot's treatment (a 10px box, no baseline nudge) and read the SAME
-  // residual as it on the rail's font: ink centre 0.42px above the cap band's in 13px system-ui, 0.85px
-  // in the mono UI font — sub-pixel, and identical to the mark they sit beside, so left alone. Ink
-  // heights at 10px: OpenCode 10.0, Cursor 10.0, Gemini 10.0, Qwen 9.9, Kimi 9.7. Copilot's head fills
-  // only 20 of its 24 units (8.35px at a 10px box), so it takes a 12px box for 10.0px of ink — and
-  // the 1px drop, because an inline-flex box grows upward from the baseline and the larger box read
-  // 1.42px high without it.
+  // Ink heights at 10px: OpenCode 10.0, Cursor 10.0, Gemini 10.0, Qwen 9.9, Kimi 9.7. Copilot's head
+  // fills only 20 of its 24 units, so it takes a 12px box for 10px of ink.
   "acp:opencode": "size-[10px]",
   "acp:cursor": "size-[10px]",
   "acp:gemini": "size-[10px]",

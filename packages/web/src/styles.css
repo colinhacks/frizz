@@ -762,6 +762,15 @@ a[href] {
 }
 .sidebar-row-dim { opacity: var(--sidebar-dim-opacity); }
 .sidebar-row-dim:hover, .sidebar-row-dim:focus-within { opacity: var(--row-dim-hover-opacity); }
+
+/* Inline middle aligns the mark to half the x-height above the baseline. Move to half the cap
+   height instead; this replaces the mark's default pixel nudge without changing its size or wrap.
+   The sidebar's 13px sans titles measured up to 0.42px high before, and <0.1px off after (DSF 6). */
+.sidebar-provider-mark {
+  vertical-align: middle;
+  translate: 0 calc((1ex - 1cap) / 2);
+}
+
 .mobile-row-dim { opacity: var(--mobile-dim-opacity); }
 .scrollbar-none::-webkit-scrollbar {
   display: none; /* WebKit/Blink */

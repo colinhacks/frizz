@@ -612,7 +612,7 @@ export function StartingRow({ entry, leading }: { entry: PendingDispatchEntry; l
           <span className="flex min-w-0 items-baseline gap-3">
             <span className="min-w-0 flex-1 break-words text-[13px] leading-[19px] text-provisional">
               <TitleWithTrailers title={SPINNING_UP_TITLE}>
-                <ProviderMark backend={entry.backend} model={entry.model} className="ml-1" />
+                <ProviderMark backend={entry.backend} model={entry.model} className="ml-1 sidebar-provider-mark" />
               </TitleWithTrailers>
             </span>
           </span>
@@ -1002,7 +1002,7 @@ export const ThreadRow = memo(function ThreadRow({
             <span className={`min-w-0 flex-1 break-words text-[13px] leading-[19px] ${dimLabel ? "text-provisional" : dim ? "text-fg/75" : "text-fg/90"}`}>
               {editing ? <RowTitleEditor rename={rename} trailers={<ProviderMark backend={t.backend} model={t.model} className="ml-1" />} /> : (
               <TitleWithTrailers title={title}>
-                {!legacy && <ProviderMark backend={t.backend} model={t.model} className="ml-1" />}
+                {!legacy && <ProviderMark backend={t.backend} model={t.model} className="ml-1 sidebar-provider-mark" />}
                 {/* MEASURED 2026-08-19, the first time this tag ever rendered (it was written for a
                     foreign row and no foreign row reached the rail until the External band). Readings
                     on the real rail at dsf 4, `scripts/ink-gaps.mjs` + the visual-review cap-band probe:
@@ -1011,9 +1011,8 @@ export const ThreadRow = memo(function ThreadRow({
                                                                      border IS its ink: deadLeft 0)
                     The 1.4× step is the grouping and is deliberate — the mark is the title's own
                     adornment and clings to it, the tag is a separate label and stands off.
-                    VERTICAL: this pill's ink centre rides 0.42px ABOVE the title's cap band, and the
-                    provider mark beside it 0.08px below. Both are under half a device pixel at the
-                    shipped size, so `align-[2px]` stands as measured rather than as a guess.
+                    This pill's ink centre rides 0.42px above the title's cap band with `align-[2px]`.
+                    The provider mark's vertical reading lives with `.sidebar-provider-mark` in styles.css.
                     RE-MEASURE rather than re-guess if the type scale or the pill's size moves. */}
                 {foreign && (
                   <span
