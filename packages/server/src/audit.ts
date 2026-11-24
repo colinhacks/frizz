@@ -168,7 +168,6 @@ export type AuditAction =
   | "githubDispatch"
   | "followUp"
   | "subAgentSteer"
-  | "stopThreadTurn"
   | "steerThread"
   | "spawnThread"
   | "spawnChild"

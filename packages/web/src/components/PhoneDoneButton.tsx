@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Check, Loader2 } from "lucide-react"
 import type { CompletionHold, ThreadView } from "@frizz/shared"
 import { markDoneAndAdvance } from "../lib/mobileTriage.ts"
-import { completionHoldSummary } from "../lib/threadLifecycle.ts"
+import { CompletionHoldBody } from "./CompletionHoldBody.tsx"
 import { Dialog } from "./ui/Dialog.tsx"
 
 // The phone thread bar's Done: the verb a resting thread's empty bar offers (approved phone design,
@@ -11,8 +11,8 @@ import { Dialog } from "./ui/Dialog.tsx"
 //
 // The server can still decline — a resting thread whose sub-agents or background shells are running,
 // or a worker cut off mid-turn — and then this asks, as the desktop header's check does, with the
-// server's own list of what would stop. The dialog's wording is the desktop's (completionHoldSummary);
-// only the layout is the phone's.
+// server's own list of what would stop. The dialog's body is the desktop's (CompletionHoldBody); only
+// the type size and the buttons are the phone's.
 //
 // `data-phone-done`, and never a text match on "Done": every board row carries a hidden swipe button
 // with that same label.
@@ -31,7 +31,6 @@ export function PhoneDoneButton({ thread, compact }: { thread: ThreadView; compa
     if (outcome.kind !== "done") setPending(false)
   }
 
-  const summary = completionHoldSummary(hold?.hold)
   return (
     <>
       <button
@@ -66,7 +65,8 @@ export function PhoneDoneButton({ thread, compact }: { thread: ThreadView; compa
               type="button"
               disabled={pending}
               onClick={() => setHold(null)}
-              className="button-outline h-[40px] rounded-md px-4 text-[14px] text-muted outline-none disabled:opacity-45"
+              // `pb-0.5` on both: the 14px label sat 0.81px below the 40px box's centre (ink-align, 2026-11-24).
+              className="button-outline h-[40px] rounded-md px-4 pb-0.5 text-[14px] text-muted outline-none disabled:opacity-45"
             >
               Cancel
             </button>
@@ -76,32 +76,15 @@ export function PhoneDoneButton({ thread, compact }: { thread: ThreadView; compa
               data-dialog-default
               disabled={pending}
               onClick={() => void complete(true)}
-              className="button-outline flex h-[40px] items-center gap-1.5 rounded-md bg-fg px-4 text-[14px] font-medium text-bg outline-none disabled:opacity-45"
+              className="button-outline flex h-[40px] items-center gap-1.5 rounded-md bg-fg px-4 pb-0.5 text-[14px] font-medium text-bg outline-none disabled:opacity-45"
             >
               {pending && <Loader2 size={14} className="animate-spin" />}
-              {hold?.hold?.cutOff ? "Mark done anyway" : "End session & mark done"}
+              Mark as done
             </button>
           </>
         }
       >
-        <div data-completion-hold className="flex flex-col gap-2 p-4 text-[14px] leading-relaxed text-muted">
-          <p>{summary.lead}</p>
-          {summary.groups.map((group) => (
-            <div key={group.kind} className="flex flex-col gap-0.5">
-              <div className="text-[12px] font-medium text-fg/70">{group.heading}</div>
-              <ul className="flex flex-col gap-0.5">
-                {group.items.map((item, index) => (
-                  <li key={`${item.label}-${index}`} className="min-w-0 truncate text-fg/80">
-                    {item.label}
-                    {item.stale && <span className="text-muted-60"> · no recent output</span>}
-                  </li>
-                ))}
-                {group.overflow > 0 && <li className="text-muted-60">+{group.overflow} more</li>}
-              </ul>
-            </div>
-          ))}
-          <p>{summary.trailer}</p>
-        </div>
+        <CompletionHoldBody hold={hold?.hold} phone />
       </Dialog>
     </>
   )

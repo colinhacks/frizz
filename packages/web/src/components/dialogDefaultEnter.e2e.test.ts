@@ -45,7 +45,7 @@ const focusedText = (page: Page) => page.evaluate(() => document.activeElement?.
 test("the white button has the focus when the dialog opens, and Enter presses it", { skip: !baseUrl, timeout: 60_000 }, async () => {
   const { page, errors } = await openConfirm()
   try {
-    assert.equal(await focusedText(page), "End session & mark done", "not the header's ×")
+    assert.equal(await page.evaluate(() => document.activeElement?.hasAttribute("data-dialog-default")), true, "not the header's ×")
     await page.keyboard.press("Enter")
     await page.waitForSelector("[data-fixture-done]")
     assert.equal(await calls(page), "RPC calls: initial, terminate")
@@ -59,7 +59,7 @@ test("Enter still presses it after a click on the dialog's text has taken the fo
   const { page, errors } = await openConfirm()
   try {
     await page.click("[data-completion-hold] p")
-    assert.notEqual(await focusedText(page), "End session & mark done", "the click moved the focus")
+    assert.equal(await page.evaluate(() => document.activeElement?.hasAttribute("data-dialog-default")), false, "the click moved the focus")
     await page.keyboard.press("Enter")
     await page.waitForSelector("[data-fixture-done]")
     assert.equal(await calls(page), "RPC calls: initial, terminate")
