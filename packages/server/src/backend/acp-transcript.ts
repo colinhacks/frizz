@@ -303,10 +303,13 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
   // steps in the same turn append to it in place without closing `current`, so consecutive tool
   // calls stay in one run.
   let turnReasoning: TranscriptMessage | undefined
+  // Tracks an absorbed thought between text records so adjacent id-less text records still get a
+  // paragraph break instead of concatenating raw once `reasoning` no longer closes `current`.
+  let thoughtSinceText = false
   const openTools = new Map<string, TranscriptToolCall>()
   const lines = raw.split("\n")
 
-  const close = () => { current = undefined; currentMessageId = undefined }
+  const close = () => { current = undefined; currentMessageId = undefined; thoughtSinceText = false }
   const openAssistant = (i: number, at: string | undefined): TranscriptMessage => {
     if (!current) {
       current = { sourceId: `${identityPrefix}:${i}`, role: "assistant", text: "", tools: [], parts: [], ...(at ? { at } : {}) }
@@ -373,6 +376,7 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         if (!text) break
         if (turnReasoning) {
           turnReasoning.text = `${turnReasoning.text}\n\n${text}`
+          thoughtSinceText = true
         } else {
           close()
           turnReasoning = { sourceId: `${identityPrefix}:${i}`, role: "assistant", kind: "reasoning", text, tools: [], parts: [], ...(rec.at ? { at: rec.at } : {}) }
@@ -386,10 +390,12 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         const msg = openAssistant(i, rec.at)
         const mid = (rec as { messageId?: string }).messageId
         if (mid && mid === currentMessageId) {
+          thoughtSinceText = false
           const last = msg.parts[msg.parts.length - 1]
           if (last?.kind === "text") { last.text += rec.text; msg.text = msg.parts.filter((p) => p.kind === "text").map((p) => (p as { text: string }).text).join("\n\n"); break }
         }
-        const separate = Boolean(mid && currentMessageId && mid !== currentMessageId)
+        const separate = Boolean((mid && currentMessageId && mid !== currentMessageId) || thoughtSinceText)
+        thoughtSinceText = false
         currentMessageId = mid
         appendText(msg, rec.text, separate)
         break
@@ -397,6 +403,7 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
       case "tool-call": {
         const msg = openAssistant(i, rec.at)
         currentMessageId = undefined
+        thoughtSinceText = false
         const call = dialect?.toolCall?.(rec) ?? toolCallFor(rec, (rec as { acp?: AcpToolMeta }).acp)
         openTools.set(rec.id, call)
         appendTool(msg, call)

@@ -304,4 +304,22 @@ test("acp-transcript: a pre-reasoning tool call closes on the first thought, and
   assert.equal(msgs[3]!.tools.length, 2, "tools after the first thought stay coalesced")
   assert.equal(msgs[3]!.text, "First note.\n\nSecond note.", "distinct messageIds separated by a coalesced thought keep a paragraph break")
   assert.equal(msgs[5]!.text, "After error.", "provider-error resets turnReasoning")
+
+  // Id-less text records separated by an absorbed thought also get a paragraph break, while two
+  // chunks sharing one messageId still concatenate raw.
+  const idlessRaw = ([
+    { kind: "user-message", at: T(1), text: "go", synthetic: false },
+    { kind: "turn-start", at: T(1) },
+    { kind: "reasoning", at: T(2), text: "Plan." },
+    { kind: "assistant-text", at: T(2), text: "First note.", final: false },
+    { kind: "reasoning", at: T(3), text: "Thinking." },
+    { kind: "assistant-text", at: T(3), text: "Second note.", final: false },
+    { kind: "reasoning", at: T(4), text: "Still streaming." },
+    { kind: "assistant-text", at: T(4), text: "Part A", final: false, messageId: "same" },
+    { kind: "reasoning", at: T(5), text: "Mid-stream thought." },
+    { kind: "assistant-text", at: T(5), text: " + Part B", final: true, messageId: "same" },
+  ] as AcpRecord[]).map((r) => JSON.stringify(r)).join("\n")
+  const idlessMsgs = projectAcpTranscript(idlessRaw, "acp:idless")
+  assert.equal(idlessMsgs[1]!.text, "Plan.\n\nThinking.\n\nStill streaming.\n\nMid-stream thought.")
+  assert.equal(idlessMsgs[2]!.text, "First note.\n\nSecond note.\n\nPart A + Part B")
 })
