@@ -90,9 +90,9 @@ test("every child-operation surface renders through the one shared row component
   for (const file of ["components/QueueSubAgentLines.tsx", "components/Sidebar.tsx", "components/ChatView.tsx"]) {
     assert.match(readFileSync(join(SRC, file), "utf8"), /<ChildOpRow\b/, `${file} must render the shared ChildOpRow`)
   }
-  // The completion-hold dialog lists children as PROSE inside a dialog, not as operation rows (no
-  // liveness mark, no drill-in, no dismiss), so it consumes the tokens directly rather than the row.
-  assert.match(readFileSync(join(SRC, "components/ThreadLifecycle.tsx"), "utf8"), /CHILD_ARROW\b/)
+  // The End this session dialog lists the live work as the ops panel's own rows (2f376ab15), through
+  // CompletionHoldBody. It offers no dismiss: the dialog's own buttons are the answer.
+  assert.match(readFileSync(join(SRC, "components/CompletionHoldBody.tsx"), "utf8"), /<ChildOpRow\b/)
 })
 
 test("every child-operation surface offers the dismiss ×, through the one shared dismisser", () => {
