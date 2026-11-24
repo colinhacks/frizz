@@ -305,7 +305,7 @@ test("a Claude thread can spawn an Antigravity Gemini thread with normalized mod
   // Contradictory backend/model, unknown model, unsupported effort (`max`), and missing `agy` are all refused cleanly.
   await assert.rejects(
     frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "claude", model: "antigravity:gemini-4-neon", effort: "high", from: "opus-caller" } }),
-    /is an Antigravity model slug and cannot be used with backend `claude`/,
+    /is a `antigravity` model slug and cannot be used with backend `claude`/,
   )
   await assert.rejects(
     frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "antigravity", model: "gemini-2.5-pro", effort: "high", from: "opus-caller" } }),
@@ -319,5 +319,90 @@ test("a Claude thread can spawn an Antigravity Gemini thread with normalized mod
   await assert.rejects(
     frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "antigravity", model: "gemini-4-neon", from: "opus-caller" } }),
     /Antigravity is not installed/,
+  )
+})
+
+test("a Claude thread can spawn ACP and OpenCode threads with prefix inference, normalization, and live validation", async (t) => {
+  const home = homeSandbox(t)
+  const frizz = tenant(home, FRIZZ, "frizz")
+  const nub = tenant(home, NUB, "nub")
+  t.after(serve(frizz, nub))
+  frizz.thread("opus-caller", "Opus caller", { backend: "claude", permission_mode: "default" })
+
+  // Register a real executable (`process.execPath`) as a custom ACP agent so resolveAcpAgent finds it.
+  ;(frizz.settings as Record<string, unknown>).acpAgents = [
+    { id: "custom-acp", label: "Custom ACP", command: process.execPath, args: [] },
+    { id: "missing-acp", label: "Missing ACP", command: "definitely-not-an-installed-acp-cli-xyz", args: [] },
+  ]
+  ;(frizz.ctx as { acpBridge?: unknown }).acpBridge = {
+    agentModels: async (agentId: string) => ({
+      agentId,
+      current: "alpha",
+      models: [{ id: "alpha", name: "Alpha" }, { id: "beta", name: "Beta" }],
+      probedAt: "2026-11-24T10:00:00.000Z",
+    }),
+  }
+  ;(frizz.ctx as { opencodeBridge?: unknown }).opencodeBridge = {
+    models: async () => ({
+      available: true,
+      version: "2.1.0",
+      defaultModel: "opencode:anthropic/claude-opus-4",
+      models: [{ providerID: "anthropic", id: "claude-opus-4", name: "Claude Opus 4", variants: ["low", "high"] }],
+    }),
+  }
+
+  // ACP spawn: bare `<agent>@<model>` normalizes to `acp:<agent>@<model>`.
+  await frizz.router.spawnThread.handler({
+    input: { prompt: "Run custom ACP", backend: "acp", model: "custom-acp@beta", from: "opus-caller" },
+  })
+  assert.equal(frizz.dispatched.at(-1)!.backend, "acp")
+  assert.equal(frizz.dispatched.at(-1)!.input.model, "acp:custom-acp@beta")
+  assert.equal(frizz.dispatched.at(-1)!.permissionMode, "auto")
+
+  // Cross-project ACP spawn with `acp:` prefix and omitted `backend`.
+  const crossAcp = await frizz.router.spawnThread.handler({
+    input: { prompt: "Run on nub", model: "acp:custom-acp", from: "opus-caller", project: "nub" },
+  })
+  assert.equal(crossAcp.project, "nub")
+  assert.equal(nub.dispatched.at(-1)!.backend, "acp")
+  assert.equal(nub.dispatched.at(-1)!.input.model, "acp:custom-acp")
+
+  // ACP validation: unknown agent, uninstalled agent, unknown model advertised by the agent, and bare `acp:`.
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "acp", model: "no-such-agent", from: "opus-caller" } }),
+    /unknown ACP agent `no-such-agent`/,
+  )
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "acp", model: "missing-acp", from: "opus-caller" } }),
+    /ACP agent "Missing ACP" is not installed/,
+  )
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "acp", model: "custom-acp@gamma", from: "opus-caller" } }),
+    /ACP agent `custom-acp` does not advertise model `gamma`\. Available models: `alpha`, `beta`/,
+  )
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "acp", model: "acp:", from: "opus-caller" } }),
+    /an ACP spawn needs an agent id/,
+  )
+
+  // OpenCode spawn: bare `<provider>/<id>` + `effort` folds into `opencode:<provider>/<id>#<variant>`.
+  await frizz.router.spawnThread.handler({
+    input: { prompt: "Run OpenCode", backend: "opencode", model: "anthropic/claude-opus-4", effort: "high", from: "opus-caller" },
+  })
+  assert.equal(frizz.dispatched.at(-1)!.backend, "opencode")
+  assert.equal(frizz.dispatched.at(-1)!.input.model, "opencode:anthropic/claude-opus-4#high")
+
+  // OpenCode validation: malformed model id, unknown model, unsupported variant.
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "opencode", model: "bare-model", from: "opus-caller" } }),
+    /must be `<provider>\/<id>`/,
+  )
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "opencode", model: "openai/nope", from: "opus-caller" } }),
+    /OpenCode does not offer model `openai\/nope`/,
+  )
+  await assert.rejects(
+    frizz.router.spawnThread.handler({ input: { prompt: "x", backend: "opencode", model: "anthropic/claude-opus-4#max", from: "opus-caller" } }),
+    /does not accept variant `max`\. Supported variants: low, high/,
   )
 })

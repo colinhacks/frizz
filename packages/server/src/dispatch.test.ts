@@ -664,7 +664,7 @@ test("end-state contract: a fenceless rest is a DEFECT, done checks, awaiting pa
     assert.match(c, /Follow-up work you DISCOVERED blocks[\s\S]{0,120}even when it is someone else's to do/)
     assert.match(c, /"not mine" is not "not owed"/)
     assert.match(c, /Neither\s+exception stretches to a report that ENDS IN A DECISION the human has yet to make/)
-    // The deadlock's exit, in order: do it, hand it to its own card, ask. Never stretch `done`.
+    // The deadlock's exit, in order: do it, offer it, hand it to its own card, drop it. Never stretch `done`.
     assert.match(c, /### When the work is finished but the thread found more/)
     assert.match(c, /HAND IT OFF TO ITS OWN CARD[\s\S]{0,120}`frizzctl spawn-thread`/)
     assert.match(c, /stretching `done` is not how you break it/)
@@ -674,12 +674,12 @@ test("end-state contract: a fenceless rest is a DEFECT, done checks, awaiting pa
     // too present to ignore, archived unread. What is not worth a card is not worth a sentence.
     assert.match(c, /DELETE EVERY DANGLING "WORTH DOING LATER"/)
     assert.match(c, /one thing to\s+carry forward…/i)
-    assert.match(c, /DO it, SPAWN it onto\s+its own card, ASK about it, or DROP it/)
+    assert.match(c, /DO it, OFFER it, SPAWN\s+it onto its own card, or DROP it/)
     // The 2026-08-18 DEMOTION. A spawned thread is fire-and-forget, so a chain of them re-derives the
     // same facts in parallel: `read the file, read up…` (nub) spawned four, three of those spawned more,
     // and three separate descendants independently rediscovered commit 4001cec5c5 over twenty hours
     // because none of them could tell the others. The exits now put DOING it — with a SUB-AGENT, whose
-    // result comes back — first, ASK second, and a new card LAST. Maintainer: "these should be SUBAGENTS".
+    // result comes back — first, ASK second (OFFER since 2026-11-24), and a new card LAST. Maintainer: "these should be SUBAGENTS".
     assert.match(c, /DO IT — the default, and it covers far more than "small"/)
     assert.match(c, /dispatch an in-session SUB-AGENT: its result comes BACK to you/)
     assert.match(c, /Size is not what disqualifies it/)
@@ -688,9 +688,9 @@ test("end-state contract: a fenceless rest is a DEFECT, done checks, awaiting pa
     // ...and the exits are in that ORDER, since a worker takes the first one that fits.
     const exits = c.indexOf("Take the first exit that fits")
     assert.ok(exits > 0)
-    const order = ["1. **DO IT", "2. **ASK", "3. **HAND IT OFF TO ITS OWN CARD", "4. **DROP IT"].map((m) => c.indexOf(m, exits))
+    const order = ["1. **DO IT", "2. **OFFER IT", "3. **HAND IT OFF TO ITS OWN CARD", "4. **DROP IT"].map((m) => c.indexOf(m, exits))
     assert.ok(order.every((i) => i > 0), "all four exits present")
-    assert.deepEqual(order, [...order].sort((a, b) => a - b), "do it → ask → own card → drop")
+    assert.deepEqual(order, [...order].sort((a, b) => a - b), "do it → offer it → own card → drop")
     // ...and the card must not restate the prose. Same maintainer note; the rule already existed in
     // this repo's FRIZZ.md but never in the contract every worker gets.
     assert.match(c, /TWO SURFACES, NOT ONE MESSAGE WRITTEN TWICE/)
@@ -1000,4 +1000,54 @@ test("antigravity dispatch normalizes bare model ids, infers backend from `antig
   const third = await dispatcher.dispatch({ prompt: "Default agy model", backend: "antigravity" }, { backend: "antigravity" })
   assert.deepEqual(calls[2], { modelId: null, effort: null, permissionMode: "bypassPermissions" })
   assert.equal(storage.getSession(third.slug)?.model, "antigravity:")
+})
+
+test("acp and opencode dispatch normalize bare model ids, infer backend from prefix, and never inherit Claude's settings.model", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "frizz-acp-oc-dispatch-"))
+  const storage = createStorage(join(dir, "ui.db"), "proj-acp-oc")
+  t.after(() => {
+    storage.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const acpCalls: Array<{ agentId: string; modelId?: string }> = []
+  const ocCalls: Array<{ model?: { providerID: string; id: string; variant?: string } }> = []
+  const dispatcher = createDispatcher({
+    project: { dir, id: "proj-acp-oc", name: "proj", label: "proj", stateDir: dir, cwdSlug: "proj" },
+    storage,
+    board: { rebuild: async () => ({ threads: [] }) } as unknown as BoardManager,
+    getSettings: () => Settings.parse({ permissionMode: "auto", notifications: false, projectRail: false, childThreads: false, model: "opus", effort: "high" }),
+    acpBridge: {
+      spawnDispatch: async (input: { agentId: string; modelId?: string }) => {
+        acpCalls.push({ agentId: input.agentId, modelId: input.modelId })
+        return { acpSessionId: `acp-${acpCalls.length}` }
+      },
+      releaseSession: () => {},
+    } as never,
+    opencodeBridge: {
+      spawnDispatch: async (input: { model?: { providerID: string; id: string; variant?: string } }) => {
+        ocCalls.push({ model: input.model })
+        return { opencodeSessionId: `oc-${ocCalls.length}` }
+      },
+      releaseSession: () => {},
+    } as never,
+  })
+
+  const a1 = await dispatcher.dispatch({ prompt: "ACP bare", backend: "acp", model: "cursor@claude-4-sonnet" }, { backend: "acp" })
+  assert.deepEqual(acpCalls[0], { agentId: "cursor", modelId: "claude-4-sonnet" })
+  assert.equal(storage.getSession(a1.slug)?.backend, "acp")
+  assert.equal(storage.getSession(a1.slug)?.model, "acp:cursor@claude-4-sonnet")
+
+  const a2 = await dispatcher.dispatch({ prompt: "ACP inferred", model: "acp:gemini" })
+  assert.deepEqual(acpCalls[1], { agentId: "gemini", modelId: undefined })
+  assert.equal(storage.getSession(a2.slug)?.backend, "acp")
+  assert.equal(storage.getSession(a2.slug)?.model, "acp:gemini")
+
+  const o1 = await dispatcher.dispatch({ prompt: "OC bare", backend: "opencode", model: "anthropic/claude-opus-4", effort: "high" }, { backend: "opencode" })
+  assert.deepEqual(ocCalls[0], { model: { providerID: "anthropic", id: "claude-opus-4", variant: "high" } })
+  assert.equal(storage.getSession(o1.slug)?.backend, "opencode")
+  assert.equal(storage.getSession(o1.slug)?.model, "opencode:anthropic/claude-opus-4#high")
+
+  const o2 = await dispatcher.dispatch({ prompt: "OC default", backend: "opencode" }, { backend: "opencode" })
+  assert.deepEqual(ocCalls[1], { model: undefined })
+  assert.equal(storage.getSession(o2.slug)?.model, "opencode:")
 })

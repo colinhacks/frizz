@@ -56,6 +56,9 @@ function plausible(procedure: string, body: any): unknown {
     case "claudeModels": return [{ alias: "opus", label: "Opus 5.5" }, { alias: "sonnet", label: "Sonnet 5.5" }, { alias: "haiku", label: "Haiku 4.5" }]
     case "codexModels": return [{ slug: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", defaultEffort: "medium", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] }]
     case "antigravityModels": return { available: true, version: "1.5.16", tier: "Google AI Pro", defaultModel: "gemini-4-neon", models: [{ id: "gemini-4-neon", name: "Gemini 4 Neon", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" }, { id: "gemini-pro-orchestrator-neon", name: "Orchestrator (Neon)", efforts: [] }] }
+    case "acpAgents": return [{ id: "opencode", label: "OpenCode", command: "opencode", available: true, native: true }, { id: "cursor", label: "Cursor agent", command: "cursor-agent", available: true }, { id: "gemini", label: "Gemini CLI", command: "gemini", available: false }]
+    case "acpAgentModels": return { agentId: "cursor", current: "claude-4-sonnet", models: [{ id: "claude-4-sonnet", name: "Claude 4 Sonnet" }, { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" }], probedAt: "2026-11-24T10:00:00.000Z" }
+    case "opencodeModels": return { available: true, version: "2.1.0", defaultModel: "opencode:anthropic/claude-opus-4", models: [{ providerID: "anthropic", id: "claude-opus-4", name: "Claude Opus 4", variants: ["low", "high"] }, { providerID: "openai", id: "gpt-5", name: "GPT-5", variants: ["minimal", "high"] }] }
     default: return {}
   }
 }
@@ -993,7 +996,7 @@ test("every example in every command's help runs as written", async () => {
           child.on("close", (code) => resolve({ code, stdout, stderr }))
         })
         assert.equal(ran.code, 0, `${name}: \`${example.split("\n")[0]}\` exited ${ran.code}: ${ran.stderr}`)
-        const expectedCalls = name === "models" && example.trim() === "frizzctl models" ? 3 : 1
+        const expectedCalls = name === "models" && example.trim() === "frizzctl models" ? 4 : 1
         assert.equal(fake.seen.length, expectedCalls, `${name}: \`${example.split("\n")[0]}\` made ${fake.seen.length} calls`)
       }
     }
@@ -1106,7 +1109,7 @@ test("worktree register sends the checkout's path resolved against the worker's 
   } finally { fake.close() }
 })
 
-test("`spawn-thread` and `spawn-child` support `--backend antigravity`, normalize `antigravity:` slugs, and reject unknown or mismatched backends", async () => {
+test("`spawn-thread` and `spawn-child` support `antigravity`, `opencode`, and `acp`, normalize slugs, and reject unknown or mismatched backends", async () => {
   const fake = await fakeFrizz()
   try {
     // Bare Antigravity model id is normalized to `antigravity:<id>` on the wire.
@@ -1126,6 +1129,31 @@ test("`spawn-thread` and `spawn-child` support `--backend antigravity`, normaliz
       body: { prompt: "orchestrate it", model: "antigravity:gemini-pro-orchestrator-neon", backend: "antigravity", from: "the-caller" },
     })
 
+    // ACP: bare `<agent>` or `<agent>@<model>` normalizes to `acp:<agent>[@<model>]`, and prefixed `acp:` infers `--backend acp`.
+    fake.seen.length = 0
+    const acpBare = await run(["spawn-thread", "--backend", "acp", "--model", "cursor@claude-4-sonnet", "--prompt", "review"], { env: worker(fake) })
+    assert.equal(acpBare.code, 0, acpBare.stderr)
+    assert.deepEqual(fake.seen.at(-1), {
+      url: "/_frizz/proj-1/rpc/spawnThread",
+      body: { prompt: "review", model: "acp:cursor@claude-4-sonnet", backend: "acp", from: "the-caller" },
+    })
+    fake.seen.length = 0
+    const acpInferred = await run(["spawn-child", "--model", "acp:gemini", "--prompt", "check"], { env: worker(fake) })
+    assert.equal(acpInferred.code, 0, acpInferred.stderr)
+    assert.deepEqual(fake.seen.at(-1), {
+      url: "/_frizz/proj-1/rpc/spawnChild",
+      body: { prompt: "check", model: "acp:gemini", backend: "acp", from: "the-caller" },
+    })
+
+    // OpenCode: bare `<provider>/<id>` normalizes to `opencode:<provider>/<id>`, and `--effort` folds into `#<variant>` (even non-Frizz variants like `minimal`).
+    fake.seen.length = 0
+    const oc = await run(["spawn-thread", "--backend", "opencode", "--model", "openai/gpt-5", "--effort", "minimal", "--prompt", "quick check"], { env: worker(fake) })
+    assert.equal(oc.code, 0, oc.stderr)
+    assert.deepEqual(fake.seen.at(-1), {
+      url: "/_frizz/proj-1/rpc/spawnThread",
+      body: { prompt: "quick check", model: "opencode:openai/gpt-5#minimal", backend: "opencode", from: "the-caller" },
+    })
+
     // `spawn-child` accepts Antigravity the same way.
     fake.seen.length = 0
     const child = await run(["spawn-child", "--backend", "antigravity", "--model", "gemini-4-neon", "--effort", "xhigh", "--prompt", "review it"], { env: worker(fake) })
@@ -1135,33 +1163,57 @@ test("`spawn-thread` and `spawn-child` support `--backend antigravity`, normaliz
       body: { prompt: "review it", model: "antigravity:gemini-4-neon", effort: "xhigh", backend: "antigravity", from: "the-caller" },
     })
 
-    // Unknown backend fails loudly instead of silently dropping to Claude, and hints `antigravity` for `gemini`.
+    // Unknown backends fail loudly with targeted hints; bare `acp:` and contradictory backend/model fail without calling the server.
     fake.seen.length = 0
     const gemini = await run(["spawn-thread", "--backend", "gemini", "--model", "gemini-4-neon", "--effort", "high", "--prompt", "x"], { env: worker(fake) })
     assert.equal(gemini.code, 1)
-    assert.match(gemini.stderr, /use `--backend antigravity`/)
+    assert.match(gemini.stderr, /--backend antigravity.*--backend acp --model gemini/)
 
-    const mismatch = await run(["spawn-thread", "--backend", "claude", "--model", "antigravity:gemini-4-neon", "--effort", "high", "--prompt", "x"], { env: worker(fake) })
+    const cursor = await run(["spawn-thread", "--backend", "cursor", "--model", "claude-4-sonnet", "--prompt", "x"], { env: worker(fake) })
+    assert.equal(cursor.code, 1)
+    assert.match(cursor.stderr, /--backend acp --model cursor/)
+
+    const emptyAcp = await run(["spawn-thread", "--backend", "acp", "--model", "acp:", "--prompt", "x"], { env: worker(fake) })
+    assert.equal(emptyAcp.code, 1)
+    assert.match(emptyAcp.stderr, /must name an ACP agent/)
+
+    const mismatch = await run(["spawn-thread", "--backend", "claude", "--model", "acp:cursor", "--effort", "high", "--prompt", "x"], { env: worker(fake) })
     assert.equal(mismatch.code, 1)
     assert.match(mismatch.stderr, /disagrees with `--backend claude`/)
-    assert.deepEqual(fake.seen, [], "neither invalid call reached the server")
+    assert.deepEqual(fake.seen, [], "none of the invalid calls reached the server")
   } finally {
     fake.close()
   }
 })
 
-test("`frizzctl models` lists models across backends, supports filtering, `--refresh`, `--json`, and unavailable Antigravity", async () => {
+test("`frizzctl models` lists models across all backends, ACP agents, `acp:<agent>`, OpenCode, `--refresh`, and `--json`", async () => {
   const fake = await fakeFrizz()
   try {
     const all = await run(["models"], { env: worker(fake) })
     assert.equal(all.code, 0, all.stderr)
     assert.match(all.stdout, /Claude Code \(`--backend claude`, default\)/)
-    assert.match(all.stdout, /opus\s+Opus 5\.5/)
     assert.match(all.stdout, /Codex \(`--backend codex`\)/)
-    assert.match(all.stdout, /gpt-5\.6-sol/)
     assert.match(all.stdout, /Antigravity \(`--backend antigravity` — Google AI Pro, agy 1\.5\.16\)/)
-    assert.match(all.stdout, /gemini-4-neon\s+Gemini 4 Neon\s+efforts: low, medium, high, xhigh \(default: high\)\s+\[default\]/)
-    assert.match(all.stdout, /gemini-pro-orchestrator-neon\s+Orchestrator \(Neon\)\s+no thinking levels \(omit --effort\)/)
+    assert.match(all.stdout, /OpenCode \(`--backend opencode`\)\n  installed \(native\)/)
+    assert.match(all.stdout, /ACP agents \(`--backend acp`\)/)
+    assert.match(all.stdout, /acp:cursor\s+Cursor agent\s+\(cursor-agent\)/)
+    assert.match(all.stdout, /not on PATH: gemini \(gemini\)/)
+
+    fake.seen.length = 0
+    const acpAgent = await run(["models", "acp:cursor", "--refresh"], { env: worker(fake) })
+    assert.equal(acpAgent.code, 0, acpAgent.stderr)
+    assert.equal(fake.seen.length, 1)
+    assert.equal(fake.seen[0]?.url, `/_frizz/proj-1/rpc/acpAgentModels?input=${encodeURIComponent(JSON.stringify({ agentId: "cursor", refresh: true }))}`)
+    assert.match(acpAgent.stdout, /claude-4-sonnet\s+Claude 4 Sonnet\s+\[default\]/)
+    assert.match(acpAgent.stdout, /gemini-2\.5-pro\s+Gemini 2\.5 Pro/)
+
+    fake.seen.length = 0
+    const oc = await run(["models", "opencode"], { env: worker(fake) })
+    assert.equal(oc.code, 0, oc.stderr)
+    assert.equal(fake.seen.length, 1)
+    assert.match(oc.stdout, /OpenCode \(`--backend opencode` — opencode 2\.1\.0\)/)
+    assert.match(oc.stdout, /anthropic\/claude-opus-4\s+Claude Opus 4\s+variants: low, high\s+\[default\]/)
+    assert.match(oc.stdout, /openai\/gpt-5\s+GPT-5\s+variants: minimal, high/)
 
     fake.seen.length = 0
     const agyJson = await run(["models", "antigravity", "--refresh", "--json"], { env: worker(fake) })

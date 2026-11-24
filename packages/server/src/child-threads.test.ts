@@ -306,6 +306,10 @@ test("spawn-child links the child, tells it whose it is, and starts it in its pa
   await h.router.spawnChild.handler({ input: { prompt: "Review with Gemini", model: "gemini-4-neon", effort: "high", backend: "antigravity", from: "parent" } })
   assert.deepEqual(h.dispatched[2]!.opts, { backend: "antigravity", parentSlug: "parent" }, "an Antigravity child starts in Antigravity's dispatch default")
   assert.equal(h.dispatched[2]!.input.model, "antigravity:gemini-4-neon", "bare Antigravity model id is normalized to `antigravity:<id>`")
+
+  await h.router.spawnChild.handler({ input: { prompt: "Check with OpenCode", model: "opencode:anthropic/claude-opus-4", from: "parent" } })
+  assert.deepEqual(h.dispatched[3]!.opts, { backend: "opencode", parentSlug: "parent" }, "prefixed `opencode:` infers OpenCode backend")
+  assert.equal(h.dispatched[3]!.input.model, "opencode:anthropic/claude-opus-4")
 })
 
 test("a child cannot start children of its own", async (t) => {

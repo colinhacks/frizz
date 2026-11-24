@@ -78,36 +78,37 @@ const SPAWN_THREAD = {
       model: {
         type: "string",
         description:
-          "REQUIRED — pick by the NEW task's complexity; there is no default. For the `claude` backend: " +
-          "`opus` (the TOP tier — hardest reasoning, architecture, subtle correctness/security, adversarial " +
-          "review, the fix that must land), `sonnet` (ordinary substantive implementation/research), `haiku` " +
-          "(simple, fully-specified mechanical work). Do NOT pick `fable`: Opus 5 is just as good and cheaper, " +
-          "so a high-intensity task takes `opus` at a higher `effort`, not a different model — `fable` only " +
-          "when the human explicitly asks for it. For the `codex` backend use a codex model id instead (e.g. " +
-          "`gpt-5.6-sol`/`gpt-5.6-terra`/`gpt-5.6-luna`). For the `antigravity` backend use an Antigravity " +
-          "model id (e.g. `gemini-4-neon`, `gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen`, " +
-          "`gemini-3.8-flash`, or an orchestrator; `antigravity:<id>` is accepted too and infers `--backend " +
-          "antigravity`). Run `frizzctl models antigravity` (or `frizzctl models`) to see the exact models and " +
-          "thinking levels this machine's account offers. Match the model to the backend you choose. Bias toward " +
-          "Opus/a strong model when the task is non-trivial or its outcome is load-bearing.",
+          "REQUIRED — pick by the NEW task's complexity; there is no default. Match the model to `--backend` " +
+          "(or use a prefixed slug, which infers `--backend` automatically):\n" +
+          "  - `claude` (default): `opus` (TOP tier — hardest reasoning, architecture, subtle correctness/" +
+          "security, adversarial review), `sonnet` (ordinary substantive work), `haiku` (simple mechanical " +
+          "work). Do NOT pick `fable` unless explicitly asked.\n" +
+          "  - `codex`: a codex model id (e.g. `gpt-5.6-sol`/`gpt-5.6-terra`/`gpt-5.6-luna`).\n" +
+          "  - `antigravity`: an Antigravity model id (e.g. `gemini-4-neon`, `gemini-3.8-flash`, or an " +
+          "orchestrator; `antigravity:<id>` is accepted too).\n" +
+          "  - `opencode`: `<provider>/<id>` or `<provider>/<id>#<variant>` (or `opencode:` for OpenCode's " +
+          "default; `opencode:<provider>/<id>` is accepted too).\n" +
+          "  - `acp`: `<agent>` or `<agent>@<model>` (e.g. `cursor`, `gemini`, `copilot`, `grok`, `kilo`, " +
+          "`qwen`, `kimi`, `pi`, or a custom `settings.acpAgents` id; `acp:<agent>[@<model>]` is accepted too).\n" +
+          "Run `frizzctl models` (or `frizzctl models <backend>` / `frizzctl models acp:<agent>`) to see what " +
+          "this machine actually has installed and which models/efforts each offers.",
       },
       effort: {
         type: "string",
-        enum: ["low", "medium", "high", "xhigh", "max"],
         description:
-          "Reasoning effort, pick by complexity. REQUIRED for `claude` and `codex` (no default): `low` only " +
-          "for trivial tasks; `medium` for routine work; `high` for ordinary substantive work; `xhigh` for hard " +
-          "coding/agentic work; `max` for the single hardest problems. (Codex also accepts `ultra`.) For " +
-          "`antigravity`, thinking levels are per-model (e.g. `low`/`medium`/`high`/`xhigh` on Gemini 4 Neon; " +
-          "orchestrators take none): optional — omit it for a model with no thinking levels or to use the " +
-          "model's default.",
+          "Reasoning effort / thinking level, pick by complexity. REQUIRED for `claude` and `codex` (no " +
+          "default): `low`, `medium`, `high`, `xhigh`, `max` (Claude also accepts `ultracode`; Codex also " +
+          "accepts `ultra`). Optional for `antigravity` (per-model thinking level, e.g. `low`/`medium`/`high`/" +
+          "`xhigh`; omit for orchestrators or default), `opencode` (folded into `#<variant>` on the model " +
+          "slug), and `acp` (unused).",
       },
       backend: {
         type: "string",
-        enum: ["claude", "codex", "antigravity"],
+        enum: ["claude", "codex", "antigravity", "opencode", "acp"],
         description:
-          "Optional agent backend (default `claude`). Use `codex` with a codex model id, or `antigravity` with " +
-          "an Antigravity model id (such as a Gemini model). An `antigravity:<id>` model infers `antigravity`.",
+          "Optional agent backend (default `claude`): `claude`, `codex`, `antigravity`, `opencode`, or `acp`. " +
+          "A prefixed model (`antigravity:<id>`, `opencode:<provider>/<id>`, `acp:<agent>[@<model>]`) infers " +
+          "its backend automatically.",
       },
       title: { type: "string", description: "Optional short title for the new thread (else derived from the prompt)." },
       project: {
@@ -128,21 +129,21 @@ const SPAWN_CHILD = {
   name: "spawn_child",
   description:
     "AN EXPERIMENT, switched on in Frizz's Settings (refused, exit 2, while it is off). Start a CHILD THREAD: a " +
-    "new thread on YOUR board, on Claude Code, Codex or Antigravity, that works for YOU. It is a full Frizz " +
-    "thread — its own session, scratch directory and watchers — dispatched like any other, so it runs on its " +
-    "harness's own runtime with the project's skills and instructions, and it can rest, own a PR watcher and be " +
-    "woken by it. What makes it a child: every rest of its that would have gone to the human's queue — its " +
-    "`done`, a `needs_input` handoff, a crash — is handed to YOU instead, as a message that wakes you, and it " +
-    "sits under your thread on the board rather than in the queue. Answer it, or give it more work, with " +
-    "`frizzctl steer <slug>`. Only a permission approval, a secret it needs and a usage-limit stop still go to " +
-    "the human directly. " +
+    "new thread on YOUR board — on Claude Code, Codex, Antigravity, OpenCode or any installed ACP agent — that " +
+    "works for YOU. It is a full Frizz thread — its own session, scratch directory and watchers — dispatched " +
+    "like any other, so it runs on its harness's own runtime with the project's skills and instructions, and it " +
+    "can rest, own a PR watcher and be woken by it. What makes it a child: every rest of its that would have " +
+    "gone to the human's queue — its `done`, a `needs_input` handoff, a crash — is handed to YOU instead, as a " +
+    "message that wakes you, and it sits under your thread on the board rather than in the queue. Answer it, or " +
+    "give it more work, with `frizzctl steer <slug>`. Only a permission approval, a secret it needs and a " +
+    "usage-limit stop still go to the human directly. " +
     "WHEN TO USE IT, and when not: an in-session sub-agent is still the tool for a helper that finishes inside your " +
     "turn — a review, a research prong, a verification pass — because it is cheaper (no worker prompt, no cold " +
     "start, no process of its own). A child thread is for work a sub-agent structurally cannot do: work that must " +
     "REST and be woken (a pull request it opened and must shepherd through CI and review rounds), work on another " +
-    "harness (Codex or Antigravity), or work that must survive your process. Rest on a running child with `threads: " +
-    "[<slug>]` in your ```awaiting fence. A child cannot start children of its own. You MUST choose `model` (and " +
-    "`effort` for Claude/Codex or thinking-enabled Antigravity models) by the child's task, as for `spawn-thread`.",
+    "harness (Codex, Antigravity, OpenCode, or an ACP agent), or work that must survive your process. Rest on a " +
+    "running child with `threads: [<slug>]` in your ```awaiting fence. A child cannot start children of its own. " +
+    "Choose `model` (and `effort` where applicable) by the child's task, as for `spawn-thread`.",
   inputSchema: {
     type: "object",
     properties: {
@@ -154,11 +155,11 @@ const SPAWN_CHILD = {
       effort: SPAWN_THREAD.inputSchema.properties.effort,
       backend: {
         type: "string",
-        enum: ["claude", "codex", "antigravity"],
+        enum: ["claude", "codex", "antigravity", "opencode", "acp"],
         description:
-          "Optional harness (default `claude`). Use `codex` with a codex model id, or `antigravity` with an " +
-          "Antigravity model id (run `frizzctl models antigravity` to list them). A child on your own harness " +
-          "starts in your current permission mode; one on another starts in that harness's default.",
+          "Optional harness (default `claude`): `claude`, `codex`, `antigravity`, `opencode`, or `acp` (run " +
+          "`frizzctl models` to list available agents and models). A child on your own harness starts in your " +
+          "current permission mode; one on another starts in that harness's default.",
       },
       title: { type: "string", description: "Optional short title for the child (else derived from the prompt)." },
     },
@@ -1111,23 +1112,25 @@ const THREADS = {
 const MODELS = {
   name: "models",
   description:
-    "LIST THE MODELS AND EFFORT LEVELS THIS MACHINE CAN SPAWN — for Claude Code, Codex, and Antigravity " +
-    "(Gemini and other models offered by the signed-in Google account). Use this before `frizzctl spawn-thread` " +
-    "or `frizzctl spawn-child` when targeting Codex or Antigravity, whose available model ids and thinking " +
-    "levels depend on the installed CLI and account plan.\n\n" +
-    "Pass a backend name (`claude`, `codex`, or `antigravity`) to query only that one; omit it to list all " +
-    "three. `--json` prints the raw catalogue for `jq`. It only reads: nothing is started on the board.",
+    "LIST THE BACKENDS, ACP AGENTS, MODELS AND EFFORT LEVELS THIS MACHINE CAN SPAWN — for Claude Code, Codex, " +
+    "Antigravity, OpenCode, and every installed ACP agent (`cursor`, `gemini`, `copilot`, `grok`, `kilo`, " +
+    "`qwen`, `kimi`, `pi`, and custom `settings.acpAgents`). Use this before `frizzctl spawn-thread` or " +
+    "`frizzctl spawn-child` whenever targeting another harness.\n\n" +
+    "Pass a backend (`claude`, `codex`, `antigravity`, `opencode`, `acp`) or one ACP agent (`acp:<agent>`, " +
+    "e.g. `acp:cursor`, `acp:gemini`) to inspect its models; omit it for an overview of all backends and " +
+    "installed ACP agents. `--json` prints raw JSON for `jq`. It only reads: nothing is started on the board.",
   inputSchema: {
     type: "object",
     properties: {
       backend: {
         type: "string",
-        enum: ["claude", "codex", "antigravity"],
-        description: "Optional backend to list (`claude`, `codex`, or `antigravity`). Omitted ⇒ lists all three.",
+        description:
+          "Optional target: `claude`, `codex`, `antigravity`, `opencode`, `acp`, or `acp:<agent>` (to probe " +
+          "one ACP agent's advertised models). Omitted ⇒ overview of all backends.",
       },
       refresh: {
         type: "boolean",
-        description: "Bypass Antigravity's 10-minute model cache and re-probe `agy`.",
+        description: "Bypass the 10-minute model cache on `antigravity` or `acp:<agent>`.",
       },
       json: {
         type: "boolean",
@@ -1724,18 +1727,34 @@ function projectSegment() {
   }
 }
 
-const SPAWN_BACKENDS = ["claude", "codex", "antigravity"]
+const SPAWN_BACKENDS = ["claude", "codex", "antigravity", "opencode", "acp"]
+const KNOWN_ACP_HINTS = new Set(["cursor", "cursor-agent", "copilot", "grok", "kilo", "qwen", "kimi", "pi"])
 
 /** Validate a `--backend` value, rejecting unknown names instead of silently falling back to Claude.
- * @param {unknown} raw @returns {"claude" | "codex" | "antigravity" | undefined} */
+ * @param {unknown} raw @returns {"claude" | "codex" | "antigravity" | "opencode" | "acp" | undefined} */
 function parseSpawnBackend(raw) {
   if (raw === undefined || raw === null || raw === "") return undefined
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : ""
-  if (value === "claude" || value === "codex" || value === "antigravity") return value
-  const hint = value === "gemini" || value === "agy" || value === "anti-gravity"
-    ? " — use `--backend antigravity` for Antigravity/Gemini threads"
-    : ""
+  if (value === "claude" || value === "codex" || value === "antigravity" || value === "opencode" || value === "acp") return value
+  let hint = ""
+  if (value === "agy" || value === "anti-gravity") {
+    hint = " — use `--backend antigravity` for Antigravity threads"
+  } else if (value === "gemini") {
+    hint = " — use `--backend antigravity` for Antigravity Gemini models, or `--backend acp --model gemini` for Gemini CLI over ACP"
+  } else if (KNOWN_ACP_HINTS.has(value)) {
+    const id = value === "cursor-agent" ? "cursor" : value
+    hint = ` — use \`--backend acp --model ${id}\` for ACP agents`
+  }
   throw new Error(`\`backend\` must be one of ${SPAWN_BACKENDS.map((b) => `"${b}"`).join(", ")}, not ${JSON.stringify(raw)}${hint}`)
+}
+
+/** Which backend a prefixed model slug names (`antigravity:`, `opencode:`, `acp:`), if any.
+ * @param {string} model @returns {"antigravity" | "opencode" | "acp" | undefined} */
+function prefixedBackendOf(model) {
+  if (model.startsWith("antigravity:")) return "antigravity"
+  if (model.startsWith("opencode:")) return "opencode"
+  if (model.startsWith("acp:")) return "acp"
+  return undefined
 }
 
 /** Validate and normalize the shared arguments of `spawn-thread` and `spawn-child`.
@@ -1745,29 +1764,61 @@ function parseSpawnArgs(args, role) {
   if (!prompt) throw new Error("`prompt` is required and must be a non-empty string")
   // model + effort are REQUIRED (no default) for Claude/Codex so the caller must choose by task
   // complexity — a defaulted model (e.g. the project's cheap default) is exactly the bug this guards.
-  // For Antigravity, model is required (run `frizzctl models antigravity` to list ids) and effort is
-  // optional because some models (orchestrators, GPT-OSS) have no thinking levels.
+  // For Antigravity, OpenCode and ACP, `model` is required (run `frizzctl models` to list ids) and
+  // `effort` is optional (thinking levels / variants are per-model and ACP has none).
   const rawModel = typeof args.model === "string" ? args.model.trim() : ""
   if (!rawModel) {
     const scope = role === "child" ? "the child's task" : "the new task's complexity"
     throw new Error(
-      `\`model\` is required — choose one by ${scope} (claude: opus/sonnet/haiku, opus being the top tier; ` +
-      "codex: a gpt-5.6 model id; antigravity: e.g. gemini-4-neon — run `frizzctl models antigravity` to list them). There is no default.",
+      `\`model\` is required — choose one by ${scope} (claude: opus/sonnet/haiku; codex: a gpt-5.6 id; ` +
+      "antigravity: e.g. gemini-4-neon; opencode: <provider>/<id> or opencode:; acp: <agent> or <agent>@<model>). " +
+      "Run `frizzctl models` to list what is available. There is no default.",
     )
   }
   const explicitBackend = parseSpawnBackend(args.backend)
-  const hasAntigravityPrefix = rawModel.startsWith("antigravity:")
-  if (hasAntigravityPrefix && explicitBackend && explicitBackend !== "antigravity") {
-    throw new Error(`\`--model ${rawModel}\` is an Antigravity model slug, which disagrees with \`--backend ${explicitBackend}\`. Pass \`--backend antigravity\` (or omit \`--backend\`).`)
+  const prefixed = prefixedBackendOf(rawModel)
+  if (prefixed && explicitBackend && explicitBackend !== prefixed) {
+    throw new Error(`\`--model ${rawModel}\` is a \`${prefixed}\` model slug, which disagrees with \`--backend ${explicitBackend}\`. Pass \`--backend ${prefixed}\` (or omit \`--backend\`).`)
   }
-  const backend = explicitBackend ?? (hasAntigravityPrefix ? "antigravity" : undefined)
-  const model = backend === "antigravity" && !hasAntigravityPrefix ? `antigravity:${rawModel}` : rawModel
+  const backend = explicitBackend ?? prefixed
   const effort = typeof args.effort === "string" ? args.effort.trim() : ""
-  if (!effort && backend !== "antigravity") {
+  let model = rawModel
+  let wireEffort = effort
+
+  if (backend === "antigravity") {
+    if (!rawModel.startsWith("antigravity:")) model = `antigravity:${rawModel}`
+  } else if (backend === "opencode") {
+    if (!rawModel.startsWith("opencode:")) model = `opencode:${rawModel}`
+    if (effort) {
+      // OpenCode carries its variant axis in the model slug (`opencode:<provider>/<id>#<variant>`),
+      // whose values (`minimal`, `default`, …) are outside Frizz's effort enum. Fold `--effort` into
+      // the slug here and omit `effort` from the RPC body.
+      const rest = model.slice("opencode:".length)
+      const hash = rest.indexOf("#")
+      if (hash >= 0) {
+        const existing = rest.slice(hash + 1)
+        if (existing && existing !== effort) {
+          throw new Error(`\`--model ${rawModel}\` already specifies variant \`${existing}\`, which disagrees with \`--effort ${effort}\`. Give one.`)
+        }
+      } else if (rest.includes("/")) {
+        model = `${model}#${effort}`
+      }
+      wireEffort = ""
+    }
+  } else if (backend === "acp") {
+    if (!rawModel.startsWith("acp:")) model = `acp:${rawModel}`
+    const rest = model.slice("acp:".length)
+    const agent = rest.includes("@") ? rest.slice(0, rest.indexOf("@")) : rest
+    if (!agent) {
+      throw new Error("`model` must name an ACP agent (`acp:<agent>` or `acp:<agent>@<model>` — run `frizzctl models acp` to list installed agents)")
+    }
+    wireEffort = ""
+  } else if (!effort) {
     throw new Error("`effort` is required — choose one by complexity (low/medium/high/xhigh/max). There is no default.")
   }
+
   /** @type {Record<string, unknown>} */
-  const body = { prompt, model, ...(effort ? { effort } : {}) }
+  const body = { prompt, model, ...(wireEffort ? { effort: wireEffort } : {}) }
   const title = typeof args.title === "string" ? args.title.trim() : ""
   if (title) body.title = title
   if (backend) body.backend = backend
@@ -1818,21 +1869,80 @@ async function spawnChild(args) {
   )
 }
 
-/** The `models` handler: list available models and effort levels from Frizz's model-catalogue RPCs.
+/** Format one ACP agent's probed model list (`acpAgentModels`). @param {any} data */
+function formatAcpAgentModels(data) {
+  const agentId = String(data?.agentId ?? "")
+  const head = `ACP agent \`${agentId}\` (\`--backend acp --model acp:${agentId}@<model>\`)`
+  const list = Array.isArray(data?.models) ? data.models : []
+  if (data?.error && list.length === 0) return `${head}\n  unavailable: ${data.error}`
+  if (list.length === 0) {
+    return `${head}\n  (agent advertises no selectable models — spawn with \`--backend acp --model ${agentId}\` for its configured default)`
+  }
+  const idPad = Math.max(18, ...list.map((/** @type {any} */ m) => String(m.id ?? "").length + 2))
+  const rows = list.map((/** @type {any} */ m) => {
+    const name = m.name && m.name !== m.id ? String(m.name) : ""
+    const def = data?.current && m.id === data.current ? "  [default]" : ""
+    return `  ${String(m.id).padEnd(idPad)}${name}${def}`.trimEnd()
+  })
+  return `${head}\n${rows.join("\n")}`
+}
+
+/** Format the OpenCode model list (`opencodeModels`). @param {any} data */
+function formatOpencodeModels(data) {
+  const meta = data?.version ? `opencode ${data.version}` : ""
+  const head = `OpenCode (\`--backend opencode\`${meta ? ` — ${meta}` : ""})`
+  const list = Array.isArray(data?.models) ? data.models : []
+  if (!data?.available || (data?.error && list.length === 0)) {
+    return `${head}\n  unavailable: ${data?.error ?? "OpenCode is not installed"}`
+  }
+  if (list.length === 0) return `${head}\n  (no models listed — spawn with \`--backend opencode --model opencode:\` for its default)`
+  const slugs = list.map((/** @type {any} */ m) => `${m.providerID}/${m.id}`)
+  const idPad = Math.max(20, ...slugs.map((/** @type {string} */ s) => s.length + 2))
+  const namePad = Math.max(18, ...list.map((/** @type {any} */ m) => String(m.name ?? "").length + 2))
+  const rows = list.map((/** @type {any} */ m, /** @type {number} */ i) => {
+    const slug = slugs[i]
+    const variants = Array.isArray(m.variants) && m.variants.length ? `variants: ${m.variants.join(", ")}` : ""
+    const def = data?.defaultModel === `opencode:${slug}` ? "  [default]" : ""
+    return `  ${slug.padEnd(idPad)}${String(m.name ?? "").padEnd(namePad)}${variants}${def}`.trimEnd()
+  })
+  return `${head}\n${rows.join("\n")}`
+}
+
+/** The `models` handler: list available backends, ACP agents, models and effort levels.
  * @param {Record<string, unknown>} args @returns {Promise<string>} */
 async function models(args) {
-  const only = parseSpawnBackend(args.backend)
-  const want = (/** @type {"claude" | "codex" | "antigravity"} */ b) => !only || only === b
+  const raw = typeof args.backend === "string" ? args.backend.trim() : ""
   const refresh = args.refresh === true
-  const [claude, codex, antigravity] = await Promise.all([
+
+  // One specific ACP agent (`acp:<agent>`): probe its advertised models.
+  if (raw.toLowerCase().startsWith("acp:")) {
+    const agentId = raw.slice(4).trim()
+    if (!agentId) throw new Error("name an ACP agent after `acp:` (e.g. `frizzctl models acp:cursor`), or run `frizzctl models acp` to list agents")
+    const data = (await queryRpc("acpAgentModels", { agentId, ...(refresh ? { refresh: true } : {}) }))?.result
+    if (args.json === true) return JSON.stringify(data, null, 2)
+    return `${formatAcpAgentModels(data)}\n\nSpawn with \`frizzctl spawn-thread --backend acp --model ${agentId}@<model> --prompt-file <file>\` (or \`--model ${agentId}\` for its default). \`--json\` prints raw JSON.`
+  }
+
+  const only = parseSpawnBackend(raw || undefined)
+  const want = (/** @type {"claude" | "codex" | "antigravity" | "opencode" | "acp"} */ b) => !only || only === b
+
+  if (only === "opencode") {
+    const data = (await queryRpc("opencodeModels"))?.result
+    if (args.json === true) return JSON.stringify(data, null, 2)
+    return `${formatOpencodeModels(data)}\n\nSpawn with \`frizzctl spawn-thread --backend opencode --model <provider>/<id>[#<variant>] --prompt-file <file>\` (or \`--model opencode:\` for its default). \`--json\` prints raw JSON.`
+  }
+
+  const [claude, codex, antigravity, acpAgents] = await Promise.all([
     want("claude") ? queryRpc("claudeModels").then((p) => p?.result) : Promise.resolve(undefined),
     want("codex") ? queryRpc("codexModels").then((p) => p?.result) : Promise.resolve(undefined),
     want("antigravity") ? queryRpc("antigravityModels", refresh ? { refresh: true } : undefined).then((p) => p?.result) : Promise.resolve(undefined),
+    (want("acp") || !only) ? queryRpc("acpAgents").then((p) => p?.result) : Promise.resolve(undefined),
   ])
   if (args.json === true) {
-    const out = only === "claude" ? claude : only === "codex" ? codex : only === "antigravity" ? antigravity : { claude, codex, antigravity }
+    const out = only === "claude" ? claude : only === "codex" ? codex : only === "antigravity" ? antigravity : only === "acp" ? acpAgents : { claude, codex, antigravity, acpAgents }
     return JSON.stringify(out, null, 2)
   }
+
   const sections = []
   if (want("claude")) {
     const list = Array.isArray(claude) ? claude : []
@@ -1872,6 +1982,36 @@ async function models(args) {
       })
       sections.push(`${head}\n${rows.join("\n")}`)
     }
+  }
+  if (want("acp") || !only) {
+    const agents = Array.isArray(acpAgents) ? acpAgents : []
+    const nativeOpencode = agents.find((/** @type {any} */ a) => a.id === "opencode" && a.native && a.available)
+    if (!only) {
+      sections.push(
+        nativeOpencode
+          ? "OpenCode (`--backend opencode`)\n  installed (native) — run `frizzctl models opencode` to list models, or spawn with `--backend opencode --model opencode:`"
+          : "OpenCode (`--backend opencode`)\n  not installed (or below native minimum version)",
+      )
+    }
+    const installed = agents.filter((/** @type {any} */ a) => a.available && !a.native)
+    const missing = agents.filter((/** @type {any} */ a) => !a.available)
+    const lines = []
+    if (installed.length) {
+      const idPad = Math.max(14, ...installed.map((/** @type {any} */ a) => `acp:${a.id}`.length + 2))
+      const labelPad = Math.max(18, ...installed.map((/** @type {any} */ a) => String(a.label ?? a.id).length + 2))
+      for (const a of installed) {
+        lines.push(`  ${`acp:${a.id}`.padEnd(idPad)}${String(a.label ?? a.id).padEnd(labelPad)}(${a.command}) — run \`frizzctl models acp:${a.id}\` for its models`)
+      }
+    } else {
+      lines.push("  (no standalone ACP agents installed on PATH)")
+    }
+    if (only === "acp" && nativeOpencode) {
+      lines.push("  acp:opencode  OpenCode            (runs natively under `--backend opencode`; `acp:opencode` also works over ACP)")
+    }
+    if (missing.length) {
+      lines.push(`  not on PATH: ${missing.map((/** @type {any} */ a) => `${a.id} (${a.command})`).join(", ")}`)
+    }
+    sections.push(`ACP agents (\`--backend acp\`)\n${lines.join("\n")}`)
   }
   return `${sections.join("\n\n")}\n\nSpawn with \`frizzctl spawn-thread --backend <backend> --model <id> [--effort <level>] --prompt-file <file>\` (or \`frizzctl spawn-child\`). \`--json\` prints raw JSON.`
 }
@@ -3062,6 +3202,8 @@ const CLI = {
       'frizzctl spawn-thread --model opus --effort high --title "Port the relay to Bun" --prompt-file prompt.md',
       'frizzctl spawn-thread --project nub --model opus --effort high --title "Bump the SDK pin" --prompt-file prompt.md',
       'frizzctl spawn-thread --backend antigravity --model gemini-4-neon --effort high --title "Audit with Gemini" --prompt-file prompt.md',
+      'frizzctl spawn-thread --backend acp --model cursor --title "Review with Cursor" --prompt-file prompt.md',
+      'frizzctl spawn-thread --backend opencode --model opencode: --title "Run on OpenCode" --prompt-file prompt.md',
     ],
   },
   spawn_child: {
@@ -3071,16 +3213,19 @@ const CLI = {
       'frizzctl spawn-child --model opus --effort high --title "Fix the resolver and shepherd its PR" --prompt-file prompt.md',
       'frizzctl spawn-child --backend codex --model gpt-5.6-sol --effort high --prompt-file prompt.md',
       'frizzctl spawn-child --backend antigravity --model gemini-4-neon --effort high --prompt-file prompt.md',
+      'frizzctl spawn-child --backend acp --model gemini --prompt-file prompt.md',
     ],
   },
   models: {
     group: "Other threads",
-    summary: "List available models and effort levels for spawning threads (Claude, Codex, Antigravity)",
+    summary: "List available backends, ACP agents, models and effort levels for spawning threads",
     positional: ["backend"],
     examples: [
       "frizzctl models",
       "frizzctl models antigravity",
-      "frizzctl models antigravity --json",
+      "frizzctl models acp",
+      "frizzctl models acp:cursor",
+      "frizzctl models opencode --json",
     ],
   },
 }

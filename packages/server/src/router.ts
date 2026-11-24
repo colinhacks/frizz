@@ -193,9 +193,12 @@ import {
   SetOwnThreadTitleInput,
   SetOwnThreadTitleResult,
   AcpAgent,
+  ACP_MODEL_PREFIX,
   acpAgentIdFromModel,
   acpModelIdFromModel,
   OpencodeModels,
+  OPENCODE_MODEL_PREFIX,
+  isOpencodeModel,
   opencodeModelRef,
   backendUsesAcpTransport,
   AntigravityModels,
@@ -1115,46 +1118,131 @@ export function createRouter(ctx: AppContext) {
     return { backend: (row.backend ?? "claude") as ThreadPermission["backend"], ...(mode.success ? { permissionMode: mode.data } : {}) }
   }
 
+  /** Which backend a prefixed model slug names (`antigravity:`, `opencode:`, `acp:`), if any. */
+  function prefixedBackendOf(model: string | null | undefined): Backend | undefined {
+    if (isAntigravityModel(model)) return "antigravity"
+    if (isOpencodeModel(model)) return "opencode"
+    if (typeof model === "string" && model.startsWith(ACP_MODEL_PREFIX)) return "acp"
+    return undefined
+  }
+
   /** Normalize backend + model for a worker-initiated spawn (`spawnThread` / `spawnChild`). Infers
-   *  `antigravity` from an `antigravity:` model slug when `backend` is omitted, refuses a contradictory
-   *  backend/model pairing, and normalizes unprefixed Antigravity model ids to `antigravity:<id>`. */
-  function resolveSpawnTarget(input: { backend?: Backend; model?: string }): { backend: Backend; dispatchBackend?: Backend; model?: string } {
-    if (input.backend && input.backend !== "antigravity" && isAntigravityModel(input.model)) {
-      throw new RpcRefusal(`model \`${input.model}\` is an Antigravity model slug and cannot be used with backend \`${input.backend}\`. Pass \`--backend antigravity\` (or omit \`--backend\`)`)
+   *  `antigravity`, `opencode`, or `acp` from a prefixed model slug when `backend` is omitted, refuses
+   *  contradictory backend/model pairings, and normalizes bare model ids to their canonical slug. */
+  function resolveSpawnTarget(input: { backend?: Backend; model?: string; effort?: string }): { backend: Backend; dispatchBackend?: Backend; model?: string } {
+    const prefixed = prefixedBackendOf(input.model)
+    if (input.backend && prefixed && input.backend !== prefixed) {
+      throw new RpcRefusal(`model \`${input.model}\` is a \`${prefixed}\` model slug and cannot be used with backend \`${input.backend}\`. Pass \`--backend ${prefixed}\` (or omit \`--backend\`)`)
     }
-    const inferred = !input.backend && isAntigravityModel(input.model)
-    const backend: Backend = input.backend ?? (inferred ? "antigravity" : "claude")
-    const dispatchBackend = input.backend ?? (inferred ? "antigravity" : undefined)
+    const inferred = !input.backend ? prefixed : undefined
+    const backend: Backend = input.backend ?? inferred ?? "claude"
+    const dispatchBackend = input.backend ?? inferred
     if (backend === "antigravity") {
       const raw = input.model?.trim()
       const model = raw ? (isAntigravityModel(raw) ? raw : antigravityModelSlug(raw)) : ANTIGRAVITY_MODEL_PREFIX
       return { backend, dispatchBackend: "antigravity", model }
     }
+    if (backend === "opencode") {
+      const raw = input.model?.trim()
+      let model = raw ? (isOpencodeModel(raw) ? raw : `${OPENCODE_MODEL_PREFIX}${raw}`) : OPENCODE_MODEL_PREFIX
+      if (model !== OPENCODE_MODEL_PREFIX) {
+        const ref = opencodeModelRef(model)
+        if (!ref) {
+          throw new RpcRefusal(`OpenCode model \`${raw}\` must be \`<provider>/<id>\` (or \`opencode:\` for the default). Run \`frizzctl models opencode\` to list available models`)
+        }
+        if (input.effort) {
+          if (ref.variant && ref.variant !== input.effort) {
+            throw new RpcRefusal(`OpenCode model \`${model}\` already specifies variant \`${ref.variant}\`, which disagrees with \`--effort ${input.effort}\`. Give one`)
+          }
+          if (!ref.variant) model = `${model}#${input.effort}`
+        }
+      }
+      return { backend, dispatchBackend: "opencode", model }
+    }
+    if (backend === "acp") {
+      const raw = input.model?.trim()
+      const model = raw ? (raw.startsWith(ACP_MODEL_PREFIX) ? raw : `${ACP_MODEL_PREFIX}${raw}`) : ""
+      if (!acpAgentIdFromModel(model)) {
+        const installed = listAcpAgents(ctx.getSettings().acpAgents).filter((a) => a.bin).map((a) => `\`${a.id}\``)
+        const hint = installed.length ? ` Installed agents: ${installed.join(", ")}.` : ""
+        throw new RpcRefusal(`an ACP spawn needs an agent id (\`acp:<agent>\` or \`acp:<agent>@<model>\`).${hint} Run \`frizzctl models acp\` to list agents`)
+      }
+      return { backend, dispatchBackend: "acp", model }
+    }
     return { backend, dispatchBackend, model: input.model }
   }
 
-  /** Validate an Antigravity model and thinking level against the signed-in account's live catalogue
-   *  before starting a thread, so a mistyped model id or unsupported effort fails with exit 2 and names
-   *  what the account actually offers instead of silently launching the default model. */
-  async function validateAntigravitySpawn(model: string, effort: string | undefined): Promise<void> {
-    if (!ctx.antigravityBridge) return
-    const catalogue = await ctx.antigravityBridge.models(ctx.project.dir)
-    if (!catalogue.available) {
-      throw new RpcRefusal(catalogue.error ?? "Antigravity is not installed on this machine (`agy` is not on PATH)")
+  /** Validate a spawned model/effort against the live backend catalogue before starting a thread, so a
+   *  mistyped model id, uninstalled ACP agent, or unsupported effort fails with exit 2 and names what
+   *  this machine actually offers. */
+  async function validateSpawnTarget(backend: Backend, model: string | undefined, effort: string | undefined): Promise<void> {
+    if (backend === "antigravity") {
+      if (!ctx.antigravityBridge) return
+      const catalogue = await ctx.antigravityBridge.models(ctx.project.dir)
+      if (!catalogue.available) {
+        throw new RpcRefusal(catalogue.error ?? "Antigravity is not installed on this machine (`agy` is not on PATH)")
+      }
+      if (catalogue.error && catalogue.models.length === 0) {
+        throw new RpcRefusal(catalogue.error)
+      }
+      const modelId = antigravityModelId(model)
+      if (!modelId || catalogue.models.length === 0) return
+      const entry = catalogue.models.find((m) => m.id === modelId)
+      if (!entry) {
+        const available = catalogue.models.map((m) => (m.efforts.length ? `\`${m.id}\` (${m.efforts.join("/")})` : `\`${m.id}\``)).join(", ")
+        throw new RpcRefusal(`Antigravity does not offer model \`${modelId}\` on this account. Available models: ${available}. Run \`frizzctl models antigravity\` for details`)
+      }
+      if (effort && entry.efforts.length > 0 && !entry.efforts.includes(effort)) {
+        const def = entry.defaultEffort ? ` (default: ${entry.defaultEffort})` : ""
+        throw new RpcRefusal(`Antigravity model \`${modelId}\` does not accept effort \`${effort}\`. Supported efforts: ${entry.efforts.join(", ")}${def}`)
+      }
+      return
     }
-    if (catalogue.error && catalogue.models.length === 0) {
-      throw new RpcRefusal(catalogue.error)
+    if (backend === "acp") {
+      const agentId = acpAgentIdFromModel(model)
+      if (!agentId) return
+      const custom = ctx.getSettings().acpAgents
+      const spec = resolveAcpAgent(agentId, custom)
+      if (!spec) {
+        const known = listAcpAgents(custom).map((a) => `\`${a.id}\`${a.bin ? " (installed)" : ""}`).join(", ")
+        throw new RpcRefusal(`unknown ACP agent \`${agentId}\`. Known agents: ${known}. Run \`frizzctl models acp\` to see what is installed`)
+      }
+      if (!spec.bin) {
+        const installed = listAcpAgents(custom).filter((a) => a.bin).map((a) => `\`${a.id}\``)
+        const others = installed.length ? ` Installed ACP agents: ${installed.join(", ")}.` : ""
+        throw new RpcRefusal(`ACP agent "${spec.label}" is not installed (\`${spec.command}\` is not on PATH).${others} Run \`frizzctl models acp\` to see what is installed`)
+      }
+      const modelId = acpModelIdFromModel(model)
+      if (modelId && ctx.acpBridge) {
+        const catalogue = await ctx.acpBridge.agentModels(agentId, ctx.project.dir)
+        if (catalogue.models.length > 0 && !catalogue.models.some((m) => m.id === modelId)) {
+          const available = catalogue.models.slice(0, 12).map((m) => `\`${m.id}\``).join(", ")
+          const more = catalogue.models.length > 12 ? ` (+${catalogue.models.length - 12} more)` : ""
+          throw new RpcRefusal(`ACP agent \`${agentId}\` does not advertise model \`${modelId}\`. Available models: ${available}${more}. Run \`frizzctl models acp:${agentId}\` for the full list`)
+        }
+      }
+      return
     }
-    const modelId = antigravityModelId(model)
-    if (!modelId || catalogue.models.length === 0) return
-    const entry = catalogue.models.find((m) => m.id === modelId)
-    if (!entry) {
-      const available = catalogue.models.map((m) => (m.efforts.length ? `\`${m.id}\` (${m.efforts.join("/")})` : `\`${m.id}\``)).join(", ")
-      throw new RpcRefusal(`Antigravity does not offer model \`${modelId}\` on this account. Available models: ${available}. Run \`frizzctl models antigravity\` for details`)
-    }
-    if (effort && entry.efforts.length > 0 && !entry.efforts.includes(effort)) {
-      const def = entry.defaultEffort ? ` (default: ${entry.defaultEffort})` : ""
-      throw new RpcRefusal(`Antigravity model \`${modelId}\` does not accept effort \`${effort}\`. Supported efforts: ${entry.efforts.join(", ")}${def}`)
+    if (backend === "opencode") {
+      if (!ctx.opencodeBridge) return
+      const catalogue = await ctx.opencodeBridge.models(ctx.project.dir)
+      if (!catalogue.available) {
+        throw new RpcRefusal(catalogue.error ?? "OpenCode is not installed on this machine (or is below the native minimum version)")
+      }
+      if (catalogue.error && catalogue.models.length === 0) {
+        throw new RpcRefusal(catalogue.error)
+      }
+      const ref = opencodeModelRef(model)
+      if (!ref || catalogue.models.length === 0) return
+      const entry = catalogue.models.find((m) => m.providerID === ref.providerID && m.id === ref.id)
+      if (!entry) {
+        const sample = catalogue.models.slice(0, 10).map((m) => `\`${m.providerID}/${m.id}\``).join(", ")
+        const more = catalogue.models.length > 10 ? ` (+${catalogue.models.length - 10} more)` : ""
+        throw new RpcRefusal(`OpenCode does not offer model \`${ref.providerID}/${ref.id}\`. Available: ${sample}${more}. Run \`frizzctl models opencode\` for the full list`)
+      }
+      if (ref.variant && entry.variants.length > 0 && !entry.variants.includes(ref.variant)) {
+        throw new RpcRefusal(`OpenCode model \`${ref.providerID}/${ref.id}\` does not accept variant \`${ref.variant}\`. Supported variants: ${entry.variants.join(", ")}`)
+      }
     }
   }
 
@@ -1163,7 +1251,8 @@ export function createRouter(ctx: AppContext) {
   // the thread lands on, and so the log a reader of this project checks first. The new thread starts no
   // looser than the thread that asked for it (dispatch.ts spawnedThreadPermission).
   function spawnForThread({ from, input, spawner }: Parameters<ThreadSpawner>[0]): Promise<{ slug: string; sessionId: string }> {
-    const resolvedBackend = input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
+    const inferred = prefixedBackendOf(input.model)
+    const resolvedBackend = input.backend ?? inferred ?? "claude"
     const permissionMode = spawnedThreadPermission(resolvedBackend, spawner, ctx.getSettings())
     return audit(
       "dispatch",
@@ -1175,7 +1264,7 @@ export function createRouter(ctx: AppContext) {
           permissionMode,
         },
       },
-      () => ctx.dispatcher.dispatch(input, { backend: input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : undefined), permissionMode }),
+      () => ctx.dispatcher.dispatch(input, { backend: input.backend ?? inferred, permissionMode }),
       (result) => ({ thread: result.slug, detail: { sessionId: result.sessionId } }),
     )
   }
@@ -3216,14 +3305,15 @@ export function createRouter(ctx: AppContext) {
       // byte-identical. The resume path needs NO analog — resume reads the backend from the row's
       // `backend` column (backendFor(row.backend)), which dispatch already stamped for a codex thread.
       handler: ({ input }) => {
-        const backend = input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
+        const inferred = prefixedBackendOf(input.model)
+        const backend = input.backend ?? inferred ?? "claude"
         return audit(
           "dispatch",
           {
             project: thisProject,
             detail: { prompt: textDigest(input.prompt), backend, model: input.model ?? null, effort: input.effort ?? null },
           },
-          () => ctx.dispatcher.dispatch(input, { backend: input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : undefined) }),
+          () => ctx.dispatcher.dispatch(input, { backend: input.backend ?? inferred }),
           (result) => ({ thread: result.slug, detail: { sessionId: result.sessionId, permissionMode: ctx.storage.getSession(result.slug)?.permission_mode ?? null } }),
         )
       },
@@ -3329,7 +3419,7 @@ export function createRouter(ctx: AppContext) {
       input: SpawnThreadInput,
       output: SpawnThreadResult,
       handler: ({ input }) => {
-        const auditBackend = input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
+        const auditBackend = input.backend ?? prefixedBackendOf(input.model) ?? "claude"
         return audit("spawnThread", {
           project: thisProject,
           thread: input.from,
@@ -3338,7 +3428,7 @@ export function createRouter(ctx: AppContext) {
           const sender = ctx.storage.getSession(input.from)
           if (!sender) throw new RpcRefusal(`the calling thread ${input.from} is not registered in this project`)
           const target = resolveSpawnTarget(input)
-          if (target.backend === "antigravity") await validateAntigravitySpawn(target.model!, input.effort)
+          await validateSpawnTarget(target.backend, target.model, input.effort)
           // A registered project nobody has opened yet is opened now, as a request addressed to it would
           // be: a steer needs a thread that already exists, but a spawn exists to start work there.
           const named = input.project ? findProjectBySegment(input.project) : undefined
@@ -3380,7 +3470,7 @@ export function createRouter(ctx: AppContext) {
       input: SpawnChildInput,
       output: SpawnChildResult,
       handler: ({ input }) => {
-        const auditBackend = input.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
+        const auditBackend = input.backend ?? prefixedBackendOf(input.model) ?? "claude"
         return audit("spawnChild", {
           project: thisProject,
           thread: input.from,
@@ -3395,7 +3485,7 @@ export function createRouter(ctx: AppContext) {
             return { refused: "this thread is itself a child thread, and children cannot start children of their own. Use an in-session sub-agent, or hand the work back to your parent in your handoff" }
           }
           const target = resolveSpawnTarget(input)
-          if (target.backend === "antigravity") await validateAntigravitySpawn(target.model!, input.effort)
+          await validateSpawnTarget(target.backend, target.model, input.effort)
           const kind = target.backend
           const inherited = kind === (sender.backend ?? "claude")
             ? PermissionMode.safeParse(sender.permission_pending ?? sender.permission_mode)

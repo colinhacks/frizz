@@ -76,7 +76,7 @@ test("the frizz MCP server identifies as `frizz` and exposes its worker tools", 
     for (const required of ["prompt", "model"]) {
       assert.ok(list.result.tools[0].inputSchema.required.includes(required))
     }
-    assert.deepEqual(list.result.tools[0].inputSchema.properties.backend.enum, ["claude", "codex", "antigravity"])
+    assert.deepEqual(list.result.tools[0].inputSchema.properties.backend.enum, ["claude", "codex", "antigravity", "opencode", "acp"])
     // `goal` requires only `action` — `prompt` and a valid `every_seconds` are required for
     // `start` alone, enforced in the handler so a lenient client cannot skip them either (asserted
     // below). It exposes NO THREAD parameter: the slug comes from the server's env, never from the

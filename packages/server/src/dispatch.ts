@@ -36,7 +36,7 @@ import type { OpencodeBridge } from "./backend/opencode-bridge.ts"
 import { opencodeModeOf } from "./backend/opencode-types.ts"
 import type { AntigravityBridge } from "./backend/antigravity-bridge.ts"
 import { acpAgentIdFromModel } from "./backend/acp-agents.ts"
-import { ANTIGRAVITY_MODEL_PREFIX, acpModelIdFromModel, antigravityModelId, antigravityModelSlug, isAntigravityModel, opencodeModelRef } from "@frizz/shared"
+import { ACP_MODEL_PREFIX, ANTIGRAVITY_MODEL_PREFIX, OPENCODE_MODEL_PREFIX, acpModelIdFromModel, antigravityModelId, antigravityModelSlug, isAntigravityModel, isOpencodeModel, opencodeModelRef } from "@frizz/shared"
 import { claudeBrokerBridgeEnabled, type ClaudeAgentBrokerBridge } from "./backend/claude-agent-broker-bridge.ts"
 import { claudeUltracodeFlags, resolveClaudeEffort } from "./backend/claude-effort.ts"
 import { ProviderAuthRequiredError } from "./backend/auth-status.ts"
@@ -1136,7 +1136,14 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       // without traversing the RPC parser. Reject malformed explicit slugs before scratch/spawn/SQLite.
       input = DispatchInput.parse(input)
       const settings = deps.getSettings()
-      const kind: BackendKind = opts?.backend ?? (isAntigravityModel(input.model) ? "antigravity" : "claude")
+      const inferredKind: BackendKind | undefined = isAntigravityModel(input.model)
+        ? "antigravity"
+        : isOpencodeModel(input.model)
+          ? "opencode"
+          : typeof input.model === "string" && input.model.startsWith(ACP_MODEL_PREFIX)
+            ? "acp"
+            : undefined
+      const kind: BackendKind = opts?.backend ?? inferredKind ?? "claude"
       // Auth preflight (Slice A): block ONLY on a positive "signed-out" — "unknown" (flaky read,
       // missing binary, timeout) fails OPEN so a network blip never traps a logged-in user. Runs
       // before the scratchpad/spawn/registry so a rejected dispatch leaves zero trace; the browser
@@ -1283,14 +1290,20 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         // in `agent_session_id` (like codex) and the agent id in `acp_agent`.
         if (kind === "acp") {
           const bridge = deps.acpBridge
-          const agentId = acpAgentIdFromModel(model)
+          // Normalize both `gemini` / `gemini@model` and `acp:gemini` / `acp:gemini@model` to the
+          // canonical `acp:<agent>[@<model>]` slug, and never inherit Claude's `settings.model`.
+          const rawModel = input.model?.trim()
+          const acpModel = rawModel
+            ? (rawModel.startsWith(ACP_MODEL_PREFIX) ? rawModel : `${ACP_MODEL_PREFIX}${rawModel}`)
+            : undefined
+          const agentId = acpAgentIdFromModel(acpModel)
           if (!bridge || !agentId) {
             cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
-            throw new Error(!bridge ? "The ACP bridge is unavailable; cannot start this thread." : `An ACP dispatch needs an agent: pick one in the composer (model \`acp:<agent>\`), got ${JSON.stringify(model ?? null)}.`)
+            throw new Error(!bridge ? "The ACP bridge is unavailable; cannot start this thread." : `An ACP dispatch needs an agent: pick one in the composer (model \`acp:<agent>\`), got ${JSON.stringify(input.model ?? null)}.`)
           }
           const firstPrompt = [acpWorkerContract(sessionId, deps.project.dir, { childThreads: settings.childThreads }), prompt].filter(Boolean).join("\n\n")
           try {
-            const spawned = await bridge.spawnDispatch({ threadSlug: slug, sessionId, cwd: deps.project.dir, agentId, modelId: acpModelIdFromModel(model), prompt: firstPrompt, userText: input.prompt })
+            const spawned = await bridge.spawnDispatch({ threadSlug: slug, sessionId, cwd: deps.project.dir, agentId, modelId: acpModelIdFromModel(acpModel), prompt: firstPrompt, userText: input.prompt })
             deps.storage.upsertSession({
               slug,
               session_id: sessionId,
@@ -1308,7 +1321,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
               meta: null,
               seen_at: null,
               transcript_id: null,
-              model: model ?? null,
+              model: acpModel ?? null,
               effort: null,
               permission_mode: permissionMode,
             })
@@ -1336,7 +1349,17 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
             cleanupDispatchFiles(scratchRel, { argv: [], env: {}, prewrite: [] }, sessionId)
             throw new Error("The OpenCode bridge is unavailable; cannot start this thread.")
           }
-          const selected = opencodeModelRef(model)
+          // Normalize both `<provider>/<id>[#<variant>]` and `opencode:<provider>/<id>[#<variant>]`,
+          // fold an explicit `effort` into `#<variant>` when none was embedded, and never inherit
+          // Claude's `settings.model` when no OpenCode model was named.
+          const rawModel = input.model?.trim()
+          let ocModel = rawModel
+            ? (isOpencodeModel(rawModel) ? rawModel : `${OPENCODE_MODEL_PREFIX}${rawModel}`)
+            : OPENCODE_MODEL_PREFIX
+          if (input.effort && !ocModel.includes("#") && opencodeModelRef(ocModel)) {
+            ocModel = `${ocModel}#${input.effort}`
+          }
+          const selected = opencodeModelRef(ocModel)
           try {
             const spawned = await bridge.spawnDispatch({ threadSlug: slug, sessionId, cwd: deps.project.dir, ...(selected ? { model: selected } : {}), mode: opencodeModeOf(permissionMode), prompt })
             deps.storage.upsertSession({
@@ -1356,7 +1379,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
               meta: null,
               seen_at: null,
               transcript_id: null,
-              model: model ?? null,
+              model: ocModel,
               effort: null,
               permission_mode: permissionMode,
             })

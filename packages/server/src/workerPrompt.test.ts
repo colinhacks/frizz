@@ -71,6 +71,23 @@ test("the contract bounds the work to the task, not only the stopping", () => {
   }
 })
 
+// THE OFFER (2026-11-24; the reasons are beside STOP_CRITERION). The ceiling caps what a worker DOES
+// unasked, not what it offers: work it noticed, and the implementation its report proposes, go to the
+// human as a question whose yes has this thread do it. The line it replaced sent each one back to the
+// human to dispatch as a new thread, a second round-trip per follow-up.
+test("a worker offers the natural next step instead of leaving it for the human to dispatch", () => {
+  for (const backend of ["claude", "codex", "acp"] as const) {
+    const c = buildWorkerPrompt(backend).replace(/\s+/g, " ")
+    assert.match(c, /\*\*A THREAD IS MEASURED BY HOW MUCH IT FINISHES PER HUMAN INTERACTION\.\*\*/, backend)
+    assert.match(c, /CEILING — ON WHAT YOU DO UNASKED, NEVER ON WHAT YOU OFFER/, backend)
+    assert.match(c, /OFFER each, in a ` ```question ` whose recommended option has THIS thread do it, its road hung on that yes\. Offer only what you would recommend; drop the rest\./, backend)
+    assert.match(c, /Implementing what it proposes is the NEXT job, not yours unless you were asked, and the first thing you offer/, backend)
+    assert.match(c, /2\. \*\*OFFER IT\*\*/, backend)
+    assert.doesNotMatch(c, /let the human dispatch it/, backend)
+    assert.doesNotMatch(c, /not permission to seek/, backend)
+  }
+})
+
 // THE WHOLE ROAD (2026-11-10; the reasons are beside STOP_CRITERION). A worker that stops to ask asks for
 // every later stop on the way to the finish as well, as `when:` follow-ups, so one reply can carry the
 // thread to merge. The guard clause is half the rule: without it, this reads as licence to ask more often.
@@ -291,7 +308,7 @@ test("an Antigravity contract names its own tools, the Auto sandbox, and the tur
   assert.doesNotMatch(prompt, /frizzctl monitor|monitors:/)
   for (const other of ["claude", "codex", "acp", "opencode"] as const) {
     assert.doesNotMatch(buildWorkerPrompt(other), /You are an Antigravity session|run_command/, other)
-    assert.match(buildWorkerPrompt(other), /--backend claude\|codex\|antigravity/, other)
+    assert.match(buildWorkerPrompt(other), /--backend claude\|codex\|antigravity\|opencode\|acp/, other)
     assert.match(buildWorkerPrompt(other), /`frizzctl models`/, other)
   }
 })
