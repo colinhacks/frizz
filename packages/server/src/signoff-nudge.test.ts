@@ -168,8 +168,12 @@ test("a rest with no fence is told how to sign off, and the text names all three
     // every codebase always has more to do — so a worker forbidden to stop can only stop by widening
     // what it was asked. Traced 2026-08-17 on `investigate-nubjs-nub-642`: dispatched to TRIAGE an
     // issue, it shipped seven commits instead. See DEFAULT_RECURRING_PROMPT for the full account.
-    assert.match(h.delivered[0], /FINDING TO REPORT/, "discovered work is reported, not adopted")
+    // …and since 2026-11-24 it is OFFERED, so one answer carries it through, rather than named for the
+    // human to dispatch as a thread of its own.
+    assert.match(h.delivered[0], /FINDING TO OFFER/, "discovered work is offered, not adopted")
+    assert.doesNotMatch(h.delivered[0], /let the human dispatch/, "and not left for the human to dispatch")
     assert.match(h.delivered[0], /THE DOCUMENT IS THE ENDING/, "a triage/review/plan ends with its write-up")
+    assert.match(h.delivered[0], /offer the implementation/, "…and offers what it proposes")
     assert.match(h.delivered[0], /not permission to go build the answer/, "an unanswered question is not a mandate")
     // …and the old copy that made the wrong reading correct must not come back: it listed a written-up
     // plan among the things that are NOT an ending, which for an analysis task denies the deliverable.

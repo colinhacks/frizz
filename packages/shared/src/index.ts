@@ -1385,7 +1385,7 @@ export const RecurringPromptText = z.string().trim().min(1).max(RECURRING_PROMPT
 // analysis, waited 36 hours on an unanswered question, and then — bumped by this prompt at every rest,
 // with no ceiling on "keep going" — decided the question itself and shipped seven commits. But the
 // guards no longer need to live HERE: the worker contract states the ceiling at length (discovered work
-// is a finding to report, a triage/review/plan is finished when its write-up is), and the fence-less-rest
+// is a finding to offer, never adopted unasked; a triage/review/plan is finished when its write-up is), and the fence-less-rest
 // nudge (`SIGNOFF_NUDGE_MESSAGE`, pinned in `signoff-nudge.test.ts`) repeats it. So this string went
 // back to the instruction alone.
 //
@@ -2152,17 +2152,17 @@ function signoffNudgeText(needsInput: boolean): string {
   "is genuinely finished. A milestone, a green test run and a long turn are none of them endings, and",
   "neither is naming the next step or writing it into a scratch file.",
   "",
-  "**AND THAT TASK IS ALSO THE CEILING — finish it, and nothing else.** Work you notice on the way is a",
-  "FINDING TO REPORT in your sign-off, never work to take on: the bug beside the one you were sent for,",
-  "the refactor the code obviously wants, the second issue the first one touches. Widening the job is not",
-  "thoroughness — it is a different job nobody asked for, and it buries the answer they did ask for under",
-  "changes they now have to review. If it should be done, name it in one line and let the human dispatch",
-  "it.",
+  "**AND THAT TASK IS ALSO THE CEILING — finish it, and take on nothing else unasked.** Work you notice on",
+  "the way is a FINDING TO OFFER in your sign-off, never work to take on unasked: the bug beside the one you",
+  "were sent for, the second issue the first one touches. Widening the job is not thoroughness — it is a",
+  "different job nobody asked for, and it buries the answer they did ask for under changes they now have to",
+  "review. If it should be done, offer it in a ```question whose recommended option has this thread do it,",
+  "so one answer carries it through. Never leave it as a line for the human to dispatch.",
   "",
   "**IF WHAT YOU WERE ASKED FOR IS A DOCUMENT, THE DOCUMENT IS THE ENDING.** A triage, a review, an",
   "investigation, a recommendation, a plan — when that is the deliverable, the finished write-up IS the",
   "work. Implementing what it proposes is the NEXT job, and not yours unless you were asked. Sign off with",
-  "the write-up.",
+  "the write-up, and offer the implementation in a ```question.",
   "",
   "**DECIDE RATHER THAN ASK.** Stop only for a decision that is genuinely the human's AND that blocks you",
   "right now: ask that one in a ```question fence. Every other open choice INSIDE the task — a name, a",
