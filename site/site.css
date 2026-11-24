@@ -61,7 +61,8 @@ body {
 }
 img { display: block; max-width: 100%; height: auto; }
 a { color: inherit; }
-a:focus-visible { outline: 2px solid var(--gold-deep); outline-offset: 3px; border-radius: 6px; }
+/* :where() so a pill or a card keeps its own radius under the ring; only a bare text link takes 6px. */
+:where(a):focus-visible { outline: 2px solid var(--gold-deep); outline-offset: 3px; border-radius: 6px; }
 ::selection { background: rgba(232, 185, 35, 0.38); color: var(--ink); }
 code, kbd, pre { font-family: var(--mono); font-feature-settings: "liga" 0, "calt" 0; }
 .wrap { max-width: calc(var(--max) + var(--pad) * 2); margin: 0 auto; padding: 0 var(--pad); }
@@ -83,10 +84,8 @@ kbd {
 .nav {
   position: sticky; top: 0; z-index: 20;
   background: var(--paper);
-  border-bottom: 1px solid transparent;
-  transition: border-color 0.25s ease;
+  border-bottom: 1px solid var(--rule);
 }
-.nav.scrolled, .nav.ruled { border-bottom-color: var(--rule); }
 .nav-in { display: flex; align-items: center; height: 64px; gap: 28px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 650; font-size: 18px; letter-spacing: -0.02em; }
 .brand img { width: 30px; height: 30px; }
@@ -342,7 +341,7 @@ kbd {
 .termwin { border-radius: 16px; background: #0d0e10; color: #d9d6cf; box-shadow: var(--shadow-small); overflow: hidden; }
 .termwin-bar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
 .termwin-bar i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, 0.13); }
-.termwin-bar span { margin-left: 10px; font: 500 13px/1 var(--sans); color: rgba(255, 255, 255, 0.42); }
+.termwin-bar span { margin-left: 10px; font: 500 13px/1 var(--sans); color: rgba(255, 255, 255, 0.48); }
 /* The R menu, as rows rather than a <pre>, so nothing can scroll sideways. */
 .termbody { padding: 24px 26px 28px; font: 400 14px/1.5 var(--mono); }
 .termbody .title { margin: 0 0 18px; color: #fff; font-weight: 500; }
@@ -414,7 +413,7 @@ kbd {
 }
 .term code { font: inherit; }
 .term .prompt { color: var(--gold); }
-.term .c { color: rgba(255, 255, 255, 0.42); }
+.term .c { color: rgba(255, 255, 255, 0.48); }
 .term + ul { margin-top: 20px; }
 .doc .callout { margin: 0 0 18px; padding: 4px 0 4px 20px; border-left: 3px solid var(--gold); }
 .doc .callout p { margin: 0; }
@@ -439,9 +438,11 @@ kbd {
     background: var(--gold); color: var(--ink); font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums;
     box-shadow: 0 0 0 3px rgba(12, 14, 16, 0.85);
   }
+  .shot .num-marker:first-of-type { margin-left: 0; } /* it marks the rail at the window's left edge, and half of it hung outside */
   .legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px 24px; max-width: 1060px; margin: 40px auto 0; padding: 0; list-style: none; text-align: left; }
   .legend li { display: grid; grid-template-columns: 24px 1fr; align-content: start; gap: 0 12px; font-size: 15px; line-height: 1.38; }
-  .legend .k { grid-row: span 2; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--paper-hi); font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums; }
+  /* The key is the marker it explains: gold with an ink number. Lifted onto its title's cap band. */
+  .legend .k { grid-row: span 2; width: 24px; height: 24px; margin-top: -2.5px; border-radius: 50%; display: grid; place-items: center; background: var(--gold); color: var(--ink); font: 700 13px/1 var(--sans); font-variant-numeric: tabular-nums; }
   .legend b { font-weight: 640; letter-spacing: -0.01em; }
   .legend span { color: var(--ink-3); }
 }

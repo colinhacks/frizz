@@ -404,12 +404,6 @@
         document.documentElement.classList.add("js")
         const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches
 
-        // The nav takes a hairline once the page moves.
-        const nav = document.getElementById("nav")
-        const onScrollNav = () => nav.classList.toggle("scrolled", scrollY > 8)
-        addEventListener("scroll", onScrollNav, { passive: true })
-        onScrollNav()
-
         // The install command copies on a click anywhere on the pill, unless that click ended a text selection.
         for (const pill of document.querySelectorAll("[data-copy]")) {
           const status = pill.querySelector("[role=status]")
