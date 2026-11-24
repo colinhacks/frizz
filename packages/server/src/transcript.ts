@@ -3,6 +3,7 @@ import { createHash, type Hash } from "node:crypto"
 import { StringDecoder } from "node:string_decoder"
 import { basename, dirname, join } from "node:path"
 import { homedir, tmpdir } from "node:os"
+import zlib from "node:zlib"
 import {
   DISPATCH_TASK_BANNER_MARKER,
   GITHUB_DISPATCH_UI_BOUNDARY,
@@ -4454,9 +4455,9 @@ interface TranscriptSourceBinding {
 }
 
 interface FixedTranscriptSnapshot extends TranscriptSourceBinding {
-  /** LAZY — materialises the whole file as a string. Only the codex projector needs it. */
+  /** LAZY — materialises JSONL text for the Codex and ACP projectors. */
   raw: string
-  /** LAZY — materialises the whole file as a Buffer. Prefer `size` and `readRange`. */
+  /** LAZY — materialises the physical file bytes, still compressed for a cold rollout. */
   bytes: Buffer
   /** The file's size at snapshot time, without reading a byte of it. */
   size: number
@@ -4494,7 +4495,7 @@ function sourceForThread(
       ? row.agent_session_id ?? row.session_id
       : backend === "acp" || backend === "opencode" || backend === "antigravity" ? row.session_id : row.transcript_id ?? row.session_id
     const path = backend === "codex"
-      ? (backendFor?.("codex") ?? defaultCodexBackend()).transcriptPath(nativeId)
+      ? (backendFor?.("codex") ?? defaultCodexBackend()).transcriptPath(nativeId, { includeCompressed: true })
       : backend === "acp" || backend === "opencode" || backend === "antigravity"
         ? backendFor?.(backend)?.transcriptPath(nativeId)
         : resolveTranscriptPath(project, nativeId)
@@ -4520,7 +4521,7 @@ function sourceForThread(
   if (existsSync(claudePath)) {
     return { slug, sessionId: slug, nativeId: slug, backend: "claude", runtimeGeneration: 0, path: claudePath }
   }
-  const rollout = (backendFor?.("codex") ?? defaultCodexBackend()).transcriptPath(slug)
+  const rollout = (backendFor?.("codex") ?? defaultCodexBackend()).transcriptPath(slug, { includeCompressed: true })
   if (rollout) {
     return { slug, sessionId: slug, nativeId: slug, backend: "codex", runtimeGeneration: 0, path: rollout }
   }
@@ -4694,7 +4695,11 @@ function fixedSnapshot(source: TranscriptSourceBinding): FixedTranscriptSnapshot
     return {
       ...source,
       get raw() {
-        if (rawText === undefined) rawText = this.bytes.toString("utf8")
+        if (rawText === undefined) {
+          rawText = source.backend === "codex" && path.endsWith(".zst")
+            ? decompressCodexRollout(size, () => this.bytes)
+            : this.bytes.toString("utf8")
+        }
         return rawText
       },
       get bytes() {
@@ -5269,11 +5274,26 @@ export function readEarlierThreadTranscriptPage(
   }
 }
 
-// Parse a codex rollout from an ABSOLUTE file path (the located ~/.codex/sessions/**/rollout-*.jsonl).
+// Keep the snapshot and cursor on the physical file; only the projector sees decompressed JSONL.
+// Node's own Zstd arrived in 22.15 and 23.8, inside Frizz's engines range, so it is read off the module
+// rather than imported by name: a named import fails to link on 22.13 and would stop the server booting.
+// On a Node without it the rollout projects as empty, as it did before this reader existed. Measured
+// 2026-11-23 on a 100 MB rollout: 125ms to decode here, against 553ms for the pure-JS fzstd.
+const COLD_CODEX_ROLLOUT_MAX_BYTES = 512 * 1024 * 1024
+function decompressCodexRollout(size: number, readBytes: () => Buffer): string {
+  if (typeof zlib.zstdDecompressSync !== "function") return ""
+  if (size > COLD_CODEX_ROLLOUT_MAX_BYTES) throw new Error("compressed Codex rollout is too large")
+  return zlib.zstdDecompressSync(readBytes(), { maxOutputLength: COLD_CODEX_ROLLOUT_MAX_BYTES }).toString("utf8")
+}
+
+// Parse a codex rollout from an ABSOLUTE file path, including a cold .jsonl.zst rollout.
 // Missing/unreadable file → [] (the drawer renders its spinner / "transcript unavailable" state).
 export function readCodexTranscriptFile(absPath: string, nativeId = absPath): TranscriptMessage[] {
   try {
-    return parseCodexTranscript(readFileSync(absPath, "utf8"), `codex:${nativeId}`)
+    const raw = absPath.endsWith(".zst")
+      ? decompressCodexRollout(statSync(absPath).size, () => readFileSync(absPath))
+      : readFileSync(absPath, "utf8")
+    return parseCodexTranscript(raw, `codex:${nativeId}`)
   } catch {
     return []
   }
@@ -5318,15 +5338,13 @@ export function readThreadTranscript(
       return projectDeliveryLedger(path ? readAntigravityTranscriptFile(path, opencodeToolCards, row.session_id, acpUserRecordProjector) : [], parseDeliveryLedger(row.delivery_ledger))
     }
     if (row.backend === "codex") {
-      const backend = backendFor?.("codex") ?? defaultCodexBackend()
-      const nativeId = row.agent_session_id ?? row.session_id
-      const path = backend.transcriptPath(nativeId)
+      const source = sourceForThread(project, storage, slug, backendFor)
       // Codex carries the ledger too, for RENDERING only — see the append in router.followUp. Without
       // this a just-sent steer lives solely in the client's optimistic bubble, which the ghost floor
       // retires after the transcript advances 60s; the rollout is slower than that often enough to
       // matter (8 of 75 measured sends).
       const codexLedger = parseDeliveryLedger(row.delivery_ledger)
-      return projectDeliveryLedger(path ? readCodexTranscriptFile(path, nativeId) : [], codexLedger)
+      return projectDeliveryLedger(source ? readCodexTranscriptFile(source.path, source.nativeId) : [], codexLedger)
     }
     // Claude rows carry the follow-up delivery ledger: project every not-yet-delivered send as its gray
     // queued bubble (server truth — reload-safe; the client's optimistic copy consumes it by deliveryId).

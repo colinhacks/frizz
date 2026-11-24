@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir, homedir } from "node:os"
 import { join } from "node:path"
+import zlib from "node:zlib"
 import { projectStateDir } from "./frizz-paths.ts"
 import { projectRetiredBackgroundOps, projectTranscriptPeerNames } from "./transcript.ts"
 import { relayMessage } from "./completion-relay.ts"
@@ -2176,6 +2177,61 @@ test("readThreadTranscript: a FOREIGN codex rollout renders through the codex re
     assert.equal(claude.length, 1)
     assert.equal(claude[0].text, "a terminal claude session")
   } finally {
+    h.cleanup()
+    rmSync(codexHome, { recursive: true, force: true })
+  }
+})
+
+test("a compressed Codex rollout renders on cold open and pages back without a resume", {
+  skip: !zlib.zstdCompressSync && "this Node version cannot generate the compressed fixture",
+}, () => {
+  const h = txHarness()
+  const codexHome = mkdtempSync(join(tmpdir(), "frizz-tx-codex-cold-"))
+  try {
+    const id = "019f4e0c-8ab2-7bc3-8b19-fc108b2d3114"
+    const day = join(codexHome, "sessions", "2026", "08", "24")
+    mkdirSync(day, { recursive: true })
+    const path = join(day, `rollout-2026-08-24T12-00-00-${id}.jsonl`)
+    const event = (type: string, message: string) =>
+      JSON.stringify({ type: "event_msg", timestamp: "2026-08-24T12:00:00.000Z", payload: { type, message } }) + "\n"
+    const raw = Array.from({ length: MAX_MESSAGES }, (_, i) => event("user_message", `Question ${i}`) + event("agent_message", `Answer ${i} — ✓`)).join("")
+    writeFileSync(path + ".zst", zlib.zstdCompressSync(raw))
+    h.store.upsertSession(txRow({}))
+    h.store.setBackend("t", "codex")
+    h.store.setAgentSession("t", id)
+    const backend = createCodexBackend({ codexHome })
+    const backendFor = () => backend
+    assert.equal(backend.transcriptPath(id), undefined, "the live tailer still only opens plain JSONL")
+
+    const page = readLatestThreadTranscriptPage(h.project, h.store, "t", backendFor)
+    assert.equal(page.messages.at(-1)?.text, `Answer ${MAX_MESSAGES - 1} — ✓`)
+    assert.ok(page.beforeCursor)
+    const earlier = readEarlierThreadTranscriptPage(h.project, h.store, "t", page.beforeCursor, backendFor)
+    assert.ok(earlier.messages.length > 0)
+    assert.equal(earlier.transcriptKey, page.transcriptKey)
+    assert.notEqual(earlier.messages.at(-1)?.sourceId, page.messages[0]?.sourceId)
+    const pushed = makeTranscriptReader(h.project, h.store, backendFor)("t")
+    assert.ok(pushed)
+    assert.deepEqual(pushed.messages, page.messages)
+    assert.equal(pushed.page?.transcriptKey, page.transcriptKey)
+    assert.deepEqual(readThreadTranscript(h.project, h.store, "t", backendFor), page.messages)
+
+    // A Node older than 22.15 has no Zstd in zlib: the thread reads empty, as it did before, and nothing throws.
+    const zstd = zlib.zstdDecompressSync
+    try {
+      ;(zlib as { zstdDecompressSync?: unknown }).zstdDecompressSync = undefined
+      assert.deepEqual(readLatestThreadTranscriptPage(h.project, h.store, "t", backendFor).messages, [])
+    } finally {
+      zlib.zstdDecompressSync = zstd
+    }
+
+    writeFileSync(path, raw + event("user_message", "New message") + event("agent_message", "Plain rollout wins"))
+    const resumed = readLatestThreadTranscriptPage(h.project, h.store, "t", backendFor)
+    assert.equal(resumed.messages.at(-1)?.text, "Plain rollout wins")
+    assert.notEqual(resumed.transcriptKey, page.transcriptKey)
+    assert.throws(() => readEarlierThreadTranscriptPage(h.project, h.store, "t", page.beforeCursor!, backendFor), /stale/)
+  } finally {
+    h.store.close()
     h.cleanup()
     rmSync(codexHome, { recursive: true, force: true })
   }

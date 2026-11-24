@@ -856,6 +856,19 @@ export function findRolloutById(sessionId: string, codexHome = defaultCodexHome(
   return undefined
 }
 
+// Cold rollouts don't belong in the mtime-ranked live/discovery scan. Locate a known id by name
+// without statting the compressed corpus or capping history at the most recent 4096 files.
+function findCompressedRollout(dir: string, suffix: string): string | undefined {
+  const entries = safeReaddir(dir)
+  const match = entries.find((e) => e.isFile() && e.name.startsWith("rollout-") && e.name.endsWith(suffix))
+  if (match) return join(dir, match.name)
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const path = findCompressedRollout(join(dir, entry.name), suffix)
+    if (path) return path
+  }
+}
+
 // BATCH form of findRolloutById: resolve many codex ids in ONE sessions-tree walk. A codex thread that
 // spawned N sub-agents needs N child rollouts located, and each is its own thread id — resolving them
 // one at a time would re-walk the (capped, but still recursive) tree N times on the very tick a fan-out
@@ -1019,8 +1032,11 @@ export function createCodexBackend(opts: CodexBackendOptions = {}): AgentBackend
     // Codex's id is minted by codex and not known until it writes session_meta, so there is no
     // deterministic path from the frizz-advisory sessionId. Once the DISCOVERED id is pinned on the row,
     // the tailer calls this with that id and we locate the (date-sharded) rollout by filename suffix.
-    transcriptPath(sessionId: string): string | undefined {
-      return findRolloutById(sessionId, codexHome)
+    transcriptPath(sessionId: string, opts): string | undefined {
+      const plain = findRolloutById(sessionId, codexHome)
+      return plain ?? (opts?.includeCompressed
+        ? findCompressedRollout(sessionsDir(codexHome), `-${sessionId}.jsonl.zst`)
+        : undefined)
     },
 
     // Codex's rollout brackets turns explicitly, so — unlike Claude — its authoritative fold DOES route
