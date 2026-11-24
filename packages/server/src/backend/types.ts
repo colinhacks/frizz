@@ -826,7 +826,8 @@ export interface AgentBackend {
   // Deterministic path for a session's transcript (claude: <logDir>/<sessionId>.jsonl), or undefined
   // when it can't be computed yet (codex: the rollout id isn't known until the process writes
   // session_meta — discoverSession then resolves it).
-  transcriptPath(sessionId: string): string | undefined
+  // Readers that can decode cold Codex rollouts may opt in. The live tailer reads plain JSONL only.
+  transcriptPath(sessionId: string, opts?: { includeCompressed?: boolean }): string | undefined
   // Phase 2 (codex) only — ClaudeBackend omits it (its path is deterministic from the pinned id).
   discoverSession?(cwd: string, spawnedAtMs: number): { sessionId: string; path: string } | undefined
 
