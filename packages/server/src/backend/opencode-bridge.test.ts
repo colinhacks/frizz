@@ -6,14 +6,14 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import Database from "../sqlite.ts"
 import { createInteractionStore, type InteractionStore } from "../interaction-store.ts"
-import { applyEvent, newTailState } from "../tailer.ts"
+import { newTailState } from "../tailer.ts"
 import { opencodeToolCards } from "../transcript.ts"
 import { OPENCODE_CONTRACT_KEY, OpencodeSessionStream, createOpencodeBridge, opencodeFormAnswer, opencodeInboxId, type OpencodeBridge } from "./opencode-bridge.ts"
 import { OpencodeHub } from "./opencode-hub.ts"
 import { ensureOpencodeService, opencodeVersionAtLeast } from "./opencode-service.ts"
 import { createOpencodeBackend, opencodeTranscriptPath, parseOpencodeSubAgentLine, projectOpencodeTranscript } from "./opencode-transcript.ts"
 import { opencodeKeptRules, opencodeModeOf, opencodeSessionRules, opencodeWildcard, parseOpencodeEvent } from "./opencode-types.ts"
-import { parseAcpLine, parseAcpRecord } from "./acp-transcript.ts"
+import { parseAcpRecord } from "./acp-transcript.ts"
 // @ts-expect-error a plain .mjs fixture
 import { startFakeOpencode } from "./opencode.fixtures/fake-opencode-server.mjs"
 
@@ -381,27 +381,17 @@ test("opencode-bridge: shell commands a restarted service ran before the environ
   }
 })
 
-test("opencode-bridge: stop interrupts the turn and the thread takes its next message", async () => {
+test("opencode-bridge: interrupting the turn ends it and the thread takes its next message", async () => {
   const r = await rig()
   try {
     const { opencodeSessionId } = await spawn(r, "[shell:sleep][wait:5000][say:never]")
     await until(() => records(r).some((x) => x.kind === "tool-result"))
     assert.deepEqual(await r.bridge.interruptTurn("t1", "s1"), { interrupted: true })
     await until(() => ends(r) === 1, 3000)
-    const stopped = records(r).find((x) => x.kind === "turn-end")!
-    assert.equal(stopped.successful, false)
-    // The person's Stop is written as theirs, so no sign-off reminder or bare-rest card answers it.
-    assert.equal(stopped.stoppedBy, "operator")
-    const fold = newTailState("t1", "s1", "/fixture")
-    for (const rec of records(r)) for (const ev of parseAcpLine(JSON.stringify(rec))) applyEvent(fold, ev)
-    assert.equal(fold.operatorStopped, true)
+    assert.equal(records(r).find((x) => x.kind === "turn-end")!.successful, false)
+    assert.deepEqual(await r.bridge.interruptTurn("t1", "s1"), { interrupted: false }, "nothing is running now")
     await r.bridge.followUp({ ...ref(r, opencodeSessionId), text: "[say:again]", delivery: "steer" })
     await until(() => ends(r) === 2)
-    // The next turn is the worker's own again.
-    assert.equal(records(r).filter((x) => x.kind === "turn-end")[1]!.stoppedBy, undefined)
-    const after = newTailState("t1", "s1", "/fixture")
-    for (const rec of records(r)) for (const ev of parseAcpLine(JSON.stringify(rec))) applyEvent(after, ev)
-    assert.equal(after.operatorStopped, undefined)
   } finally { await teardown(r) }
 })
 

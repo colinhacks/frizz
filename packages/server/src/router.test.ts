@@ -2403,11 +2403,9 @@ test("the new-thread box's skills are asked of the agent its model chip picks, a
   } finally { h.storage.close() }
 })
 
-test("an Antigravity thread's turn can be stopped, its slash commands are its agent's, and its models are asked of agy", async () => {
-  const { h, slug, sessionId, calls, bridge } = antigravityHarness("in-flight")
+test("an Antigravity thread's slash commands are its agent's, and its models are asked of agy", async () => {
+  const { h, slug, calls, bridge } = antigravityHarness("in-flight")
   try {
-    await h.router.stopThreadTurn.handler({ input: { slug, sessionId } })
-    assert.deepEqual(calls.at(-1), ["interruptTurn", [slug, sessionId]])
     const skills = await h.router.threadSkills.handler({ input: { slug } })
     assert.deepEqual(skills.skills.map((skill: { name: string }) => skill.name), ["compact"])
     // Whether agy is installed is answered without starting it; the list itself is the bridge's probe.

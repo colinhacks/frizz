@@ -101,9 +101,6 @@ class SessionStream {
   turnOpen = false
   /** The last finished step stopped on its own: a user message delivered now starts a new turn. */
   lastStepStopped = false
-  /** A person pressed Stop on this turn (interruptTurn): the turn's end is written as theirs, which keeps
-   *  the sign-off reminder and the "Rested without a sign-off" card off it (FoldState.operatorStopped). */
-  stopRequested = false
   readonly textWritten = new Map<string, number>()
   readonly reasoningSeen = new Set<string>()
   readonly toolNames = new Map<string, string>()
@@ -262,7 +259,6 @@ class SessionStream {
     this.lastError = undefined
     this.turnOpen = true
     this.lastStepStopped = false
-    this.stopRequested = false
     this.writer.append({ kind: "turn-start", at })
   }
 
@@ -276,9 +272,7 @@ class SessionStream {
     this.finalText = ""
     this.finalMessage = undefined
     this.lastStepStopped = false
-    const stopped = this.stopRequested && !successful
-    this.stopRequested = false
-    this.writer.append({ kind: "turn-end", at, ...(finalText ? { finalText } : {}), successful, ...(stopped ? { stoppedBy: "operator" as const } : {}) })
+    this.writer.append({ kind: "turn-end", at, ...(finalText ? { finalText } : {}), successful })
     this.hooks.onTurnClosed?.(this)
   }
 
@@ -1205,23 +1199,12 @@ export class OpencodeBridge implements OpencodeHubListener {
   }
 
   /** Stop the running turn. Pending input stays in the inbox and goes out, as on every other backend. */
-  async interruptTurn(threadSlug: string, sessionId: string, opencodeSessionId?: string | null, cwd?: string): Promise<{ interrupted: boolean }> {
+  async interruptTurn(threadSlug: string, sessionId: string): Promise<{ interrupted: boolean }> {
     const live = this.sessions.get(sessionId)
-    if (live && live.slug !== threadSlug) return { interrupted: false }
-    const id = live?.opencodeId ?? opencodeSessionId
-    if (!id) return { interrupted: false }
-    if (live && !live.stream.turnOpen) return { interrupted: false }
+    if (!live || live.slug !== threadSlug || !live.stream.turnOpen) return { interrupted: false }
     const client = this.hub.client ?? await this.connect()
-    const directory = live?.cwd ?? cwd
-    const pending = await client.inbox(id, directory).catch(() => [] as Json[])
-    // Marked before the call: the interrupted event can arrive before it returns.
-    if (live) live.stream.stopRequested = true
-    try {
-      await client.interrupt(id, { resume: pending.length > 0, ...(directory ? { directory } : {}) })
-    } catch (error) {
-      if (live) live.stream.stopRequested = false
-      throw error
-    }
+    const pending = await client.inbox(live.opencodeId, live.cwd).catch(() => [] as Json[])
+    await client.interrupt(live.opencodeId, { resume: pending.length > 0, directory: live.cwd })
     return { interrupted: true }
   }
 

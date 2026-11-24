@@ -5592,33 +5592,6 @@ export function createRouter(ctx: AppContext) {
       },
     }),
 
-    // STOP THE TURN, and only the turn: the thread stays where it is, ready for the next message. OpenCode
-    // and Antigravity, the backends whose stop leaves the session open and nothing to reattach.
-    stopThreadTurn: mutation({
-      input: z.object({ slug: ThreadSlug, sessionId: z.string().min(1) }).strict(),
-      output: z.object({ interrupted: z.boolean() }),
-      handler: ({ input }) => audit(
-        "stopThreadTurn",
-        { project: thisProject, thread: input.slug },
-        async () => {
-          const row = currentOwnedSession(input.slug, input.sessionId)
-          if (!row) throw new Error("This thread is no longer the session this tab is looking at")
-          // Antigravity's `session/cancel` ends the turn and leaves the session and its agent in place.
-          if (row.backend === "antigravity") {
-            if (!ctx.antigravityBridge) throw new Error("The Antigravity bridge is unavailable; cannot stop this turn")
-            const result = await ctx.antigravityBridge.interruptTurn(input.slug, row.session_id)
-            ctx.board.refresh()
-            return result
-          }
-          if (row.backend !== "opencode") throw new Error("This thread's runtime has no stop for a single turn")
-          if (!ctx.opencodeBridge) throw new Error("The OpenCode bridge is unavailable; cannot stop this turn")
-          const result = await ctx.opencodeBridge.interruptTurn(input.slug, row.session_id, row.agent_session_id, ctx.project.dir)
-          ctx.board.refresh()
-          return result
-        },
-      ),
-    }),
-
     killAgent: mutation({
       input: SlugInput,
       handler: async ({ input }) => {

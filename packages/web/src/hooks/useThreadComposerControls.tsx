@@ -1,6 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
-import { Square } from "lucide-react"
 import { acpAgentIdFromModel, type PermissionMode } from "@frizz/shared"
 import { rpc, rpcFor } from "../api/rpc.ts"
 import { scopedKey } from "../lib/projectScope.tsx"
@@ -14,7 +13,6 @@ import { Select } from "../components/ui/Select.tsx"
 import { PromptControlGroup } from "../components/ui/PromptControlGroup.tsx"
 import { ANTIGRAVITY_PERMISSION_OPTIONS, CLAUDE_DISPATCH_PERMISSION_OPTIONS, OPENCODE_PERMISSION_OPTIONS, claudePermValue } from "../lib/options.ts"
 import { threadProfileControlState } from "../lib/threadProfile.ts"
-import { useIsMobile } from "../lib/mobile.ts"
 import { opencodeProfileGroup, opencodeSelection, opencodeSlugOf } from "../lib/opencodeProfile.ts"
 import { useOpencodeModels } from "./useOpencodeModels.ts"
 import { acpProfileGroup, acpSelection } from "../lib/acpProfile.ts"
@@ -62,12 +60,6 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
   // The one-click move onto the edition the thread's family resolves to now (ThreadView.modelUpgrade).
   const upgrade = useMutation({
     mutationFn: (sessionId: string) => rpc.upgradeThreadModel({ slug, sessionId }),
-  })
-  // Below the phone breakpoint Stop drops its word, so the row holds the model, Stop and the marks on one
-  // line (420px, 2026-11-06: the row overran the box).
-  const phone = useIsMobile()
-  const stopTurn = useMutation({
-    mutationFn: (sessionId: string) => rpc.stopThreadTurn({ slug, sessionId }),
   })
   const localBusy = profile.isPending || permission.isPending || upgrade.isPending
   const backend = thread?.backend === "codex" ? "codex" : thread?.backend === "acp" ? "acp" : thread?.backend === "opencode" ? "opencode" : thread?.backend === "antigravity" ? "antigravity" : "claude"
@@ -351,26 +343,10 @@ export function useThreadComposerControls(slug: string): { busy: boolean; footer
               />
             )}
           </PromptControlGroup>
-          {(backend === "opencode" || backend === "antigravity") && thread.runtime === "running" && thread.sessionId && (
-            <button
-              type="button"
-              data-stop-turn
-              onClick={() => stopTurn.mutate(thread.sessionId as string, {
-                onError: (e) => showToast(`Stop failed: ${(e as Error).message.slice(0, 120)}`),
-              })}
-              disabled={stopTurn.isPending}
-              aria-label="Stop this turn"
-              title="Stop this turn. The thread stays open for your next message."
-              // Ink, not boxes (optical-spacing): with no Stop the pill group's edge sits 12px of ink from the
-              // plug. The button paints 7px of dead space left and 6.66px right, so on the row's gaps it drew 13px
-              // before and 18.66px after (measured 2026-11-06, sans, dsf 4). These margins put 12px on both sides;
-              // the right one overlaps the plug's empty hover padding, and only one of them fills at a time.
-              className="-ml-px -mr-[6.5px] flex h-[22px] shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted hover:bg-fill-hover hover:text-fg disabled:opacity-50"
-            >
-              <Square size={8} fill="currentColor" strokeWidth={0} aria-hidden />
-              {!phone && "Stop"}
-            </button>
-          )}
+          {/* No Stop here, on any backend: Mark as done stops a run, and Send now interrupts a turn where the
+              agent can take a message without losing its sub-agents. OpenCode and Antigravity carried a Stop
+              of their own from 2026-11-06 until 2026-11-24 (maintainer: "Claude and Codex don't have this and
+              don't seem to really need this"). */}
           {/* Up: this box sits at the bottom of its surface. An ACP agent reports no quota, so no gauge. */}
           <AgentMarks
             gauge={backend === "acp" || backend === "opencode" ? undefined : { backend, model }}
