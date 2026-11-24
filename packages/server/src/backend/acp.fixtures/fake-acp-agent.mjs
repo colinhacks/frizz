@@ -15,6 +15,8 @@
 //   meta-compaction reports a compaction the way opencode does to a client that did NOT advertise
 //                   `session.compaction`, even when the client did: `_meta` on a `session_info_update`
 //
+// A prompt containing `PONDER<n>` takes n steps of a thought then a tool call, 25ms apart, then answers.
+//
 // A prompt that is exactly `/compact` compacts, the way opencode's slash command does: a standard
 // `compaction_update` (in_progress, completed) when the client advertised `session.compaction`, else the
 // `_meta["opencode/compaction"]` marker — the two shapes opencode 2.0.27 emits.
@@ -135,6 +137,19 @@ async function handle(msg) {
         notify(sessionId, { sessionUpdate: "usage_update", used: 7, size: 200000, _meta })
         notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "call_sub", status: "completed", locations: [], content: [{ type: "content", content: { type: "text", text: "<subagent state=\"completed\">childprobe</subagent>" } }] })
         notify(sessionId, { sessionUpdate: "agent_message_chunk", messageId: "m_p2", content: { type: "text", text: "It printed childprobe." } })
+        return reply({ stopReason: "end_turn" })
+      }
+      if (text.includes("PONDER")) {
+        // A thought before every tool call, the rhythm most agents keep. `PONDER<n>` takes n steps.
+        const count = Number(/PONDER(\d+)/.exec(text)?.[1] ?? 60)
+        for (let i = 1; i <= count && !s.cancelled; i++) {
+          notify(sessionId, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: `Thought ${i}.` }, messageId: `t${i}` })
+          notify(sessionId, { sessionUpdate: "tool_call", toolCallId: `call_p${i}`, title: `echo ${i}`, kind: "execute", status: "pending", rawInput: { command: `echo ${i}` } })
+          notify(sessionId, { sessionUpdate: "tool_call_update", toolCallId: `call_p${i}`, status: "completed", content: [{ type: "content", content: { type: "text", text: `${i}\n` } }] })
+          await sleep(25)
+        }
+        if (s.cancelled) return reply({ stopReason: "cancelled" })
+        notify(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "PONDERED" }, messageId: "m_end" })
         return reply({ stopReason: "end_turn" })
       }
       notify(sessionId, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking about " }, messageId: "m1" })

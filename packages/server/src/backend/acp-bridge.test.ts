@@ -421,6 +421,37 @@ test("acp-bridge: a turn survives the bridge shutting down mid-turn; a fresh bri
   }
 })
 
+test("acp-bridge: a turn adopted mid-reasoning across a restart still projects one reasoning block and one tool run", async () => {
+  const a = rig()
+  let b: Rig | undefined
+  try {
+    await a.bridge.spawnDispatch({ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake", prompt: "PONDER60", userText: "PONDER60" })
+    await untilTurnActive(a, "s1")
+    const reasoningCount = (r: Rig) => records(r, "s1").filter((x) => x.kind === "reasoning").length
+    for (let i = 0; i < 200 && reasoningCount(a) < 3; i++) await new Promise((res) => setTimeout(res, 25))
+    await a.bridge.shutdown()
+    const before = reasoningCount(a)
+    assert.ok(before >= 3 && before < 60, `the restart lands mid-turn (${before} thoughts written)`)
+
+    b = rig("", { stateDir: a.stateDir })
+    await b.bridge.warmUp([{ threadSlug: "t1", sessionId: "s1", cwd: a.stateDir, agentId: "fake" }])
+    await untilIdle(b, "s1", "t1", 15_000)
+    const recs = records(b, "s1")
+    const note = recs.findIndex((x) => x.kind === "acp-note" && /Reattached/.test((x as { text: string }).text))
+    assert.ok(note > 0 && recs.slice(note).some((x) => x.kind === "reasoning"), "the second bridge adopted the turn, and the agent thought on after it")
+    assert.equal(recs.filter((x) => x.kind === "turn-start").length, 1)
+
+    const msgs = projectAcpTranscript(readFileSync(acpTranscriptPath(b.stateDir, "s1"), "utf8"), "acp:s1")
+    assert.deepEqual(msgs.map((m) => [m.role, m.kind ?? "message"]), [["user", "message"], ["assistant", "reasoning"], ["assistant", "message"]])
+    assert.equal(msgs[1]!.text, Array.from({ length: 60 }, (_, i) => `Thought ${i + 1}.`).join("\n\n"), "the thoughts on both sides of the restart are one block, each once")
+    assert.equal(msgs[2]!.tools.length, 60, "and the tool calls on both sides are one run")
+    assert.equal(msgs[2]!.text, "PONDERED")
+  } finally {
+    await teardown(a)
+    if (b) await teardown(b)
+  }
+})
+
 test("acp-bridge: a permission card open at shutdown is raised afresh by the reattached bridge, and its answer reaches the agent", async () => {
   const a = rig("ask-permission", { persistentStore: true })
   let b: Rig | undefined
