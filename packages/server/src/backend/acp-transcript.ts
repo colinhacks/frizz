@@ -288,6 +288,9 @@ export type AcpUserRecordProjector = (out: TranscriptMessage[]) => (sourceId: st
 export interface WrittenTranscriptDialect {
   toolCall?: (rec: Extract<NormalizedEvent, { kind: "tool-call" }>) => TranscriptToolCall
   toolResult?: (call: TranscriptToolCall, rec: Extract<NormalizedEvent, { kind: "tool-result" }>) => void
+  /** Transform a reasoning record before projection; returning null (or blank text) drops it without
+   *  closing the open assistant message, so tool calls on either side stay in one run. */
+  reasoning?: (text: string) => { text: string; inline?: boolean } | null
 }
 
 /** The drawer's messages from the raw file. `identityPrefix` seeds `sourceId`s the client keys on. */
@@ -359,8 +362,19 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         close()
         break
       case "reasoning": {
+        const shaped = dialect?.reasoning ? dialect.reasoning(rec.text) : { text: rec.text }
+        if (!shaped || !shaped.text.trim()) break
         close()
-        out.push({ sourceId: `${identityPrefix}:${i}`, role: "assistant", kind: "reasoning", text: rec.text, tools: [], parts: [], ...(rec.at ? { at: rec.at } : {}) })
+        out.push({
+          sourceId: `${identityPrefix}:${i}`,
+          role: "assistant",
+          kind: "reasoning",
+          text: shaped.text,
+          ...(shaped.inline ? { reasoningInline: true as const } : {}),
+          tools: [],
+          parts: [],
+          ...(rec.at ? { at: rec.at } : {}),
+        })
         break
       }
       case "assistant-text": {

@@ -284,6 +284,18 @@ body {
 .frizz-reasoning .md-body strong {
   font-weight: inherit;
 }
+/* Inline reasoning (Antigravity): Gemini emits almost no mid-turn assistant-text and puts its
+   step-by-step progress summaries in `agent_thought_chunk`. Whole-pixel 18px leading gives a clean
+   4-line (72px) clamp with no sub-pixel cut at the bottom edge. */
+.frizz-reasoning-inline .md-body {
+  line-height: 18px;
+}
+.frizz-reasoning-clamped {
+  max-height: 72px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+}
 
 /* Petite caps for the inline dispatch readouts — subtle small-capital glyphs, a touch of tracking. */
 .petite-caps {

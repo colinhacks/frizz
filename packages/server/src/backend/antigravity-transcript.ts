@@ -71,8 +71,30 @@ export function antigravityToolCalls(path: string): AntigravityKnownCalls {
   return { settled, open: [...open.values()].map(({ turn: madeIn, ...call }) => ({ ...call, inOpenTurn: turnOpen && madeIn === turn })) }
 }
 
+// Gemini emits this literal placeholder as its entire thought chunk or as a leading line before real
+// reasoning prose (25 occurrences across the first 6 Antigravity threads, 10 of them solo). Stripping
+// it removes the empty line from real blocks and lets solo-filler steps drop out completely so tool
+// calls on either side coalesce into one `Ran N tool calls` run.
+const ANTIGRAVITY_REASONING_FILLER = /^I['’]m thinking through how to approach this\.?$/i
+
+export function cleanAntigravityReasoning(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((line) => !ANTIGRAVITY_REASONING_FILLER.test(line.trim()))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
 export function projectAntigravityTranscript(raw: string, identityPrefix: string, buildCards: OpencodeToolCardBuilder, userProjector?: AcpUserRecordProjector): TranscriptMessage[] {
-  return projectAcpTranscript(raw, identityPrefix, userProjector, frizzToolDialect(buildCards))
+  return projectAcpTranscript(raw, identityPrefix, userProjector, {
+    ...frizzToolDialect(buildCards),
+    reasoning: (text) => {
+      const cleaned = cleanAntigravityReasoning(text)
+      return cleaned ? { text: cleaned, inline: true } : null
+    },
+  })
 }
 
 export function readAntigravityTranscriptFile(absPath: string, buildCards: OpencodeToolCardBuilder, nativeId = absPath, userProjector?: AcpUserRecordProjector): TranscriptMessage[] {
