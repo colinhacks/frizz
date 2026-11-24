@@ -40,7 +40,7 @@ test("running threads change nothing the square draws", () => {
   for (const running of [1, 12]) assert.equal(render({ queued: 12, running, asks: 0 }), still)
 })
 
-test("the built-in Home project renders its house glyph instead of a monogram, unless given a custom icon", () => {
+test("the built-in Home project renders its tilde glyph instead of a monogram, unless given a custom icon", () => {
   const home = { ...project, id: "home-id", slug: "home", name: "Home", path: "/Users/test", builtin: "home" as const, iconStatus: "none" as const }
   const html = renderToStaticMarkup(createElement(ProjectSquare, { project: home, size: 64 }))
   assert.match(html, /data-home-project-icon/)
