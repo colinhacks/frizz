@@ -868,8 +868,13 @@ function bgSnoozeArmed(row: Pick<SessionRow, "bg_snooze_rested_at" | "rested_at"
  *  activity" (2026-10-19), offered on ANY rested thread rather than only on the resting card, and its
  *  promise — back at the next rest — only holds while something of the thread's own is still out to
  *  cause that rest: a running sub-agent or shell, an armed PR or issue watch, an armed timer or command
- *  watch, or a Goal that fires on rest or on a clock. A steer from another thread can wake it too, but
- *  nothing can know one is coming, so it never counts.
+ *  watch, a CHILD THREAD still working or holding a handoff not yet delivered (liveChildThreads), or a
+ *  Goal that fires on rest or on a clock. A steer from another thread can wake it too, but nothing can
+ *  know one is coming, so it never counts.
+ *
+ *  A child thread counts because its handoff is delivered to this thread as a wake, which ends in the
+ *  rest this snooze waits for. It was left out until 2026-11-24, so a parent resting on a child it had
+ *  spawned read "Nothing can wake it", and the human had to ask the worker to park itself instead.
  *
  *  Three readers, one answer: the snooze menu greys the option out when this is false (maintainer
  *  2026-10-19: grey it out rather than warn), the RPC refuses it, and deriveNeedsYou stops honouring an
@@ -881,9 +886,10 @@ export function wakesOnItsOwn(
   tele: SessionTelemetry | undefined,
   registeredWatches: ReadonlySet<string>,
   armedTimerIds: ReadonlySet<string>,
+  liveChildren: ReadonlySet<string> = new Set(),
 ): boolean {
   const goal = Boolean(row.recurring_prompt && row.recurring_armed_at) && (row.recurring_on_rest === 1 || row.recurring_on_schedule === 1)
-  return goal || registeredWatches.size > 0 || armedTimerIds.size > 0 || Boolean(
+  return goal || registeredWatches.size > 0 || armedTimerIds.size > 0 || liveChildren.size > 0 || Boolean(
     tele?.subAgents?.some((agent) => isDirectSubAgent(agent) && agent.state === "running") ||
     tele?.bgShells?.some((shell) => shell.state === "running"),
   )
@@ -1258,7 +1264,7 @@ export function deriveNeedsYou(
   // (wakesOnItsOwn). Ahead of a question for the reason the wall-clock snooze is: the human parked the
   // thread knowingly, and the ask stays answerable behind the park. The asks that hold the TURN itself —
   // an actionable interaction, a permission prompt, a native ask — are checked above and still win.
-  if (runtime !== "exited" && bgSnoozeArmed(row) && wakesOnItsOwn(row, tele, registeredPrWatches, armedTimerIds)) return false
+  if (runtime !== "exited" && bgSnoozeArmed(row) && wakesOnItsOwn(row, tele, registeredPrWatches, armedTimerIds, liveChildren)) return false
   if (tele?.providerError && !tele.providerError.retrying) return true
   // An unanswered ```question fence in the last assistant message is an EXPLICIT ask — a hard queue
   // member exactly like a native pendingAsk, NOT subject to interaction-clearance. VIEWING a question
@@ -2352,7 +2358,7 @@ function sessionThreadView(
     bgSnoozed: bgSnoozeArmed(row) || undefined,
     // Whether "Until activity" can be offered: see wakesOnItsOwn. False on a dead worker and on an archived
     // thread, which nothing wakes.
-    wakesOnItsOwn: (!archived && runtime !== "exited" && wakesOnItsOwn(row, tele, registeredPrWatches, armedTimerIds)) || undefined,
+    wakesOnItsOwn: (!archived && runtime !== "exited" && wakesOnItsOwn(row, tele, registeredPrWatches, armedTimerIds, liveChildren)) || undefined,
     // Only where the handoff is what queued it: the park would otherwise have held (QueuedBy).
     heldHandoff: queuedBy.heldHandoff || undefined,
     claudeRuntime: row.claude_runtime === "broker" ? "broker" as const : undefined,

@@ -4602,9 +4602,9 @@ export const ThreadView = z.object({
    *  The header's "Until activity" (SnoozeMenu, 2026-10-19) arms the same snooze on any rested thread. */
   bgSnoozed: z.boolean().optional(),
   /** Something of the thread's own can wake it without a person — a running sub-agent or shell, an
-   *  armed watch or timer, a Goal that fires on rest or on a clock (board.wakesOnItsOwn). The snooze
-   *  menu greys out "Until activity" without it, and the server stops honouring that snooze once it
-   *  goes false. Absent on a dead worker and on an archived thread. */
+   *  armed watch or timer, a child thread whose handoff is still to come, a Goal that fires on rest or on
+   *  a clock (board.wakesOnItsOwn). The snooze menu greys out "Until activity" without it, and the server
+   *  stops honouring that snooze once it goes false. Absent on a dead worker and on an archived thread. */
   wakesOnItsOwn: z.boolean().optional(),
   /** A QUIET PARK THE BOARD REFUSED because an earlier `needs_input` handoff still stands: the human has
    *  neither typed to the thread nor snoozed a rest since it (board handoffStands). The surfaces keep that

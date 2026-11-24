@@ -214,6 +214,48 @@ test("a child rest Frizz is still nudging is not reported until the child has an
   await scheduler.stop()
 })
 
+// "UNTIL ACTIVITY" ON A PARENT WAITING ON ITS CHILD (2026-11-24). A parent that signed off while its child
+// worked read "Nothing can wake it", because board.wakesOnItsOwn did not count child threads, so the
+// snooze menu greyed the row out and the RPC refused it (maintainer, to the worker: "Snooze until there's
+// activity, please."). The real board and the real RPC together, since the menu, the refusal and the
+// queue all read the one view field.
+test("a parent resting on a working child can be snoozed until activity, and the snooze lasts until the child reports", async (t) => {
+  const { storage, project } = sandbox(t)
+  storage.upsertSession(row("parent"))
+  storage.setBackend("parent", "claude")
+  storage.setClaudeRuntime("parent", "broker")
+  storage.setRestedAt("parent", T1)
+  storage.upsertSession(row("child"))
+  storage.setParentSlug("child", "parent")
+  const map = new Map<string, SessionTelemetry>([
+    // A sign-off with no fence, the shape the human snoozed.
+    ["parent", tele({ lastUserAt: T0, lastAssistantAt: T1 })],
+    ["child", tele({ turn: "in-flight", lastUserAt: T0 })],
+  ])
+  const tailer = tailerOf(map)
+  const board = createBoard(project, storage, new Bus(), tailer, "boot", { claudeBrokerDaemonAlive: () => true })
+  const router = createRouter({ project, storage, board, tailer, bus: new Bus(), audit: { append: () => {} } } as unknown as AppContext)
+  const parent = async () => (await board.rebuild()).threads.find((v) => v.id === "parent")!
+
+  const before = await parent()
+  assert.equal(before.runtime, "turn-idle")
+  assert.equal(before.wakesOnItsOwn, true, "the child's handoff will wake it")
+  assert.equal(before.needsYou, true, "its sign-off queues")
+
+  await router.snoozeAwaitingBackground.handler({ input: { slug: "parent", sessionId: "sid-parent" } })
+  const snoozed = await parent()
+  assert.equal(snoozed.bgSnoozed, true)
+  assert.equal(snoozed.needsYou, false, "out of the queue while the child works")
+
+  // The child rests and its handoff is reported: nothing of the parent's is out any more, so the snooze
+  // stops holding and the thread comes back rather than hiding until someone looks.
+  map.set("child", tele({ lastUserAt: T0, lastAssistantAt: T2 }))
+  storage.setChildReportedAt("child", T2)
+  const reported = await parent()
+  assert.equal(reported.wakesOnItsOwn, undefined)
+  assert.equal(reported.needsYou, true)
+})
+
 /** A router over one real storage whose dispatcher records what it is asked to start. */
 function routerHarness(t: { after: (fn: () => void) => void }, childThreads: boolean) {
   const { storage, project } = sandbox(t)

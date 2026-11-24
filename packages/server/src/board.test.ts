@@ -665,6 +665,8 @@ test("wakesOnItsOwn: a running shell or sub-agent, an armed watch or timer, or a
   assert.equal(wakesOnItsOwn(row(), tele({ subAgents: [{ label: "c", startedAt: T0, state: "running", id: "a1" }] }), none, none), true)
   assert.equal(wakesOnItsOwn(row(), tele(), new Set(["acme/app#1"]), none), true, "an armed PR or issue watch")
   assert.equal(wakesOnItsOwn(row(), tele(), none, new Set(["tmr_1"])), true, "an armed timer or command watch")
+  // A child thread hands its rest to this thread as a wake (child-threads.ts liveChildThreads).
+  assert.equal(wakesOnItsOwn(row(), tele(), none, none, new Set(["child-slug"])), true, "a child thread still to hand off")
   const goal = { recurring_prompt: "keep going", recurring_armed_at: T0 }
   assert.equal(wakesOnItsOwn(row({ ...goal, recurring_on_schedule: 1 }), tele(), none, none), true, "a heartbeat goal")
   assert.equal(wakesOnItsOwn(row({ ...goal, recurring_on_rest: 1 }), tele(), none, none), true, "a stop-hook goal")
@@ -680,6 +682,12 @@ test("deriveNeedsYou: the activity snooze parks any rest something can still end
   // …and a goal heartbeat is a way back too.
   const goal = { recurring_prompt: "keep going", recurring_armed_at: T0, recurring_on_schedule: 1 }
   assert.equal(deriveNeedsYou(atRest({ ...goal, bg_snooze_rested_at: T0 }), tele(), "turn-idle"), false)
+  // …and so is a child thread whose handoff is still to come: a parent that signed off while its child
+  // works parks until the child reports.
+  const child = new Set(["child-slug"])
+  const parentArgs = [false, Date.now(), undefined, true, false, {}, new Set<string>(), new Set<string>(), [], 0, false, undefined, child] as const
+  assert.equal(deriveNeedsYou(atRest(), tele(), "turn-idle", ...parentArgs), true, "unsnoozed, the sign-off queues")
+  assert.equal(deriveNeedsYou(atRest({ bg_snooze_rested_at: T0 }), tele(), "turn-idle", ...parentArgs), false, "snoozed until the child reports")
   // THE NEXT REST ENDS IT, as it always did.
   assert.equal(deriveNeedsYou(atRest({ rested_at: LATER, bg_snooze_rested_at: T0 }), tele(), "turn-idle", false, Date.now(), undefined, true, false, {}, new Set(), timer), true)
   // NOTHING LEFT TO END IT ⇒ NOT HONOURED: the last way back went away (the timer fired into a dead
