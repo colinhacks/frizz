@@ -36,6 +36,8 @@ test("every rendered message variant still carries its own data-frizz-msg handle
   // shared wrapper carries the handle (AnswersWithNote) so neither half claims it alone.
   // …and, since 2026-11-17, a to-do list's report sent with a note, the same way (its card alone stamps
   // through ReplyCard, the frame it shares with the answers card).
+  // …and, since 2026-11-24, Antigravity's inline reasoning (InlineReasoningBlock), drawn as muted prose
+  // rather than behind the reasoning block's toggle.
   const hosts = sources.reduce((n, source) => n + [...source.matchAll(/data-frizz-msg=\{(?:m\.)?sourceId\}/g)].length, 0)
-  assert.equal(hosts, 8, "each rendered message variant must stamp its own sourceId")
+  assert.equal(hosts, 9,"each rendered message variant must stamp its own sourceId")
 })
