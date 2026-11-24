@@ -1,11 +1,15 @@
 import * as RadixDialog from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 import type { ReactNode } from "react"
+import { dialogDefaultButton, enterTargetOf, isDefaultEnter, ownsEnter } from "../../lib/dialogDefault.ts"
 import { handleDialogEscape } from "../../lib/selectOverlay.ts"
 import { Z_DIALOG } from "../../lib/layers.ts"
 
 // Centered modal dialog on Radix. Dark scrim, elevated panel with a soft shadow and a titled
 // header with a close affordance. Shared by the frizz-document viewer and settings.
+//
+// THE FOOTER'S DEFAULT BUTTON, the white one, marked `data-dialog-default`, takes the focus on open and
+// answers Enter from anywhere in the dialog that has no Enter of its own (lib/dialogDefault.ts).
 export function Dialog({
   open,
   onOpenChange,
@@ -21,12 +25,14 @@ export function Dialog({
   // Absent for a question the title asks whole: the header then sits straight on the footer, under
   // one rule rather than two.
   children?: ReactNode
+  /** The buttons. The white one, the answer the title asks for, carries `data-dialog-default`; a red one
+   *  never does (lib/dialogDefault.ts). */
   footer?: ReactNode
   className?: string
   /**
-   * Where focus lands on open. Radix focuses the first focusable thing in the content, and here that
-   * is the header's Close button — right for a confirmation, wrong for a dialog whose whole body is one
-   * text field. Call `preventDefault` and focus the field yourself.
+   * Where focus lands on open. Without this it is the footer's `data-dialog-default` button, or, in a
+   * dialog without one, the first focusable thing in the content (Radix's choice, the header's Close
+   * button). A dialog whose body is a text field calls `preventDefault` and focuses the field itself.
    */
   onOpenAutoFocus?: (event: Event) => void
 }) {
@@ -37,7 +43,26 @@ export function Dialog({
         <RadixDialog.Content
           aria-modal="true"
           onEscapeKeyDown={handleDialogEscape}
-          onOpenAutoFocus={onOpenAutoFocus}
+          onOpenAutoFocus={(event) => {
+            onOpenAutoFocus?.(event)
+            if (event.defaultPrevented) return
+            const button = dialogDefaultButton(event.target as Element)
+            if (!button) return
+            event.preventDefault()
+            button.focus({ preventScroll: true })
+          }}
+          onKeyDown={(event) => {
+            // In the DOM, not just React's tree: a menu or select opened from the dialog portals out of it
+            // and still bubbles its keys through here.
+            const target = event.target
+            if (!(target instanceof Element) || !event.currentTarget.contains(target)) return
+            if (!isDefaultEnter(event.nativeEvent) || ownsEnter(enterTargetOf(target))) return
+            const button = dialogDefaultButton(event.currentTarget)
+            if (!button) return
+            event.preventDefault()
+            event.stopPropagation()
+            button.click()
+          }}
           className={`pop-in fixed left-1/2 top-1/2 ${Z_DIALOG} flex -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-2xl shadow-shadow-ink/50 outline-none ${className}`}
         >
           <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">

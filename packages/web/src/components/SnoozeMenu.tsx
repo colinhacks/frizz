@@ -225,6 +225,7 @@ export function SnoozeMenu({ thread, onSnoozed }: { thread: ThreadView; onSnooze
             <button
               type="submit"
               form={customFormId}
+              data-dialog-default
               disabled={busy}
               className="button-outline flex items-center gap-1.5 rounded-md bg-fg px-3 py-1.5 text-[12px] font-medium text-bg outline-none transition-opacity hover:opacity-90 disabled:opacity-45"
             >

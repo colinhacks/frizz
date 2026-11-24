@@ -467,6 +467,7 @@ function RenameProjectDialog({
           <button
             type="submit"
             form="rename-project"
+            data-dialog-default
             disabled={rename.isPending || trimmed.length === 0}
             className="flex items-center gap-1.5 rounded-md border border-accent-fill bg-accent-fill px-3 py-1.5 text-[12.5px] font-medium text-on-accent outline-none hover:brightness-110 focus-visible:ring-1 focus-visible:ring-focus-accent-60 disabled:opacity-50"
           >

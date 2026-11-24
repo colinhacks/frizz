@@ -132,9 +132,9 @@ test("a comment on a passage waits as a highlight, survives a reload, and the ne
     await page.mouse.move(5, 450, { steps: 4 })
     await new Promise((r) => setTimeout(r, 600))
     assert.ok(await page.$("[data-comment-popover]"), "a card being edited stays open after the pointer leaves")
-    await page.keyboard.down("Meta")
+    // A plain Enter saves, as it presses the white button in every popover (lib/dialogDefault.ts); the new
+    // comment above went in on ⌘⏎, which does the same.
     await page.keyboard.press("Enter")
-    await page.keyboard.up("Meta")
     await page.waitForSelector("[data-comment-popover]", { hidden: true, timeout: 5000 })
     await page.mouse.move(first.from.x + 20, first.from.y)
     await page.waitForSelector("[data-comment-popover]", { visible: true, timeout: 5000 })

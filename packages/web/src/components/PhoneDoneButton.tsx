@@ -73,6 +73,7 @@ export function PhoneDoneButton({ thread, compact }: { thread: ThreadView; compa
             <button
               type="button"
               data-phone-done-confirm
+              data-dialog-default
               disabled={pending}
               onClick={() => void complete(true)}
               className="button-outline flex h-[40px] items-center gap-1.5 rounded-md bg-fg px-4 text-[14px] font-medium text-bg outline-none disabled:opacity-45"

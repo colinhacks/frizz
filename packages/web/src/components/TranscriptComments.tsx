@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react"
 import { ChevronDown, ChevronUp, MessageSquare, MessageSquarePlus } from "lucide-react"
 import { Popover, PopoverAnchor, PopoverContent, POPOVER_COLLISION_PADDING } from "./ui/Popover.tsx"
+import { shouldSubmitStagedEnter } from "../lib/composerKeyboard.ts"
 import { draftKey, draftStore, useDraft, useProjectDir } from "../lib/drafts.ts"
 import {
   COMMENT_UI_ATTR,
@@ -694,7 +695,17 @@ function CommentCard({ saved, onSave, onCancel, onDelete, onDirty, onEngage }: {
           // The surface's own keys (⌘⏎ is Send now there) are not this box's: React carries a portal's
           // events up the component tree, to the surface's root.
           event.stopPropagation()
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+          // Enter (or ⌘/Ctrl-Enter) presses the white button, as Enter does in every popover and dialog
+          // (lib/dialogDefault.ts); Shift/Option-Enter make the newline, as in every box (2026-08-26).
+          if (shouldSubmitStagedEnter({
+            key: event.key,
+            altKey: event.altKey,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+            shiftKey: event.shiftKey,
+            isComposing: event.nativeEvent.isComposing,
+            keyCode: event.nativeEvent.keyCode,
+          })) {
             event.preventDefault()
             save()
           }
