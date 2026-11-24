@@ -154,12 +154,16 @@ test("a home worker whose data root cannot be told gets no scratch path, rather 
   assert.equal(existsSync(join(home, ".frizz")), false)
 })
 
-test("ensureHomeProject registers Home once, sits after existing projects, and never creates ~/.frizz", (t) => {
+test("ensureHomeProject registers Home once, always pins it first, and never creates ~/.frizz", (t) => {
   const home = withHome(t)
-  const repo = join(home, "alpha")
-  mkdirSync(repo)
-  const repoId = ensureProjectIdFile(repo, home)
-  registerProject({ dir: repo, id: repoId, now: () => new Date("2026-11-20T12:00:00Z") }, home)
+  const alpha = join(home, "alpha")
+  const beta = join(home, "beta")
+  mkdirSync(alpha)
+  mkdirSync(beta)
+  const alphaId = ensureProjectIdFile(alpha, home)
+  const betaId = ensureProjectIdFile(beta, home)
+  registerProject({ dir: alpha, id: alphaId, now: () => new Date("2026-11-20T12:00:00Z") }, home)
+  registerProject({ dir: beta, id: betaId, now: () => new Date("2026-11-21T12:00:00Z") }, home)
 
   const entry = ensureHomeProject(home)
   assert.equal(entry.path, realpathSync(home))
@@ -167,17 +171,20 @@ test("ensureHomeProject registers Home once, sits after existing projects, and n
   assert.equal(entry.slug, "home")
   assert.equal(existsSync(join(home, ".frizz")), false)
 
-  // Existing projects stay first; Home arrives at the end rather than displacing them.
-  assert.deepEqual(listProjects(home).map((p) => p.slug), ["alpha", "home"])
+  // Home is always first, ahead of recency and manual ordering.
+  assert.deepEqual(listProjects(home).map((p) => p.slug), ["home", "beta", "alpha"])
 
-  // Idempotent: a second boot leaves user customizations (order, rename, lastOpenedAt) untouched.
-  reorderProjects([entry.id, repoId], home)
+  // Reordering user projects (even passing Home later in ids) keeps Home pinned first.
+  reorderProjects([alphaId, entry.id, betaId], home)
+  assert.deepEqual(listProjects(home).map((p) => p.id), [entry.id, alphaId, betaId])
+
+  // Idempotent: a second boot leaves user customizations (rename, order of user projects) untouched.
   renameProject(entry.id, { name: "Personal", slug: "personal" }, home)
   const again = ensureHomeProject(home)
   assert.equal(again.id, entry.id)
   assert.equal(again.name, "Personal")
   assert.equal(again.slug, "personal")
-  assert.deepEqual(listProjects(home).map((p) => p.id), [entry.id, repoId])
+  assert.deepEqual(listProjects(home).map((p) => p.id), [entry.id, alphaId, betaId])
   assert.equal(existsSync(join(home, ".frizz")), false)
 })
 

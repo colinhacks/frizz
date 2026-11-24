@@ -780,8 +780,8 @@ try {
   assert.match(launcherLogs(newHome), new RegExp(`the installed Frizz server ${OLD_SERVER.replaceAll(".", "\\.")} is older than this launcher works with \\(0\\.15\\.21\\); starting on a newer one`))
   // This registry's newest frizz-server is older than the pin, so the pin is where it starts.
   assert.match(launcherLogs(newHome), /installed Frizz server 0\.15\.99$/m)
-  // A server from 508880cc7 on also lists the built-in Home project, the home directory itself.
-  assert.deepEqual(await listed(), [realpathSync(theirs), realpathSync(newHome)], "the entry the older server wrote is gone from the dashboard")
+  // A server from 508880cc7 on also lists the built-in Home project, pinned first ahead of user projects.
+  assert.deepEqual(await listed(), [realpathSync(newHome), realpathSync(theirs)], "the entry the older server wrote is gone from the dashboard")
   record("minimum-starts-an-older-machine-on-the-pinned-server", { from: OLD_SERVER, to: selected(newHome).version, listed: await listed() })
   assert.equal(children().some((event) => event.event === "overlapping-server"), false, "no server process may overlap its predecessor")
   assert.ok(children().every((event) => event.node === runtimeVersion), "npm bin shebang and all server forks must use the requested Node version")

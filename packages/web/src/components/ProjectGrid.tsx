@@ -131,30 +131,34 @@ function ProjectTile({
   project,
   counts,
   home,
-  index,
+  index = 0,
   reorder,
+  pinned = false,
 }: {
   project: ProjectCard
   counts: ProjectRailCounts | undefined
   home: string | undefined
-  index: number
-  reorder: TileReorder
+  index?: number
+  reorder?: TileReorder
+  /** Built-in Home tile: always pinned first (after All projects), never dragged out of its slot. */
+  pinned?: boolean
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const icon = useProjectIconChange(project)
   const queued = counts?.queued ?? 0
   const running = counts?.running ?? 0
-  const { drag } = reorder
+  const drag = pinned ? null : (reorder?.drag ?? null)
   const held = drag?.fromIndex === index
   // The held tile follows the pointer; the tiles between its old cell and its new one slide one place to
   // open the gap (lib/railReorder.ts cellShift). They animate only while a drag is in flight: at the drop
   // each tile's offset and its move to the new cell land in one render, and a transition left on would
-  // play the offset back out from a cell away.
+  // play the offset back out from a cell away. A pinned tile never moves.
   const offset = drag ? (held ? { x: drag.deltaX, y: drag.deltaY } : cellShift(drag.cells, index, drag.fromIndex, drag.toIndex)) : null
   return (
     <div
       data-home-tile={project.slug}
+      data-home-tile-reorderable={pinned ? undefined : ""}
       data-home-tile-held={held || undefined}
       // `select-none`: a press that turns into a drag would otherwise select the names it crosses.
       className={`group/tile relative flex select-none flex-col items-center pb-1 pt-1.5 ${held ? "z-10 cursor-grabbing [&_*]:cursor-grabbing" : ""}`}
@@ -163,9 +167,9 @@ function ProjectTile({
         transform: offset && (offset.x || offset.y) ? `translate(${offset.x}px, ${offset.y}px)` : undefined,
         transition: drag && !held ? "transform 160ms ease" : undefined,
       }}
-      onPointerDown={(event) => reorder.onPointerDown(event, index)}
-      onKeyDown={(event) => reorder.onKeyDown(event, index)}
-      onClickCapture={reorder.onClickCapture}
+      onPointerDown={pinned || !reorder ? undefined : (event) => reorder.onPointerDown(event, index)}
+      onKeyDown={pinned || !reorder ? undefined : (event) => reorder.onKeyDown(event, index)}
+      onClickCapture={pinned || !reorder ? undefined : reorder.onClickCapture}
       // A link and an image are natively draggable, and the browser's drag would take the pointer away.
       onDragStart={(event) => event.preventDefault()}
     >
@@ -806,7 +810,11 @@ interface TileDrag {
 }
 
 interface TileReorder {
-  /** The order to draw: a held tile's list, then a dropped order the server has not confirmed, then the server's. */
+  /** Built-in projects pinned ahead of movable user projects (Home). */
+  pinned: readonly ProjectCard[]
+  /** User projects in the order to draw: a held tile's list, then optimistic, then the server's. */
+  movable: readonly ProjectCard[]
+  /** Combined order (`pinned` followed by `movable`), for counts and All projects. */
   projects: readonly ProjectCard[] | undefined
   drag: TileDrag | null
   onPointerDown: (event: PointerEvent_<HTMLDivElement>, index: number) => void
@@ -850,11 +858,14 @@ function useTileReorder(data: readonly ProjectCard[] | undefined, gridRef: RefOb
       showToast(`Could not save the new order: ${error instanceof Error ? error.message : String(error)}`, { duration: 7000 })
     },
   })
-  const projects = drag?.list ?? optimistic ?? data
+  const pinned = (data ?? []).filter((project) => project.builtin !== undefined)
+  const movableData = data?.filter((project) => project.builtin === undefined)
+  const movable = drag?.list ?? optimistic ?? movableData ?? []
+  const projects = data === undefined ? undefined : [...pinned, ...movable]
 
-  /** Every project tile's box, in page coordinates, in the order they are drawn. */
+  /** Every reorderable project tile's box, in page coordinates, in the order they are drawn. */
   const measure = (): CellSlot[] =>
-    [...(gridRef.current?.querySelectorAll<HTMLElement>("[data-home-tile]") ?? [])].map((tile) => {
+    [...(gridRef.current?.querySelectorAll<HTMLElement>("[data-home-tile-reorderable]") ?? [])].map((tile) => {
       const box = tile.getBoundingClientRect()
       return { left: box.left + window.scrollX, top: box.top + window.scrollY, width: box.width, height: box.height }
     })
@@ -862,15 +873,15 @@ function useTileReorder(data: readonly ProjectCard[] | undefined, gridRef: RefOb
   const commit = (list: readonly ProjectCard[], from: number, to: number) => {
     const next = moveItem(list, from, to)
     setOptimistic(next)
-    write.mutate(next.map((project) => project.id))
+    write.mutate([...pinned.map((project) => project.id), ...next.map((project) => project.id)])
   }
 
   const onPointerDown = (event: PointerEvent_<HTMLDivElement>, index: number) => {
     // Left button only, never a modified click (⌘-click opens a new tab), and never on the ⋯ trigger.
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-    if (!fromTileBody(event) || !projects) return
+    if (!fromTileBody(event) || movable.length === 0) return
     const tile = event.currentTarget
-    const list = projects
+    const list = movable
     const start = { x: event.clientX, y: event.clientY, scrollX: window.scrollX, scrollY: window.scrollY }
     let pointer = { x: event.clientX, y: event.clientY }
     let cells: CellSlot[] | null = null
@@ -934,7 +945,7 @@ function useTileReorder(data: readonly ProjectCard[] | undefined, gridRef: RefOb
   }
 
   const onKeyDown = (event: KeyboardEvent_<HTMLDivElement>, index: number) => {
-    if (!event.altKey || !projects || !fromTileBody(event)) return
+    if (!event.altKey || movable.length === 0 || !fromTileBody(event)) return
     const to =
       event.key === "ArrowLeft" ? index - 1
       : event.key === "ArrowRight" ? index + 1
@@ -944,11 +955,11 @@ function useTileReorder(data: readonly ProjectCard[] | undefined, gridRef: RefOb
     if (to === null) return
     // Taken even at the ends, where nothing moves: Alt+← is the browser's Back on Windows and Linux.
     event.preventDefault()
-    if (to < 0 || to >= projects.length || to === index) return
-    commit(projects, index, to)
+    if (to < 0 || to >= movable.length || to === index) return
+    commit(movable, index, to)
     // Focus follows the tile, not the cell, so a second press moves the same project again.
     requestAnimationFrame(() => {
-      gridRef.current?.querySelectorAll<HTMLElement>("[data-home-tile-name]")[to]?.focus()
+      gridRef.current?.querySelectorAll<HTMLElement>("[data-home-tile-reorderable] [data-home-tile-name]")[to]?.focus()
     })
   }
 
@@ -961,7 +972,7 @@ function useTileReorder(data: readonly ProjectCard[] | undefined, gridRef: RefOb
     }
   }
 
-  return { projects, drag, onPointerDown, onKeyDown, onClickCapture }
+  return { pinned, movable, projects, drag, onPointerDown, onKeyDown, onClickCapture }
 }
 
 export function ProjectGrid() {
@@ -1096,7 +1107,10 @@ export function ProjectGrid() {
             >
               <AddTile pending={pick.isPending} onClick={() => pick.mutate()} />
               {projects.length > 1 ? <AllProjectsTile projects={projects} counts={counts.data} /> : null}
-              {projects.map((project, index) => (
+              {reorder.pinned.map((project) => (
+                <ProjectTile key={project.id} project={project} counts={counts.data?.[project.id]} home={home} pinned />
+              ))}
+              {reorder.movable.map((project, index) => (
                 <ProjectTile key={project.id} project={project} counts={counts.data?.[project.id]} home={home} index={index} reorder={reorder} />
               ))}
             </div>

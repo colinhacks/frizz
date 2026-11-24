@@ -45,10 +45,11 @@ test("a project tile dragged across rows stays there, across a reload, without o
     const errors: string[] = []
     page.on("pageerror", (e) => errors.push(String(e)))
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle2" })
-    await page.waitForSelector("[data-home-tile]", { timeout: 20_000 })
+    await page.waitForSelector("[data-home-tile-reorderable]", { timeout: 20_000 })
     const order = () => page.$$eval("[data-home-tile]", (tiles) => tiles.map((t) => t.getAttribute("data-home-tile") ?? ""))
+    const movableOrder = () => page.$$eval("[data-home-tile-reorderable]", (tiles) => tiles.map((t) => t.getAttribute("data-home-tile") ?? ""))
     const squares = () =>
-      page.$$eval("[data-home-tile] [data-home-tile-square]", (els) =>
+      page.$$eval("[data-home-tile-reorderable] [data-home-tile-square]", (els) =>
         els.map((el) => {
           const box = el.getBoundingClientRect()
           return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
@@ -56,8 +57,11 @@ test("a project tile dragged across rows stays there, across a reload, without o
       )
     const before = await order()
     assert.deepEqual(before, original.map((p) => p.slug), "the grid draws the server's order")
+    assert.equal(before[0], "home", "built-in Home is pinned first")
+    const beforeMovable = await movableOrder()
+    const pinnedPrefix = before.slice(0, before.length - beforeMovable.length)
 
-    // THE DRAG: the first project onto the last one's cell, on another row.
+    // THE DRAG: the first reorderable project onto the last one's cell, on another row.
     const cells = await squares()
     const from = cells[0]!
     const to = cells[cells.length - 1]!
@@ -69,16 +73,20 @@ test("a project tile dragged across rows stays there, across a reload, without o
       await sleep(20)
     }
     await sleep(250)
-    const mid = await page.$$eval("[data-home-tile]", (tiles) =>
+    const mid = await page.$$eval("[data-home-tile-reorderable]", (tiles) =>
       tiles.map((t) => ({ held: (t as HTMLElement).dataset.homeTileHeld === "true", transform: (t as HTMLElement).style.transform })),
     )
     assert.ok(mid[0]!.held, "the dragged tile is held")
     assert.ok(mid.slice(1).every((t) => t.transform !== ""), "every tile it passed slid aside")
     // The one that wraps: the first tile of the last row moves UP to the end of the row above.
-    assert.match(mid.at(-1)!.transform, /translate\(\d+px, -\d+px\)/, "the passed tile at a row's start wraps to the row above")
+    assert.ok(
+      mid.slice(1).some((t) => /translate\(\d+px, -\d+px\)/.test(t.transform)),
+      `a passed tile at a row's start wraps to the row above (got ${JSON.stringify(mid.slice(1))})`,
+    )
     assert.equal(await page.$('[role="tooltip"]'), null, "no tooltip rides along with the held tile")
     await page.mouse.up()
-    const dropped = [...before.slice(1), before[0]!]
+    const droppedMovable = [...beforeMovable.slice(1), beforeMovable[0]!]
+    const dropped = [...pinnedPrefix, ...droppedMovable]
     await page.waitForFunction((want) => [...document.querySelectorAll("[data-home-tile]")].map((t) => t.getAttribute("data-home-tile")).join() === want, { timeout: 5_000 }, dropped.join())
     await sleep(300)
     assert.equal(new URL(page.url()).pathname, "/", "the release did not open a project")
@@ -101,16 +109,17 @@ test("a project tile dragged across rows stays there, across a reload, without o
     assert.equal(new URL(page.url()).pathname, "/", "…and opens nothing")
 
     await page.reload({ waitUntil: "networkidle2" })
-    await page.waitForSelector("[data-home-tile]")
+    await page.waitForSelector("[data-home-tile-reorderable]")
     assert.deepEqual(await order(), dropped, "the order survives a reload")
 
     // THE KEYBOARD: Alt+← on the last tile's name moves it one place earlier, and focus goes with it.
-    const last = dropped.at(-1)!
+    const last = droppedMovable.at(-1)!
     await page.focus(`[data-home-tile="${last}"] [data-home-tile-name]`)
     await page.keyboard.down("Alt")
     await page.keyboard.press("ArrowLeft")
     await page.keyboard.up("Alt")
-    const keyed = [...dropped.slice(0, -2), dropped.at(-1)!, dropped.at(-2)!]
+    const keyedMovable = [...droppedMovable.slice(0, -2), droppedMovable.at(-1)!, droppedMovable.at(-2)!]
+    const keyed = [...pinnedPrefix, ...keyedMovable]
     await page.waitForFunction((want) => [...document.querySelectorAll("[data-home-tile]")].map((t) => t.getAttribute("data-home-tile")).join() === want, { timeout: 5_000 }, keyed.join())
     await sleep(100)
     assert.equal(
@@ -123,7 +132,7 @@ test("a project tile dragged across rows stays there, across a reload, without o
     // A plain click still opens the project.
     const first = (await squares())[0]!
     await page.mouse.click(first.x, first.y)
-    await page.waitForFunction((want) => location.pathname === want, { timeout: 10_000 }, `/project/${keyed[0]}`)
+    await page.waitForFunction((want) => location.pathname === want, { timeout: 10_000 }, `/project/${keyedMovable[0]}`)
     assert.deepEqual(errors, [])
   } finally {
     await browser.close()
@@ -144,7 +153,7 @@ test("a rail drop lands in one frame: the squares it passed do not slide back in
     const page = await browser.newPage()
     await page.setViewport({ width: 1280, height: 800 })
     await page.goto(`${baseUrl}/project/${original[0]!.slug}`, { waitUntil: "networkidle2" })
-    const rail = 'nav[aria-label="Projects"] .frizz-rail-scroll a'
+    const rail = 'nav[aria-label="Projects"] .frizz-rail-scroll a[data-rail-reorderable]'
     await page.waitForSelector(rail, { timeout: 20_000 })
     await sleep(500)
     const squares = await page.$$eval(rail, (links) => links.map((a) => { const box = a.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2, top: Math.round(box.top) } }))

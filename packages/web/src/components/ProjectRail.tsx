@@ -298,6 +298,7 @@ export function RailLink({
   counts,
   index,
   drag,
+  pinned = false,
   onPointerDown,
   onKeyDown,
 }: {
@@ -307,14 +308,17 @@ export function RailLink({
   counts: ProjectRailCounts | undefined
   index: number
   drag: DragState | null
+  /** Pinned built-in project (Home): always first, never dragged out of its slot. */
+  pinned?: boolean
   onPointerDown: (event: PointerEvent_<HTMLAnchorElement>, index: number) => void
   onKeyDown: (event: KeyboardEvent_<HTMLAnchorElement>, index: number) => void
 }) {
-  const held = drag?.fromIndex === index
+  const held = !pinned && drag?.fromIndex === index
   const queued = counts?.queued ?? 0
   // The held square follows the pointer; everything between its old slot and its new one slides one
-  // step to open the gap. `shiftFor` owns which is which — see lib/railReorder.ts.
-  const offset = drag
+  // step to open the gap. `shiftFor` owns which is which — see lib/railReorder.ts. A pinned square
+  // never moves.
+  const offset = !pinned && drag
     ? held
       ? drag.deltaY
       : shiftFor(index, drag.fromIndex, drag.toIndex)
@@ -335,13 +339,14 @@ export function RailLink({
         // The rail is a reorderable list, and a link is not one. `listitem` + `aria-grabbed` is the
         // most a native anchor can say about it; the keyboard path below is what makes it true.
         aria-grabbed={held || undefined}
-        onPointerDown={(event: PointerEvent_<HTMLAnchorElement>) => onPointerDown(event, index)}
-        onKeyDown={(event: KeyboardEvent_<HTMLAnchorElement>) => onKeyDown(event, index)}
+        data-rail-reorderable={!pinned ? "" : undefined}
+        onPointerDown={pinned ? undefined : (event: PointerEvent_<HTMLAnchorElement>) => onPointerDown(event, index)}
+        onKeyDown={pinned ? undefined : (event: KeyboardEvent_<HTMLAnchorElement>) => onKeyDown(event, index)}
         onClick={(event: MouseEvent_<HTMLAnchorElement>) => {
           // A drag ENDS over a link, so the browser fires a click on release. Without this, every
           // reorder also navigated to whatever square you dropped on — and under a real router that
           // navigation is instant, so the wrong board would already be mounting.
-          if (drag || justDragged()) event.preventDefault()
+          if (!pinned && (drag || justDragged())) event.preventDefault()
         }}
         // Native image-drag would fight the pointer drag.
         onDragStart={(event: DragEvent_<HTMLAnchorElement>) => event.preventDefault()}
@@ -355,7 +360,7 @@ export function RailLink({
           // slot land in one render, so a transition left on played the 48px back out: each one jumped a
           // slot past its new place and slid in over 160ms, the first one over the home button (measured
           // frame by frame, 2026-11-12). The pinned band's drag (Sidebar.tsx) has the same rule.
-          transition: drag && !held ? "transform 160ms ease" : "none",
+          transition: !pinned && drag && !held ? "transform 160ms ease" : "none",
         }}
       >
         {/* 28 of the square's 40px — 70%. Discord runs 40 of 48 (83%) and 24 of 40 read as a stub
@@ -626,8 +631,12 @@ export function ProjectRail() {
     onError: () => setOptimistic(null), // the server order is the truth if we could not write ours
   })
 
+  // Built-in Home stays pinned first; only user projects participate in drag reordering.
+  const pinned = (data ?? []).filter((project) => project.builtin !== undefined)
+  const movableData = (data ?? []).filter((project) => project.builtin === undefined)
   // A held square outranks both: its indices are positions in the list it was picked up from.
-  const projects = drag?.list ?? optimistic ?? data ?? []
+  const movable = drag?.list ?? optimistic ?? movableData
+  const projects = [...pinned, ...movable]
   const countsFor = useRailCounts(current, projects)
   // The house always goes to the grid (lib/homeView.ts), so it is the current page only there — not on
   // the Console, and not on the launching project's unprefixed board, which names no slug either.
@@ -666,7 +675,8 @@ export function ProjectRail() {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     const anchor = event.currentTarget
     const startY = event.clientY
-    const list = projects
+    const list = movable
+    const pinnedIds = pinned.map((project) => project.id)
     let started = false
     let latest: DragState | null = null
     let frame = 0
@@ -724,13 +734,13 @@ export function ProjectRail() {
       const next = moveItem(list, latest.fromIndex, latest.toIndex)
       if (latest.fromIndex === latest.toIndex) return
       setOptimistic(next)
-      reorder.mutate(next.map((project) => project.id))
+      reorder.mutate([...pinnedIds, ...next.map((project) => project.id)])
     }
 
     window.addEventListener("pointermove", onMove, { passive: false })
     window.addEventListener("pointerup", onUp)
     window.addEventListener("pointercancel", onUp)
-  }, [projects, reorder])
+  }, [movable, pinned, reorder])
 
   /**
    * The keyboard path, because a drag-only reorder is no reorder at all for anyone not using a mouse.
@@ -741,16 +751,16 @@ export function ProjectRail() {
   const onKeyDown = useCallback((event: KeyboardEvent_<HTMLAnchorElement>, index: number) => {
     if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return
     const to = index + (event.key === "ArrowUp" ? -1 : 1)
-    if (to < 0 || to >= projects.length) return
+    if (to < 0 || to >= movable.length) return
     event.preventDefault()
-    const next = moveItem(projects, index, to)
+    const next = moveItem(movable, index, to)
     setOptimistic(next)
-    reorder.mutate(next.map((project) => project.id))
+    reorder.mutate([...pinned.map((project) => project.id), ...next.map((project) => project.id)])
     // Focus follows the square, not the slot — otherwise a second press moves whatever landed here.
     requestAnimationFrame(() => {
-      bandRef.current?.querySelectorAll("a")[to]?.focus()
+      bandRef.current?.querySelectorAll<HTMLElement>("a[data-rail-reorderable]")[to]?.focus()
     })
-  }, [projects, reorder])
+  }, [movable, pinned, reorder])
 
   return (
     <nav
@@ -796,7 +806,20 @@ export function ProjectRail() {
         // extends the scroll height, which the bottom fade reads as "there is more" and dims the square.
         className="frizz-rail-scroll flex w-full min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pb-1.5"
       >
-        {projects.map((project, index) => (
+        {pinned.map((project, index) => (
+          <RailLink
+            key={project.id}
+            project={project}
+            index={index}
+            current={project.slug === current}
+            counts={countsFor(project)}
+            drag={drag}
+            pinned
+            onPointerDown={startDrag}
+            onKeyDown={onKeyDown}
+          />
+        ))}
+        {movable.map((project, index) => (
           <RailLink
             key={project.id}
             project={project}

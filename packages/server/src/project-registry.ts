@@ -389,10 +389,8 @@ export function backfillRegistry(
  * Home project (`/project/home`, keeping its Frizz folder out of `~/.frizz` via `projectFrizzDir`).
  *
  * Idempotent and non-disruptive: an already-registered Home project is returned untouched — keeping its
- * id, slug, custom name, custom icon, order and recency. A newly ensured one starts with an epoch
- * `lastOpenedAt` so it sits at the end of an existing machine's grid/rail rather than jumping ahead of
- * projects the operator already works in, while still being the first (and only) project on a fresh
- * machine.
+ * id, slug, custom name, custom icon and recency. `listProjects` always pins Home first (right after
+ * "All projects" on the grid/mobile, and first in the rail and switchers).
  */
 export function ensureHomeProject(home = homedir()): RegistryEntry {
   const dir = canonicalPath(home)
@@ -456,6 +454,11 @@ export function listProjects(home = homedir()): (RegistryEntry & { stale: boolea
   return readRegistry(home)
     .projects.map((p) => ({ ...p, stale: !existsSync(p.path) }))
     .sort((a, b) => {
+      // The built-in Home project is always first (after "All projects" on the grid/mobile, first in the
+      // rail and menus), regardless of recency or manual arrangement.
+      const aHome = isHomeDirectory(a.path, home)
+      const bHome = isHomeDirectory(b.path, home)
+      if (aHome !== bHome) return aHome ? -1 : 1
       if (a.order === undefined && b.order === undefined) return byRecency(a, b)
       if (a.order === undefined) return 1
       if (b.order === undefined) return -1
@@ -470,15 +473,18 @@ export function listProjects(home = homedir()): (RegistryEntry & { stale: boolea
  * has to fall back to recency for the rest, and then the unordered tail keeps rearranging itself
  * underneath an operator who has just said where they want things. Anything the caller did not name
  * (registered on another tab, mid-drag) keeps its relative position after the named ones rather than
- * being dropped.
+ * being dropped. The built-in Home project stays pinned at position 0.
  */
 export function reorderProjects(ids: readonly string[], home = homedir()): RegistryEntry[] {
   const registry = readRegistry(home)
+  const isHome = (entry: RegistryEntry) => isHomeDirectory(entry.path, home)
+  const pinned = registry.projects.filter(isHome)
+  const movable = registry.projects.filter((p) => !isHome(p))
   const rank = new Map(ids.map((id, index) => [id, index]))
-  const known = registry.projects.filter((p) => rank.has(p.id))
-  const rest = listProjects(home).filter((p) => !rank.has(p.id))
+  const known = movable.filter((p) => rank.has(p.id))
+  const rest = listProjects(home).filter((p) => !isHome(p) && !rank.has(p.id))
   known.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!)
-  ;[...known, ...rest].forEach((entry, index) => {
+  ;[...pinned, ...known, ...rest].forEach((entry, index) => {
     const target = registry.projects.find((p) => p.id === entry.id)
     if (target) target.order = index
   })
