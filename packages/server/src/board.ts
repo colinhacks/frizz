@@ -1651,11 +1651,17 @@ export function deriveWaitStatus(
   github: GithubStatusBook = {},
   registeredPrWatches: ReadonlySet<string> = new Set(),
   armedWatches: readonly RegisteredWatch[] = [],
+  // CHILD THREADS still out (child-threads.ts liveChildThreads).
+  liveChildren: ReadonlySet<string> = new Set(),
 ): ThreadView["waitStatus"] {
   if (runtime !== "turn-idle" || needsYou || messageInFlight) return undefined
-  const liveChild = hasLiveBackgroundWork(tele)
-  if (!awaitingBackground && !liveChild) return undefined
   const fence = tele?.lastFence?.kind === "awaiting" ? tele.lastFence : undefined
+  // A CHILD THREAD THE FENCE NAMES moves like a sub-agent: it does a job and reports back. The worker
+  // contract parks a parent on one with `threads: [<slug>]` and `status: working`, and until 2026-11-24
+  // that park read neither way here (`awaitingBackground` does not cover it), so it sat in Snoozed.
+  const liveChild = hasLiveBackgroundWork(tele) ||
+    readAwaitingPark(fence?.hints ?? []).items.some((i) => i.kind === "thread" && liveChildren.has(i.value))
+  if (!awaitingBackground && !liveChild) return undefined
   const declared = fence ? awaitingStatus(fence.hints) : null
   if (declared === "needs_input") return undefined
   if (declared === "watching") return "watching"
@@ -2228,7 +2234,7 @@ function sessionThreadView(
   const awaitingBackground = archived ? false : deriveAwaitingBackground(row, tele, runtime, interactionPresence.needsUser, nowMs, limitPause, deliveryProcessGone, github, registeredPrWatches, armedTimerIds, armedWatches)
   // hasFreshDelivery rather than deliveryInFlight: the spin stops after a minute, and a message still on
   // its way past that keeps its row where it was rather than parking it in Snoozed.
-  const waitStatus = archived ? undefined : deriveWaitStatus(tele, runtime, needsYou, awaitingBackground, answerInFlight || hasFreshDelivery(row, deliveryProcessGone), nowMs, github, registeredPrWatches, armedWatches)
+  const waitStatus = archived ? undefined : deriveWaitStatus(tele, runtime, needsYou, awaitingBackground, answerInFlight || hasFreshDelivery(row, deliveryProcessGone), nowMs, github, registeredPrWatches, armedWatches, liveChildren)
   // A worker that exited with work still outstanding — a turn in flight, OR a sub-agent still reading
   // "running" (its parent is gone, so it cannot actually be live) — is a crash/stall, not a clean
   // handoff, so it cards as "stalled" not a bare "rest". Mirrors deriveNeedsYou's surfacing above.

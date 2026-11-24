@@ -4861,9 +4861,14 @@ export function hasLiveSubAgents(t: ThreadView): boolean {
 // board honoured it (deriveWaitStatus). A live child does not change that — the contract gives a long
 // wait to a sub-agent, so the parent of a polling child is waiting on the world — and the child keeps
 // its own spinner on its own row.
+//
+// A `working` rest the board believed is motion too (2026-11-24). Every shape that earns that verdict
+// already passed one of the two lines above, except a park on a CHILD THREAD, which the resting card does
+// not state and so never sets `awaitingBackground` (board.deriveWaitStatus).
 export function hasLiveOps(t: ThreadView): boolean {
   if (watchingRest(t)) return false
   if (hasLiveSubAgents(t)) return true
+  if (t.waitStatus === "working" && t.runtime === "turn-idle") return true
   return t.awaitingBackground === true && !parkedOnArmedTimerAlone(t)
 }
 

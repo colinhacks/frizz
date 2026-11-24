@@ -192,17 +192,24 @@ test("the board carries the verdict, and the bands and the running count follow 
     "poller": { subAgents: [LIVE_AGENT], ...fence({ kind: "agent", value: "a01b2d20" }, FOR_2H, status("watching")) },
     "ready": { bgShells: [LIVE_SHELL], ...fence({ kind: "shell", value: "bzvtnt3ig" }, FOR_2H, status("needs_input")) },
     "ci": fence({ kind: "pr", value: PR }, FOR_2H, status("working")),
+    // A parent parked on its CHILD THREAD, the shape the contract prescribes for one (2026-11-24).
+    "parent-working": fence({ kind: "thread", value: "kid-working" }, FOR_2H, status("working")),
+    "parent-watching": fence({ kind: "thread", value: "kid-watching" }, FOR_2H, status("watching")),
   }
   for (const slug of Object.keys(fences)) {
     storage.upsertSession(row({ slug, session_id: `sess-${slug}`, thread_name: `frizz-${slug}`, spawned_at: slug === "legacy-watcher" ? LEGACY_SPAWN : NEW_SPAWN }))
     storage.setBackend(slug, "claude")
     storage.setClaudeRuntime(slug, "broker")
   }
+  for (const [kid, parent] of [["kid-working", "parent-working"], ["kid-watching", "parent-watching"]] as const) {
+    storage.upsertSession(row({ slug: kid, session_id: `sess-${kid}`, thread_name: `frizz-${kid}` }))
+    storage.setParentSlug(kid, parent)
+  }
   storage.armPrWatch({ id: "prw_1", slug: "ci", owner: "acme", repo: "app", number: 391, createdAtMs: Date.parse(AT), expiresAtMs: Date.parse(AT) + 86_400_000 })
   storage.setSetting(GITHUB_STATUS_SETTING, { [PR]: ci() })
   const tailer = {
     // The shells and children report their own instants; the rest is the fence the worker left.
-    get: (slug: string) => tele({ turn: "idle", lastActivityAt: AT, ...fences[slug] }),
+    get: (slug: string) => slug.startsWith("kid-") ? tele({ turn: "in-flight", lastAssistantAt: undefined }) : tele({ turn: "idle", lastActivityAt: AT, ...fences[slug] }),
     foreignIds: () => [], subAgent: () => undefined, forget: () => {},
     start: () => {}, stop: () => {}, tick: () => {},
   } satisfies Tailer
@@ -219,6 +226,9 @@ test("the board carries the verdict, and the bands and the running count follow 
     assert.deepEqual(bandOf("poller"), { waitStatus: "watching", section: "snoozed", running: false })
     assert.equal(hasLiveOps(view("poller")), false, "a watching parent is not motion; its child spins on its own row")
     assert.deepEqual(bandOf("ci"), { waitStatus: "working", section: "active", running: true })
+    // A working child is motion its parent named, like a sub-agent; a watching park on one stays still.
+    assert.deepEqual(bandOf("parent-working"), { waitStatus: "working", section: "active", running: true })
+    assert.deepEqual(bandOf("parent-watching"), { waitStatus: "watching", section: "snoozed", running: false })
     // The queued rest: in the cue, never counted as running, never banded.
     assert.equal(view("ready").needsYou, true)
     assert.deepEqual(bandOf("ready"), { waitStatus: undefined, section: "active", running: false })
