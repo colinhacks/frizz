@@ -125,8 +125,11 @@ export function ProjectSquare({ project, size }: { project: ProjectCard; size: n
   // Below ~22px two letters at 0.4em are 6–8px type, which is noise, not a monogram. A small square —
   // the Console's 16px row mark — carries the first letter alone, larger, the way Slack's do.
   const small = size < 22
-  const homeGlyphSize = size >= 56 ? 26 : size >= 34 ? Math.round(size * 0.45) : size >= 20 ? 12 : Math.max(7, Math.round(size * 0.62))
-  const homeStrokeWidth = size >= 56 ? 1.6 : size >= 34 ? 1.8 : size >= 20 ? 2 : 2.2
+  // Geometric tilde (`~`) for the built-in Home directory project, rather than `<House />`: the house
+  // glyph already means "Projects" (the home screen `/`) in the rail and breadcrumb, so reusing it for
+  // `$HOME` gave one icon two meanings on the same screen.
+  const homeGlyphSize = size >= 56 ? 30 : size >= 34 ? Math.round(size * 0.5) : size >= 20 ? 13 : Math.max(8, Math.round(size * 0.68))
+  const homeStrokeWidth = size >= 56 ? 1.85 : size >= 34 ? 2 : size >= 20 ? 2.2 : 2.5
   return (
     <span
       className={`relative block overflow-hidden rounded-[30%] bg-elevated ${
@@ -148,7 +151,18 @@ export function ProjectSquare({ project, size }: { project: ProjectCard; size: n
           data-home-project-icon=""
           className="absolute inset-0 flex items-center justify-center text-fg/80"
         >
-          <House size={homeGlyphSize} strokeWidth={homeStrokeWidth} />
+          <svg
+            width={homeGlyphSize}
+            height={homeGlyphSize}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={homeStrokeWidth}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M4.5 14.4C5.8 8.2 9.2 8.2 12 12C14.8 15.8 18.2 15.8 19.5 9.6" />
+          </svg>
         </span>
       ) : (
         <span
