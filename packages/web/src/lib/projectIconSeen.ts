@@ -12,7 +12,9 @@
 // `fills`), so a remembered square starts with the right fit too, instead of jumping on load.
 // Kept in localStorage so it outlives a reload, and capped so it cannot grow without bound.
 
-const KEY = "frizz-project-icons-seen"
+// `-v2`: the fit rule changed (lib/projectIconFit.ts), so a transparent mark remembered as filling
+// would draw cropped for a frame before its load corrected it.
+const KEY = "frizz-project-icons-seen-v2"
 const LIMIT = 200
 
 let seen: Map<string, boolean> | undefined
