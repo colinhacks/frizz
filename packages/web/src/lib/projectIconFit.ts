@@ -9,10 +9,15 @@
 // app-icon plate with a thin transparent margin (512x512, clear at the top and bottom edge) filled
 // well and looked like a hard white stamp once padded.
 //
-// What separates them is the CORNERS the tile cuts off anyway. A plate or a picture has ink there; a
-// free-standing mark does not. Measured on ten real project icons, sampled 2px in on a 32px copy (6–9%
-// in, inside the 30% rounding's trim): every plate and picture read 239–255 at all four corners, every
-// mark read 0, and a tilted card and an app icon on its own rounder plate read 122 at most.
+// What separates them is the CORNERS the tile cuts off anyway. A plate or a picture has ink right where
+// the tile's rounding ends; a free-standing mark does not. The 30% rounding trims 8.8% in along each
+// diagonal, so the sample sits just past it, 3px in on a 32px copy (pixel centre 10.9% in): a plate
+// rounded up to ~37% is opaque there, which is any plate the tile's own rounding hides the corners of.
+// Measured on the served copies at every size the squares ask for: square and rounded plates (0%, 22%,
+// 28%, and open-knowledge's own desktop app icon) read 243–255 at all four corners, its favicon's
+// bubble read 0 at all four, and a bubble whose outline reaches only the top corners read 255/255/0/0.
+// 2px in was too shallow: it sits inside the tile's trim, where a plate rounded past ~27% is already
+// clear, so the 28% plate and the desktop app icon (64–170 there) were padded into a stamp.
 
 /** A near-square picture: a 372x368 screenshot (1.1% off) is; a 300x331 logo (9.4% off) is not. */
 const SQUARE_TOLERANCE = 0.05
@@ -20,8 +25,8 @@ const SQUARE_TOLERANCE = 0.05
 const PLATE_ALPHA = 200
 /** The side of the canvas the picture is sampled on. Small: four pixels are read. */
 const SAMPLE_PX = 32
-/** How far in from each corner the sample sits, on that canvas: inside what the tile's rounding trims. */
-const CORNER_INSET = 2
+/** How far in from each corner the sample sits, on that canvas: just past what the tile's rounding trims. */
+const CORNER_INSET = 3
 
 /**
  * The decision itself. `cornerAlphas` is the alpha just inside each corner, or undefined when the
