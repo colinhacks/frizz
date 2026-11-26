@@ -25,6 +25,8 @@ function load(): Map<string, boolean> {
   try {
     const stored = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Record<string, unknown>
     for (const [key, fills] of Object.entries(stored)) if (typeof fills === "boolean") seen.set(key, fills)
+    // The key before `-v2`, which nothing reads any more.
+    localStorage.removeItem("frizz-project-icons-seen")
   } catch {
     // Unreadable or absent: every square fades in once, as it always did.
   }
