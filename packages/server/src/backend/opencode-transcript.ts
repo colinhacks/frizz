@@ -115,8 +115,14 @@ export function frizzToolDialect(buildCards: OpencodeToolCardBuilder): WrittenTr
   }
 }
 
+/** Each step is a message of its own. The bridge names the step on every text and tool record (`step`,
+ *  OpenCode's assistant message id). A file written before it did is split where each step wrote its
+ *  `context-usage`, which the bridge writes once per step, after the step's text and calls. Checked
+ *  against OpenCode's own messages for a 380-call thread: every boundary fell between two steps, and
+ *  no two steps shared a message. ACP and Antigravity write `context-usage` when the agent sends `usage_update`,
+ *  which nothing here has checked against their steps, so they keep one message per stretch. */
 export function projectOpencodeTranscript(raw: string, identityPrefix: string, buildCards: OpencodeToolCardBuilder, userProjector?: AcpUserRecordProjector): TranscriptMessage[] {
-  return projectAcpTranscript(raw, identityPrefix, userProjector, frizzToolDialect(buildCards))
+  return projectAcpTranscript(raw, identityPrefix, userProjector, { ...frizzToolDialect(buildCards), usageEndsStep: true })
 }
 
 export function readOpencodeTranscriptFile(absPath: string, buildCards: OpencodeToolCardBuilder, nativeId = absPath, userProjector?: AcpUserRecordProjector): TranscriptMessage[] {
