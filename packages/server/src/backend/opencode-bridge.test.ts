@@ -8,11 +8,12 @@ import Database from "../sqlite.ts"
 import { createInteractionStore, type InteractionStore } from "../interaction-store.ts"
 import { newTailState } from "../tailer.ts"
 import { opencodeToolCards } from "../transcript.ts"
-import { OPENCODE_CONTRACT_KEY, OpencodeSessionStream, createOpencodeBridge, opencodeFormAnswer, opencodeInboxId, type OpencodeBridge } from "./opencode-bridge.ts"
+import { OPENCODE_CONTRACT_KEY, OpencodeSessionStream, createOpencodeBridge, isOpencodeSkillAttachmentError, opencodeFormAnswer, opencodeInboxId, type OpencodeBridge } from "./opencode-bridge.ts"
+import { OpencodeHttpError } from "./opencode-client.ts"
 import { OpencodeHub } from "./opencode-hub.ts"
 import { ensureOpencodeService, opencodeVersionAtLeast } from "./opencode-service.ts"
 import { createOpencodeBackend, opencodeTranscriptPath, parseOpencodeSubAgentLine, projectOpencodeTranscript } from "./opencode-transcript.ts"
-import { opencodeKeptRules, opencodeModeOf, opencodeSessionRules, opencodeSkillSource, opencodeSkillsOf, opencodeSlashSkills, opencodeWildcard, parseOpencodeEvent } from "./opencode-types.ts"
+import { opencodeKeptRules, opencodeModeOf, opencodeSessionRules, opencodeSkillAllowed, opencodeSkillSource, opencodeSkillsOf, opencodeSlashSkills, opencodeWildcard, parseOpencodeEvent } from "./opencode-types.ts"
 import { parseAcpRecord } from "./acp-transcript.ts"
 // @ts-expect-error a plain .mjs fixture
 import { startFakeOpencode } from "./opencode.fixtures/fake-opencode-server.mjs"
@@ -630,25 +631,39 @@ test("opencode-bridge: a card for a call the bridge never saw reads the whole co
   }
 })
 
-test("opencode-skills: listSkills maps canonical ids and sources, and /name tokens in prompts attach skills to the turn", async () => {
-  const r = await rig({}, { contract: "THE WORKER CONTRACT mentioning /compact-doc must not trigger a skill" })
+test("opencode-skills: listSkills maps canonical ids and sources, filters denied skills, and attaches permitted /name tokens", async () => {
+  const r = await rig(
+    {
+      configRules: [
+        { action: "skill", resource: "internal-*", effect: "deny" },
+        { action: "skill", resource: "internal-public", effect: "allow" },
+      ],
+    },
+    { contract: "THE WORKER CONTRACT mentioning /compact-doc must not trigger a skill" },
+  )
   try {
     const projectDir = join(r.stateDir, "repo")
     const nestedDir = join(projectDir, "packages", "pkg-a")
     r.fake.skills.push(
       { id: "opencode", name: "OpenCode", description: "Built-in OpenCode guide", path: "/builtin/opencode.md", content: "# OpenCode" },
+      { id: "browser", name: "browser", description: "Denied built-in browser skill", path: "/builtin/browser.md", content: "# Browser" },
       { id: "compact-doc", name: "compact-doc", description: "Compact and update\n  a doc", path: join(projectDir, ".claude/skills/compact-doc/SKILL.md"), content: "# Compact" },
+      { id: "internal-secret", name: "internal-secret", description: "Denied by config", path: join(projectDir, ".opencode/skills/internal-secret/SKILL.md"), content: "# Secret" },
+      { id: "internal-public", name: "internal-public", description: "Carved-out exception", path: join(projectDir, ".opencode/skills/internal-public/SKILL.md"), content: "# Public" },
       { id: "git-release", name: "Git Release", description: "Prepare a release", path: join(r.stateDir, ".claude/skills/git-release/SKILL.md"), content: "# Release" },
       { id: "use-railway", name: "use-railway", description: "Operate Railway", path: join(r.stateDir, ".config/opencode/skills/use-railway/SKILL.md"), content: "# Railway" },
       { id: "company-sec", name: "company-sec", description: "External catalog", path: "/opt/company-skills/company-sec/SKILL.md", content: "# Sec" },
     )
 
-    // 1. Listing uses `id` (not the frontmatter display `name`), collapses multiline descriptions, and
-    //    classifies project (including from a nested package directory), global user, built-in and external roots.
+    // 1. Listing uses `id` (not the frontmatter display `name`), collapses multiline descriptions,
+    //    classifies project (including from a nested package directory), global user, built-in and external
+    //    roots, and drops skills denied by STILL_DENIED (`browser`) or the person's config (`internal-secret`)
+    //    while keeping carved-out exceptions (`internal-public`).
     const listed = await r.bridge.listSkills(nestedDir)
     assert.deepEqual(listed, [
       { name: "opencode", description: "Built-in OpenCode guide", source: "builtin" },
       { name: "compact-doc", description: "Compact and update a doc", source: "project" },
+      { name: "internal-public", description: "Carved-out exception", source: "project" },
       { name: "git-release", description: "Prepare a release", source: "user" },
       { name: "use-railway", description: "Operate Railway", source: "user" },
       { name: "company-sec", description: "External catalog" },
@@ -667,19 +682,19 @@ test("opencode-skills: listSkills maps canonical ids and sources, and /name toke
     const firstPrompt = r.fake.requests.find((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)
     assert.equal(firstPrompt.body.skills, undefined)
 
-    // 3. A follow-up naming `/compact-doc` at the start and `/git-release,` mid-sentence attaches both
-    //    canonical skill ids, while ignoring an unknown `/not-a-skill` token.
+    // 3. A follow-up naming `/compact-doc`, `/git-release,` and `/internal-public` attaches those
+    //    canonical skill ids, while ignoring `/browser`, `/internal-secret` (both denied) and `/not-a-skill`.
     await r.bridge.followUp({
       threadSlug: "t1", sessionId: "s1", cwd: projectDir, opencodeSessionId, mode: "bypassPermissions",
-      text: "/compact-doc docs/a.md then run /git-release, and ignore /not-a-skill [say:skilled]",
+      text: "/compact-doc docs/a.md then /git-release, /internal-public /browser /internal-secret /not-a-skill [say:skilled]",
       deliveryId: "d-skill", delivery: "steer",
     })
     await until(() => ends(r) === 2)
     const secondPrompt = r.fake.requests.filter((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)[1]
-    assert.deepEqual(secondPrompt.body.skills, [{ id: "compact-doc" }, { id: "git-release" }])
+    assert.deepEqual(secondPrompt.body.skills, [{ id: "compact-doc" }, { id: "git-release" }, { id: "internal-public" }])
 
-    // 4. If a cached skill is deleted on disk before the next send, OpenCode's 400 drops the cache and
-    //    retries as a plain prompt so the user's message still lands.
+    // 4. If a cached skill is deleted on disk before the next send, OpenCode's skill-attachment failure
+    //    (`field: "skills"`) drops the cache and retries as a plain prompt so the user's message still lands.
     const idx = r.fake.skills.findIndex((s: any) => s.id === "compact-doc")
     r.fake.skills.splice(idx, 1)
     await r.bridge.followUp({
@@ -695,7 +710,7 @@ test("opencode-skills: listSkills maps canonical ids and sources, and /name toke
   } finally { await teardown(r) }
 })
 
-test("opencode-skills-helpers: opencodeSkillSource, opencodeSkillsOf and opencodeSlashSkills handle edge cases", () => {
+test("opencode-skills-helpers: opencodeSkillSource, opencodeSkillAllowed and isOpencodeSkillAttachmentError handle edge cases", () => {
   const env = { HOME: "/Users/alice" }
   assert.equal(opencodeSkillSource("/builtin/report.md", "/Users/alice/git/app", env), "builtin")
   assert.equal(opencodeSkillSource("/Users/alice/.claude/skills/a/SKILL.md", "/Users/alice/git/app", env), "user")
@@ -703,15 +718,31 @@ test("opencode-skills-helpers: opencodeSkillSource, opencodeSkillsOf and opencod
   assert.equal(opencodeSkillSource("/Users/alice/.config/opencode/skills/c/SKILL.md", "/Users/alice/git/app", env), "user")
   assert.equal(opencodeSkillSource("/Users/alice/git/app/.claude/skills/d/SKILL.md", "/Users/alice/git/app", env), "project")
   assert.equal(opencodeSkillSource("/Users/alice/git/app/.claude/skills/d/SKILL.md", "/Users/alice/git/app/packages/web", env), "project")
+  const rules = [
+    { action: "skill", resource: "internal-*", effect: "deny" as const },
+    { action: "skill", resource: "internal-ok", effect: "allow" as const },
+  ]
+  assert.equal(opencodeSkillAllowed("browser", rules), false, "STILL_DENIED always blocks skill browser")
+  assert.equal(opencodeSkillAllowed("internal-secret", rules), false)
+  assert.equal(opencodeSkillAllowed("internal-ok", rules), true)
   assert.deepEqual(
     opencodeSkillsOf([
       { id: "valid-id", name: "Valid Name", description: "ok", path: "/builtin/valid.md" },
       { id: "valid-id", name: "Duplicate", description: "ignored", path: "/builtin/dup.md" },
+      { id: "browser", name: "browser", description: "denied" },
+      { id: "internal-secret", name: "internal-secret", description: "denied" },
       { id: "bad/id", name: "bad/id", description: "contains slash" },
       { id: "bad id", name: "bad id", description: "contains space" },
-    ], "/Users/alice/git/app", env),
+    ], "/Users/alice/git/app", env, rules),
     [{ name: "valid-id", description: "ok", source: "builtin" }],
   )
   const known = new Set(["alpha", "beta.v2"])
   assert.deepEqual(opencodeSlashSkills("/alpha and /beta.v2. Also /alpha!", known), [{ id: "alpha" }, { id: "beta.v2" }])
+
+  // Only skill-attachment failures trigger the plain-prompt retry; unrelated 400/404 errors must not.
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(400, "POST /api/session/s/prompt", "Skill not found: x", "InvalidRequestError", "skills")), true)
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(404, "POST /api/session/s/prompt", "Skill not found: x", "SkillNotFoundError")), true)
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(502, "POST /api/session/s/prompt", "Could not load skill", "SkillLoadError")), true)
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(400, "POST /api/session/s/prompt", "Attachment too large", "InvalidRequestError", "files")), false)
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(404, "POST /api/session/s/prompt", "Session not found", "SessionNotFoundError")), false)
 })

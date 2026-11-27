@@ -6,7 +6,13 @@ import type { OpencodeRegistration } from "./opencode-service.ts"
 // never puts it in an error or a log line.
 
 export class OpencodeHttpError extends Error {
-  constructor(readonly status: number, readonly route: string, detail: string) {
+  constructor(
+    readonly status: number,
+    readonly route: string,
+    detail: string,
+    readonly tag?: string,
+    readonly field?: string,
+  ) {
     super(`OpenCode ${route} answered ${status}${detail ? `: ${detail}` : ""}`)
   }
 }
@@ -36,8 +42,18 @@ export class OpencodeClient {
     const text = await res.text()
     if (!res.ok) {
       let detail = ""
-      try { detail = asString(asObject(JSON.parse(text))?.message) ?? asString(asObject(asObject(JSON.parse(text))?.data)?.message) ?? "" } catch { detail = text.slice(0, 200) }
-      throw new OpencodeHttpError(res.status, route, detail.slice(0, 500))
+      let tag: string | undefined
+      let field: string | undefined
+      try {
+        const parsed = asObject(JSON.parse(text))
+        const inner = asObject(parsed?.data) ?? asObject(parsed?.error)
+        detail = asString(parsed?.message) ?? asString(inner?.message) ?? ""
+        tag = asString(parsed?._tag) ?? asString(inner?._tag) ?? asString(parsed?.type) ?? asString(inner?.type)
+        field = asString(parsed?.field) ?? asString(inner?.field)
+      } catch {
+        detail = text.slice(0, 200)
+      }
+      throw new OpencodeHttpError(res.status, route, detail.slice(0, 500), tag, field)
     }
     if (!text) return undefined
     try { return JSON.parse(text) } catch { return text }

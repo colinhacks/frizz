@@ -164,10 +164,33 @@ export function opencodeSkillSource(skillPath: string | undefined, cwd: string, 
   return undefined
 }
 
+/** Whether `skillId` is permitted by the session agent's resolved rules (plus Frizz's `STILL_DENIED`,
+ *  which always denies `skill` `browser`). OpenCode's `GET /api/skill` lists every discovered skill
+ *  before permission evaluation, and `POST /api/session/:id/prompt` materializes `skills` attachments
+ *  without checking `skill` rules (`SessionPrompt.prepare`), where `SkillInstructions.load` filters by
+ *  `Permission.evaluate("skill", id, rules).effect !== "deny"`. Filtering here keeps denied skills out
+ *  of both the `/` menu and prompt attachments. */
+export function opencodeSkillAllowed(skillId: string, agentRules: readonly OpencodeRule[] = []): boolean {
+  const rules = [...agentRules, ...STILL_DENIED]
+  for (let i = rules.length - 1; i >= 0; i--) {
+    const r = rules[i]!
+    if (opencodeWildcard("skill", r.action) && opencodeWildcard(skillId, r.resource)) {
+      return r.effect !== "deny"
+    }
+  }
+  return true
+}
+
 /** Skills as OpenCode lists them (`GET /api/skill`), keyed by their canonical `id` rather than their
  *  frontmatter display `name` (which can carry spaces and capitals, whereas the `/` token and
- *  `POST /api/session/:id/prompt`'s `skills` attachment both take `id`). */
-export function opencodeSkillsOf(raw: unknown, cwd: string, env: NodeJS.ProcessEnv = process.env): ThreadSkill[] {
+ *  `POST /api/session/:id/prompt`'s `skills` attachment both take `id`), and filtered by the agent's
+ *  `skill` permission rules. */
+export function opencodeSkillsOf(
+  raw: unknown,
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  agentRules: readonly OpencodeRule[] = [],
+): ThreadSkill[] {
   const out: ThreadSkill[] = []
   const seen = new Set<string>()
   for (const item of asArray(raw)) {
@@ -175,6 +198,7 @@ export function opencodeSkillsOf(raw: unknown, cwd: string, env: NodeJS.ProcessE
     const o = asObject(item)
     const id = (asString(o?.id) ?? asString(o?.name))?.trim()
     if (!id || id.length > 512 || /[\s/]/.test(id) || seen.has(id)) continue
+    if (!opencodeSkillAllowed(id, agentRules)) continue
     seen.add(id)
     const description = (asString(o?.description) ?? "").replace(/\s+/g, " ").trim().slice(0, 1024)
     const source = opencodeSkillSource(asString(o?.path), cwd, env)
