@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import type { ThreadSkill, ThreadSkillSource } from "@frizz/shared"
 import { redactCredentialSyntax } from "../credential-redaction.ts"
@@ -193,6 +194,11 @@ export function opencodeSkillsOf(
 ): ThreadSkill[] {
   const out: ThreadSkill[] = []
   const seen = new Set<string>()
+  // OpenCode reports each path resolved (`/private/var/…` on macOS for a `/var/…` directory), so the
+  // directories it is compared with are resolved too, or a project or HOME behind a symlink loses its label.
+  const real = (dir: string | undefined) => { if (!dir?.trim()) return dir; try { return realpathSync.native(dir.trim()) } catch { return dir } }
+  cwd = real(cwd) ?? cwd
+  env = { ...env, HOME: real(env.HOME), XDG_CONFIG_HOME: real(env.XDG_CONFIG_HOME) }
   for (const item of asArray(raw)) {
     if (out.length >= 1024) break
     const o = asObject(item)

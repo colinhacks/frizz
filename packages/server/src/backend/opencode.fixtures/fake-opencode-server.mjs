@@ -44,6 +44,7 @@ export async function startFakeOpencode(opts = {}) {
   const version = opts.version ?? "2.2.5"
   const configRules = opts.configRules ?? []
   const skills = [...(opts.skills ?? [])]
+  const activatedDirs = new Set()
   const agentRules = (agent) => [...(AGENT_RULES[agent] ?? AGENT_DEFAULT), ...configRules]
   // A service that has just started: until `activatingMs` has passed, `/api/model` answers 503 and a prompt
   // fails "Model unavailable" (`provider.no-route`), as 2.0.27 did a moment after `service start`.
@@ -298,6 +299,12 @@ export async function startFakeOpencode(opts = {}) {
     }
     if (url.pathname === "/api/info") return json(res, 200, { version, pid: process.pid, urls: [], paths: {}, capabilities: {} })
     if (url.pathname.startsWith("/api/model") && activating()) return json(res, 503, { message: "Location plugins did not finish activating" })
+    // A directory's plugins (which register every skill, the built-in ones included) activate on its first
+    // request. `/api/model` waits for that, as every OpenCode from 2.0.27 to 2.2.5 does; `/api/skill` does
+    // not, so its first read of a directory nothing has touched yet answers an empty list.
+    const directory = req.headers["x-opencode-directory"]
+    const firstTouch = typeof directory === "string" && !activatedDirs.has(directory)
+    if (typeof directory === "string") activatedDirs.add(directory)
     if (url.pathname === "/api/model") return json(res, 200, { data: [
       { id: "big-pickle", providerID: "opencode", name: "Big Pickle", variants: [], limit: { context: 200000 }, enabled: true, status: "active" },
       { id: "flash", providerID: "opencode", name: "Flash", variants: [{ id: "low" }, { id: "high" }], limit: { context: 100000 }, enabled: true, status: "active" },
@@ -307,9 +314,8 @@ export async function startFakeOpencode(opts = {}) {
       return json(res, 200, { data: ["build", "plan", "general"].map((id) => ({ id, name: id, mode: id === "general" ? "subagent" : "primary", hidden: false, permissions: agentRules(id) })) })
     }
     if (url.pathname === "/api/skill") {
-      if (activating()) return json(res, 503, { message: "Location plugins did not finish activating" })
       if (opts.noSkillRoute) return json(res, 404, { message: "no route" })
-      return json(res, 200, { data: skills })
+      return json(res, 200, { data: firstTouch ? [] : skills })
     }
     if (url.pathname === "/api/model/default") return json(res, 200, { data: { id: "big-pickle", providerID: "opencode" } })
     if (url.pathname === "/api/session/active") return json(res, 200, { data: Object.fromEntries([...sessions.values()].filter((s) => s.running).map((s) => [s.id, { type: "running" }])) })

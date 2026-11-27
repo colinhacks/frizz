@@ -1302,6 +1302,10 @@ export class OpencodeBridge implements OpencodeHubListener {
     if (!byDir) { byDir = new Map(); this.skillCatalogs.set(client, byDir) }
     const cached = byDir.get(cwd)
     if (cached && !fresh && Date.now() - cached.at < 30_000) return cached
+    // `/api/skill` does not wait for the directory's plugins, which register every skill (the built-in
+    // ones too), so its first read of a directory answers an empty list; `/api/model/default` waits for
+    // them (OpenCode 2.0.27 to 2.2.5, measured on 2.0.27). Ask it first, and read the skills after.
+    await withStartupRetry(() => client.defaultModel(cwd)).catch(() => undefined)
     const raw = await withStartupRetry(() => client.skills(cwd))
     const skills = opencodeSkillsOf(raw, cwd, this.env)
     const entry = { at: Date.now(), skills, ids: new Set(skills.map((s) => s.name)) }

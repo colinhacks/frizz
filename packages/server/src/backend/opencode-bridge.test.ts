@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -649,16 +649,19 @@ test("opencode-skills: listSkills maps canonical ids and sources, filters denied
     { contract: "THE WORKER CONTRACT mentioning /compact-doc must not trigger a skill" },
   )
   try {
-    const projectDir = join(r.stateDir, "repo")
+    // OpenCode reports resolved paths, and a thread's directory exists.
+    const stateDir = realpathSync(r.stateDir)
+    const projectDir = join(stateDir, "repo")
     const nestedDir = join(projectDir, "packages", "pkg-a")
+    mkdirSync(nestedDir, { recursive: true })
     r.fake.skills.push(
       { id: "opencode", name: "OpenCode", description: "Built-in OpenCode guide", path: "/builtin/opencode.md", content: "# OpenCode" },
       { id: "browser", name: "browser", description: "Denied built-in browser skill", path: "/builtin/browser.md", content: "# Browser" },
       { id: "compact-doc", name: "compact-doc", description: "Compact and update\n  a doc", path: join(projectDir, ".claude/skills/compact-doc/SKILL.md"), content: "# Compact" },
       { id: "internal-secret", name: "internal-secret", description: "Denied by config", path: join(projectDir, ".opencode/skills/internal-secret/SKILL.md"), content: "# Secret" },
       { id: "internal-public", name: "internal-public", description: "Carved-out exception", path: join(projectDir, ".opencode/skills/internal-public/SKILL.md"), content: "# Public" },
-      { id: "git-release", name: "Git Release", description: "Prepare a release", path: join(r.stateDir, ".claude/skills/git-release/SKILL.md"), content: "# Release" },
-      { id: "use-railway", name: "use-railway", description: "Operate Railway", path: join(r.stateDir, ".config/opencode/skills/use-railway/SKILL.md"), content: "# Railway" },
+      { id: "git-release", name: "Git Release", description: "Prepare a release", path: join(stateDir, ".claude/skills/git-release/SKILL.md"), content: "# Release" },
+      { id: "use-railway", name: "use-railway", description: "Operate Railway", path: join(stateDir, ".config/opencode/skills/use-railway/SKILL.md"), content: "# Railway" },
       { id: "company-sec", name: "company-sec", description: "External catalog", path: "/opt/company-skills/company-sec/SKILL.md", content: "# Sec" },
     )
 
@@ -717,6 +720,25 @@ test("opencode-skills: listSkills maps canonical ids and sources, filters denied
   } finally { await teardown(r) }
 })
 
+test("opencode-skills: a service without the skill route lists nothing and still sends the prompt, words unchanged", async () => {
+  const r = await rig({ noSkillRoute: true, skills: [{ id: "compact-doc", name: "compact-doc", path: "/x/.claude/skills/compact-doc/SKILL.md", content: "" }] })
+  try {
+    const projectDir = join(r.stateDir, "repo")
+    // The router turns this rejection into an empty `/` menu; it is never an error card.
+    await assert.rejects(r.bridge.listSkills(projectDir))
+    const text = "/compact-doc docs/a.md [say:plain]"
+    const { opencodeSessionId } = await r.bridge.spawnDispatch({
+      threadSlug: "t1", sessionId: "s1", cwd: projectDir, mode: "bypassPermissions",
+      model: { providerID: "opencode", id: "big-pickle" }, prompt: text,
+    })
+    await until(() => ends(r) === 1)
+    const prompts = r.fake.requests.filter((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)
+    assert.equal(prompts.length, 1)
+    assert.equal(prompts[0].body.skills, undefined)
+    assert.ok(prompts[0].body.text.endsWith(text))
+  } finally { await teardown(r) }
+})
+
 test("opencode-skills-helpers: opencodeSkillSource, opencodeSkillAllowed and isOpencodeSkillAttachmentError handle edge cases", () => {
   const env = { HOME: "/Users/alice" }
   assert.equal(opencodeSkillSource("/builtin/report.md", "/Users/alice/git/app", env), "builtin")
@@ -742,6 +764,17 @@ test("opencode-skills-helpers: opencodeSkillSource, opencodeSkillAllowed and isO
       { id: "bad id", name: "bad id", description: "contains space" },
     ], "/Users/alice/git/app", env, rules),
     [{ name: "valid-id", description: "ok", source: "builtin" }],
+  )
+  // OpenCode reports resolved paths; a project and HOME reached through a symlink keep their labels.
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "opencode-skill-real-")))
+  mkdirSync(join(base, "real-home", "app"), { recursive: true })
+  symlinkSync(join(base, "real-home"), join(base, "home"))
+  assert.deepEqual(
+    opencodeSkillsOf([
+      { id: "proj", path: join(base, "real-home/app/.claude/skills/proj/SKILL.md") },
+      { id: "mine", path: join(base, "real-home/.claude/skills/mine/SKILL.md") },
+    ], join(base, "home", "app"), { HOME: join(base, "home") }).map((s) => s.source),
+    ["project", "user"],
   )
   const known = new Set(["alpha", "beta.v2"])
   assert.deepEqual(opencodeSlashSkills("/alpha and /beta.v2. Also /alpha!", known), [{ id: "alpha" }, { id: "beta.v2" }])
