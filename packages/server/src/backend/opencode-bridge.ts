@@ -194,7 +194,8 @@ class SessionStream {
     if (message !== this.finalMessage) { this.finalMessage = message; this.finalText = "" }
     this.finalText += text
     this.textWritten.set(key, (this.textWritten.get(key) ?? 0) + text.length)
-    this.writer.append({ kind: "assistant-text", at, text, final: false, messageId: key })
+    // `step` is OpenCode's assistant message, one per model step: the drawer gives each its own message.
+    this.writer.append({ kind: "assistant-text", at, text, final: false, messageId: key, step: message })
   }
 
   /** A whole text part is known: write whatever of it has not been, unless a thought is still open. */
@@ -212,7 +213,7 @@ class SessionStream {
     if (text.trim()) this.writer.append({ kind: "reasoning", at, text, oc: key })
   }
 
-  private writeToolCall(id: string, rawName: string, input: unknown, at: string): void {
+  private writeToolCall(id: string, rawName: string, input: unknown, at: string, step: string | undefined): void {
     if (this.toolCalled.has(id)) return
     this.toolCalled.add(id)
     this.flushBuffers()
@@ -221,7 +222,7 @@ class SessionStream {
     this.toolNames.set(id, shaped.name)
     const command = shaped.name === "Bash" ? asString(asObject(shaped.input)?.command) : undefined
     if (command) this.toolCommands.set(id, command)
-    this.writer.append({ kind: "tool-call", at, id, name: shaped.name, input: shaped.input })
+    this.writer.append({ kind: "tool-call", at, id, name: shaped.name, input: shaped.input, ...(step ? { step } : {}) })
   }
 
   private writeToolResult(id: string, content: unknown, metadata: Json | undefined, failed: boolean, at: string, errorText?: string, cancelled = false): void {
@@ -404,7 +405,7 @@ class SessionStream {
         if (asString(d.id)) this.toolNames.set(d.id as string, asString(d.name) ?? "tool")
         return false
       case "session.tool.called":
-        if (asString(d.id)) this.writeToolCall(d.id as string, this.toolNames.get(d.id as string) ?? asString(d.name) ?? "tool", d.input, at)
+        if (asString(d.id)) this.writeToolCall(d.id as string, this.toolNames.get(d.id as string) ?? asString(d.name) ?? "tool", d.input, at, message)
         return false
       case "session.tool.success":
         if (asString(d.id)) this.writeToolResult(d.id as string, d.content, asObject(d.metadata), false, at)
@@ -496,7 +497,7 @@ class SessionStream {
               const state = asObject(part.state)
               const status = asString(state?.status)
               if (status === "streaming") continue
-              this.writeToolCall(toolId, asString(part.name) ?? "tool", state?.input, at)
+              this.writeToolCall(toolId, asString(part.name) ?? "tool", state?.input, at, id || undefined)
               findChild(toolId, part)
               const ran = asObject(part.time)?.ran
               if (restartId && envSince !== undefined && part.name === "shell" && typeof ran === "number" && ran < envSince) {

@@ -14,7 +14,8 @@ import { OpencodeHub } from "./opencode-hub.ts"
 import { ensureOpencodeService, opencodeVersionAtLeast } from "./opencode-service.ts"
 import { createOpencodeBackend, opencodeTranscriptPath, parseOpencodeSubAgentLine, projectOpencodeTranscript } from "./opencode-transcript.ts"
 import { opencodeKeptRules, opencodeModeOf, opencodeSessionRules, opencodeSkillAllowed, opencodeSkillSource, opencodeSkillsOf, opencodeSlashSkills, opencodeWildcard, parseOpencodeEvent } from "./opencode-types.ts"
-import { parseAcpRecord } from "./acp-transcript.ts"
+import { parseAcpRecord, projectAcpTranscript } from "./acp-transcript.ts"
+import { projectAntigravityTranscript } from "./antigravity-transcript.ts"
 // @ts-expect-error a plain .mjs fixture
 import { startFakeOpencode } from "./opencode.fixtures/fake-opencode-server.mjs"
 
@@ -292,6 +293,12 @@ test("opencode-bridge: a stream dropped mid-turn is reconciled from the session'
     assert.equal(recs.filter((x) => x.kind === "assistant-text").map((x) => x.text).join(""), "after the gap")
     assert.equal(recs.find((x) => x.kind === "turn-end")!.finalText, "after the gap")
     assert.equal(recs.filter((x) => x.kind === "user-message").length, 1)
+    // Written from the session's messages, each record still names the step it came from.
+    const steps = r.fake.sessions.get(opencodeSessionId).messages.filter((m: any) => m.type === "assistant").map((m: any) => m.id)
+    const call = recs.find((x) => x.kind === "tool-call")!
+    const text = recs.filter((x) => x.kind === "assistant-text")
+    assert.ok(steps.includes(call.step), `the call names its step: ${call.step}`)
+    assert.ok(text.every((x) => x.step === text[0]!.step) && steps.includes(text[0]!.step) && text[0]!.step !== call.step, "the answer names its own step")
   } finally { await teardown(r) }
 })
 
@@ -452,6 +459,11 @@ test("opencode recorded stream: OpenCode 2.2.5's own events fold to the expected
   assert.match(steered.recs[5].text, /WOMBAT/)
   assert.equal(steered.recs[2].name, "Bash")
   assert.match(steered.recs.at(-1).finalText, /WOMBAT/)
+  // OpenCode's own events name each call's and each text's step, and the drawer gives each step a message.
+  const stepped = steered.recs.filter((x: any) => x.kind === "tool-call" || x.kind === "assistant-text")
+  assert.deepEqual(stepped.map((x: any) => x.step), ["msg_1b2f21d51001uJgnn3qieOv7Wi", "msg_1b2f25174001Oc8G2uYe14k2TH", "msg_1b2f28508001NLBU80cxGxTUE3"])
+  const drawn = projectOpencodeTranscript(readFileSync(steered.path, "utf8"), "opencode:s", opencodeToolCards)
+  assert.deepEqual(drawn.map((m) => [m.role, m.tools.length, m.text.includes("WOMBAT")]), [["user", 0, false], ["assistant", 1, false], ["user", 0, true], ["assistant", 1, false], ["assistant", 0, true]])
   const s = newTailState("t", "s", "/x")
   const backend = createOpencodeBackend({ stateDir: dir })
   for (const line of readFileSync(steered.path, "utf8").split("\n")) backend.foldLine(s, line)
@@ -467,6 +479,67 @@ test("opencode recorded stream: OpenCode 2.2.5's own events fold to the expected
   const parent = fold("12qI3zEC")
   const agent = projectOpencodeTranscript(readFileSync(parent.path, "utf8"), "opencode:p", opencodeToolCards).flatMap((m) => m.tools).find((t) => t.name === "Agent")!
   assert.equal(agent.output, "CHILDOK")
+})
+
+// One turn of three model steps, as the bridge writes it: a lead-in and two calls, one call, then the answer.
+const stepTurn = (named: boolean) => [
+  { kind: "user-message", at: "2026-11-27T10:00:00.000Z", text: "audit it", synthetic: false },
+  { kind: "turn-start", at: "2026-11-27T10:00:00.000Z" },
+  { kind: "assistant-text", at: "2026-11-27T10:00:01.000Z", text: "Looking.", final: false, messageId: "msg_a:0", ...(named ? { step: "msg_a" } : {}) },
+  { kind: "tool-call", at: "2026-11-27T10:00:01.000Z", id: "c1", name: "Read", input: { file_path: "/p/a.ts" }, ...(named ? { step: "msg_a" } : {}) },
+  { kind: "tool-call", at: "2026-11-27T10:00:01.000Z", id: "c2", name: "Read", input: { file_path: "/p/b.ts" }, ...(named ? { step: "msg_a" } : {}) },
+  { kind: "tool-result", at: "2026-11-27T10:00:02.000Z", id: "c1", text: "a" },
+  { kind: "tool-result", at: "2026-11-27T10:00:02.000Z", id: "c2", text: "b" },
+  { kind: "context-usage", at: "2026-11-27T10:00:02.000Z", tokens: 1000, window: 200000 },
+  { kind: "tool-call", at: "2026-11-27T10:00:03.000Z", id: "c3", name: "Bash", input: { command: "ls" }, ...(named ? { step: "msg_b" } : {}) },
+  { kind: "tool-result", at: "2026-11-27T10:00:03.000Z", id: "c3", text: "x" },
+  { kind: "context-usage", at: "2026-11-27T10:00:03.000Z", tokens: 1100, window: 200000 },
+  { kind: "assistant-text", at: "2026-11-27T10:00:04.000Z", text: "All good.", final: false, messageId: "msg_c:0", ...(named ? { step: "msg_c" } : {}) },
+  { kind: "context-usage", at: "2026-11-27T10:00:04.000Z", tokens: 1200, window: 200000 },
+  { kind: "turn-end", at: "2026-11-27T10:00:04.000Z", finalText: "All good.", successful: true },
+]
+const jsonl = (recs: object[]) => recs.map((x) => JSON.stringify(x)).join("\n") + "\n"
+const shapes = (msgs: ReturnType<typeof projectOpencodeTranscript>) => msgs.map((m) => [m.role, m.tools.map((t) => t.status), m.text])
+
+test("opencode transcript: each model step is a message of its own, as a Claude turn's API messages are", () => {
+  const want = [["user", [], "audit it"], ["assistant", ["completed", "completed"], "Looking."], ["assistant", ["completed"], ""], ["assistant", [], "All good."]]
+  assert.deepEqual(shapes(projectOpencodeTranscript(jsonl(stepTurn(true)), "opencode:s", opencodeToolCards)), want, "by the step each record names")
+  assert.deepEqual(shapes(projectOpencodeTranscript(jsonl(stepTurn(true).filter((x) => x.kind !== "context-usage")), "opencode:s", opencodeToolCards)), want, "the step names alone are enough")
+  assert.deepEqual(shapes(projectOpencodeTranscript(jsonl(stepTurn(false)), "opencode:s", opencodeToolCards)), want, "a file written before steps were named splits at each step's usage record")
+  // ACP and Antigravity write usage records too, on the agent's own schedule: their turn stays one message.
+  const one = [["user", [], "audit it"], ["assistant", ["completed", "completed", "completed"], "Looking.\n\nAll good."]]
+  assert.deepEqual(shapes(projectAcpTranscript(jsonl(stepTurn(false)), "acp:s")).map(([role, tools]) => [role, tools]), one.map(([role, tools]) => [role, tools]))
+  assert.deepEqual(shapes(projectAntigravityTranscript(jsonl(stepTurn(false)), "antigravity:s", opencodeToolCards)), one)
+})
+
+test("opencode transcript: a thought before each step still joins the turn's one reasoning block, while each step keeps its own message", () => {
+  // The bridge writes a step's reasoning before its text and calls, and names no step on it.
+  const withThoughts = (named: boolean) => stepTurn(named).flatMap((x, i, all) => {
+    const opensStep = (x.kind === "assistant-text" || x.kind === "tool-call") && (i === 0 || all[i - 1]!.kind === "context-usage" || all[i - 1]!.kind === "turn-start")
+    return opensStep ? [{ kind: "reasoning", at: x.at, text: `thinking before ${x.kind === "tool-call" ? x.id : x.text}` }, x] : [x]
+  })
+  for (const named of [true, false]) {
+    const msgs = projectOpencodeTranscript(jsonl(withThoughts(named)), "opencode:s", opencodeToolCards)
+    assert.deepEqual(msgs.map((m) => m.kind === "reasoning" ? "reasoning" : m.role), ["user", "reasoning", "assistant", "assistant", "assistant"], `named: ${named}`)
+    assert.equal(msgs[1]!.text, "thinking before Looking.\n\nthinking before c3\n\nthinking before All good.", "every step's thought, in one block")
+    assert.deepEqual(shapes(msgs.filter((m) => m.kind !== "reasoning")).slice(1), [["assistant", ["completed", "completed"], "Looking."], ["assistant", ["completed"], ""], ["assistant", [], "All good."]])
+  }
+})
+
+test("opencode transcript: a usage record never splits a step that names itself, and a step the bridge began unnamed keeps its calls", () => {
+  const recs = [
+    { kind: "turn-start", at: "2026-11-27T10:00:00.000Z" },
+    // Written by a bridge that did not name steps, then (after a restart in the same step) by one that does.
+    { kind: "tool-call", at: "2026-11-27T10:00:01.000Z", id: "c1", name: "Bash", input: { command: "a" } },
+    { kind: "tool-call", at: "2026-11-27T10:00:01.000Z", id: "c2", name: "Bash", input: { command: "b" }, step: "msg_a" },
+    { kind: "context-usage", at: "2026-11-27T10:00:02.000Z", tokens: 1000 },
+    // A usage record inside a named step leaves its message open.
+    { kind: "tool-call", at: "2026-11-27T10:00:02.000Z", id: "c3", name: "Bash", input: { command: "c" }, step: "msg_a" },
+    { kind: "tool-call", at: "2026-11-27T10:00:03.000Z", id: "c4", name: "Bash", input: { command: "d" }, step: "msg_b" },
+  ]
+  const msgs = projectOpencodeTranscript(jsonl(recs), "opencode:s", opencodeToolCards)
+  assert.deepEqual(msgs.map((m) => m.tools.map((t) => t.command)), [["a", "b", "c"], ["d"]])
+  assert.deepEqual(msgs.map((m) => m.sourceId), ["opencode:s:1", "opencode:s:5"], "each message keeps the line it opened on, so a reread draws the same rows")
 })
 
 test("opencode-service: a healthy registration is used as it is; a missing one is started and waited for; a dead start fails within the wait", async () => {
