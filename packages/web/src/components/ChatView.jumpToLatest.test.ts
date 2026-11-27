@@ -21,6 +21,8 @@ test("Jump to latest cancels any active open-landing hold and jumps to the tail 
   const block = chatView.slice(jumpIdx, jumpIdx + 1600)
   assert.match(block, /cancelAnimationFrame\(openHoldFrameRef\.current\)/)
   assert.match(block, /openLandRef\.current = null/)
+  assert.match(block, /pendingPrependAnchorRef\.current = null/)
+  assert.match(block, /cancelAnimationFrame\(prependSettleRef\.current\.frame\)/)
   assert.match(block, /anchorRestoreUntilRef\.current = 0/)
   assert.match(block, /setOpening\(false\)/)
   assert.match(block, /followingTailRef\.current = true/)

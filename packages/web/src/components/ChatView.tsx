@@ -1886,6 +1886,11 @@ function VirtualizedThreadTranscript({
           cancelAnimationFrame(openHoldFrameRef.current)
           openHoldFrameRef.current = 0
           openLandRef.current = null
+          pendingPrependAnchorRef.current = null
+          if (prependSettleRef.current) {
+            cancelAnimationFrame(prependSettleRef.current.frame)
+            prependSettleRef.current = null
+          }
           anchorRestoreUntilRef.current = 0
           readerScrollUntilRef.current = 0
           setOpening(false)

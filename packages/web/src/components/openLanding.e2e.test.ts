@@ -161,6 +161,14 @@ test("a thread at rest opens on the human's latest message and the first sign-of
     await page.click(row("land-unsigned"))
     const unsigned = await settled(pane("land-unsigned"))
     assert.ok(unsigned.steer && unsigned.steer.top >= 0 && unsigned.steer.top <= 80 && unsigned.fromTail > 200, `a stretch with no sign-off opens on the human's message (${JSON.stringify(unsigned)})`)
+    // Pressing Jump to latest while the 900ms opening hold is still in flight releases the hold and lands on
+    // the tail immediately, rather than being overwritten back to the steer on the next frame.
+    await page.click(row("land-short"))
+    await page.waitForSelector(`${pane("land-short")} [data-transcript-row-key]`, { timeout: 30_000 })
+    await page.click(row("land-unsigned"))
+    await page.waitForSelector(`${pane("land-unsigned")} [data-jump-to-latest]`, { timeout: 30_000 })
+    await page.click(`${pane("land-unsigned")} [data-jump-to-latest]`)
+    onItsTail(await settled(pane("land-unsigned")), "the pane, Jump to latest pressed during the opening hold")
 
     // …and by its address, for the threads out of the queue, whose whole transcript the pane draws.
     for (const slug of ["land-snoozed", "land-done"]) {
