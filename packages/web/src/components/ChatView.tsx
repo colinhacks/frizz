@@ -560,6 +560,14 @@ const ANCHOR_RESTORE_MS = 250
 // estimate, and markdown, code and images keep settling for several frames after mount.
 const OPEN_AT_MESSAGE_HOLD_MS = 900
 
+// How long "Jump to latest" holds the scroller against the momentum of the scroll it interrupted (see
+// holdAgainstMomentum): at least MIN, until the wheel has been quiet for QUIET, and never past MAX. A fling
+// whose scroller cannot scroll for 100ms has ended; a trackpad's momentum keeps arriving as wheel events
+// for as long as it lasts, a second or two on a hard flick.
+const JUMP_MOMENTUM_MIN_MS = 150
+const JUMP_MOMENTUM_QUIET_MS = 100
+const JUMP_MOMENTUM_MAX_MS = 2000
+
 // The air the virtualized transcript keeps above its first row and under its last.
 const TRANSCRIPT_PAD_PX = 20
 
@@ -1281,12 +1289,66 @@ function VirtualizedThreadTranscript({
   // in a layout effect, whose cleanup runs inside the commit, before any of those callbacks can; the
   // opening's frames, which write the scroller too, are cancelled there for the same reason.
   const aliveRef = useRef(true)
+  // The hold "Jump to latest" keeps against a scroll's leftover momentum, as the function that ends it.
+  // Ended with the transcript too: the scroller it froze is the one the next thread's transcript gets.
+  const momentumHoldRef = useRef<(() => void) | null>(null)
   useLayoutEffect(() => {
     aliveRef.current = true
     return () => {
       aliveRef.current = false
       cancelAnimationFrame(openHoldFrameRef.current)
+      momentumHoldRef.current?.()
     }
+  }, [])
+
+  // THE JUMP STOPS THE SCROLL IT INTERRUPTED. "Jump to latest" pressed while a trackpad flick or a touch
+  // fling is still carrying the reader up put them on the tail, and the momentum carried on from there: it
+  // is the browser's, not ours, and a programmatic scroll does not end it, so the reader landed on the tail
+  // and was carried straight back up (a headless touch fling jumped to the tail mid-flight came to rest
+  // 1,092px above it, 2026-11-28; jumpToLatestMomentum.e2e.test.ts). A scroller that cannot scroll ends a
+  // fling, and drops a trackpad's momentum events for as long as they arrive, so the jump holds it with
+  // `overflow-y: hidden` until the momentum is spent. The gutter stays reserved
+  // (styles.css, `scrollbar-gutter: stable`), so nothing reflows, and a write of our own still scrolls it.
+  // A new gesture ends the hold at once: a touch, a press, or a wheel that turns or picks up again.
+  const holdAgainstMomentum = useCallback((scroller: HTMLElement) => {
+    momentumHoldRef.current?.()
+    const overflowY = scroller.style.overflowY
+    const started = performance.now()
+    let lastWheel = started
+    let lastDelta = Infinity
+    let timer = 0
+    const release = () => {
+      window.clearTimeout(timer)
+      scroller.removeEventListener("wheel", onWheel)
+      scroller.removeEventListener("touchstart", release)
+      scroller.removeEventListener("pointerdown", release)
+      scroller.style.overflowY = overflowY
+      if (momentumHoldRef.current === release) momentumHoldRef.current = null
+    }
+    const onWheel = (event: WheelEvent) => {
+      const delta = Math.abs(event.deltaY)
+      if (event.deltaY > 0 || delta > lastDelta * 1.5 + 2) return release()
+      lastWheel = performance.now()
+      lastDelta = delta
+    }
+    // A hold that runs out on its own leaves no reader gesture behind. Each wheel it dropped still reached
+    // the reader-intent listener, which opened the 700ms window that tells tail-follow the reader moved,
+    // so a running thread that grew in the ~600ms after the hold detached a reader sitting on the tail and
+    // brought "Jump to latest" back. The jump cleared that window for this reason, and the dropped
+    // momentum must not reopen it. A hold a new gesture ends keeps it: that gesture is the reader's.
+    const check = () => {
+      const now = performance.now()
+      if (now - started >= JUMP_MOMENTUM_MAX_MS || (now - started >= JUMP_MOMENTUM_MIN_MS && now - lastWheel >= JUMP_MOMENTUM_QUIET_MS)) {
+        readerScrollUntilRef.current = 0
+        release()
+      } else timer = window.setTimeout(check, 16)
+    }
+    scroller.style.overflowY = "hidden"
+    scroller.addEventListener("wheel", onWheel, { passive: true })
+    scroller.addEventListener("touchstart", release, { passive: true })
+    scroller.addEventListener("pointerdown", release, { passive: true })
+    timer = window.setTimeout(check, 16)
+    momentumHoldRef.current = release
   }, [])
 
   const requestEarlier = useCallback(() => {
@@ -1611,6 +1673,14 @@ function VirtualizedThreadTranscript({
     // the scroll height this would reconcile against is a value in transit. Let the restore land, then
     // resume — and do NOT refresh the reader anchor from a position it is still correcting.
     if (performance.now() < anchorRestoreUntilRef.current) return
+    // A scroller "Jump to latest" holds is not the reader's to move (holdAgainstMomentum): what moves it is
+    // the momentum the jump interrupted, in the frame before the hold reaches the compositor. That frame
+    // read as the reader leaving the tail and left them under "Jump to latest", 44-116px up. Put it back.
+    if (momentumHoldRef.current) {
+      followingTailRef.current = true
+      const max = scroller.scrollHeight - scroller.clientHeight
+      if (max - scroller.scrollTop > 1) scroller.scrollTop = max
+    }
     const next = nextTailFollow({
       scrollTop: scroller.scrollTop,
       scrollHeight: scroller.scrollHeight,
@@ -1975,6 +2045,8 @@ function VirtualizedThreadTranscript({
           followingTailRef.current = true
           tailHeightRef.current = -1
           setAtEnd(true)
+          const scroller = transcriptRef.current
+          if (scroller) holdAgainstMomentum(scroller)
           virtualizer.scrollToEnd({ behavior: "instant" })
         }}
       />
