@@ -11,7 +11,8 @@ import type { CDPSession, Page } from "puppeteer"
 //   · a touch fling, which the compositor runs by itself after the finger lifts — a real one, synthesized;
 //   · a trackpad's, which reaches the page as a stream of wheel events that shrink until they stop. A
 //     headless browser has no trackpad, so the stream is replayed: the shape is the point, and a held
-//     scroller must drop it, then scroll again for the reader's next gesture.
+//     scroller must drop it, keep the reader on the tail as the thread grows after it, then scroll again
+//     for the reader's next gesture.
 //
 // Skipped unless a Vite URL serving the fixtures is provided: start `vite` in packages/web and set
 // FRIZZ_JUMP_TO_LATEST_MOMENTUM_E2E_URL to its origin (or let `nub run test:e2e` do both).
@@ -109,6 +110,16 @@ test("Jump to latest pressed during a trackpad's momentum drops the rest of it, 
     const after = await read(page)
     assert.ok(after.distance <= 2, `the momentum did not carry the reader back off the tail: ${JSON.stringify(after)}`)
     assert.equal(after.overflowY, "auto", "the hold ends once the momentum stops")
+    // The thread goes on right after: the momentum the hold dropped is not the reader moving, so they stay
+    // on the tail as it grows. Each dropped wheel had reopened the 700ms reader-gesture window, and growth
+    // inside it read as the reader leaving.
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(() => (window as unknown as { __scrollBack: { append(): void } }).__scrollBack.append())
+      await new Promise((r) => setTimeout(r, 60))
+    }
+    await new Promise((r) => setTimeout(r, 300))
+    const grown = await read(page)
+    assert.ok(grown.distance <= 2 && !grown.jumpVisible, `the reader stays on the tail as the thread grows after the hold: ${JSON.stringify(grown)}`)
     // …and the reader's next gesture is theirs again.
     for (let i = 0; i < 10; i++) {
       await wheel(-40)

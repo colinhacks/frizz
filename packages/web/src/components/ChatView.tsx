@@ -1331,10 +1331,17 @@ function VirtualizedThreadTranscript({
       lastWheel = performance.now()
       lastDelta = delta
     }
+    // A hold that runs out on its own leaves no reader gesture behind. Each wheel it dropped still reached
+    // the reader-intent listener, which opened the 700ms window that tells tail-follow the reader moved,
+    // so a running thread that grew in the ~600ms after the hold detached a reader sitting on the tail and
+    // brought "Jump to latest" back. The jump cleared that window for this reason, and the dropped
+    // momentum must not reopen it. A hold a new gesture ends keeps it: that gesture is the reader's.
     const check = () => {
       const now = performance.now()
-      if (now - started >= JUMP_MOMENTUM_MAX_MS || (now - started >= JUMP_MOMENTUM_MIN_MS && now - lastWheel >= JUMP_MOMENTUM_QUIET_MS)) release()
-      else timer = window.setTimeout(check, 16)
+      if (now - started >= JUMP_MOMENTUM_MAX_MS || (now - started >= JUMP_MOMENTUM_MIN_MS && now - lastWheel >= JUMP_MOMENTUM_QUIET_MS)) {
+        readerScrollUntilRef.current = 0
+        release()
+      } else timer = window.setTimeout(check, 16)
     }
     scroller.style.overflowY = "hidden"
     scroller.addEventListener("wheel", onWheel, { passive: true })
