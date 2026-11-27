@@ -12,6 +12,7 @@ import { projectHref, projectSlug } from "../lib/base-path.ts"
 import { PROJECTS_HREF } from "../lib/homeView.ts"
 import { useDevicePixelRatio } from "../lib/devicePixelRatio.ts"
 import { projectIconKey, rememberProjectIcon, seenProjectIcon } from "../lib/projectIconSeen.ts"
+import { iconCornerAlphas, iconFillsTile } from "../lib/projectIconFit.ts"
 import { useOptimisticallyArchived } from "../lib/optimisticArchive.ts"
 import { useOptimisticallyPinned } from "../lib/optimisticPin.ts"
 import { useOptimisticallySteered } from "../lib/steering.ts"
@@ -99,10 +100,11 @@ export function ProjectSquare({ project, size }: { project: ProjectCard; size: n
   const iconKey = projectIconKey(project)
   const seen = seenProjectIcon(iconKey)
   const [loaded, setLoaded] = useState(seen !== undefined)
-  // A near-square mark fills the tile; a genuinely letterboxed one is contained and padded. Measured:
-  // a 372x368 screenshot is 1.1% off square and looked WRONG contained — object-contain letterboxed
-  // it and the 6% padding inset it again, so a full-bleed square read as a stamp with a gap around it.
-  // A real logo (.github/logo.webp, 300x331) is 9.4% off, so 5% separates the two cleanly.
+  // A near-square picture that is its own plate fills the tile; a letterboxed one or a free-standing
+  // mark is contained and padded (lib/projectIconFit.ts). Measured: a 372x368 screenshot is 1.1% off square
+  // and looked WRONG contained — object-contain letterboxed it and the 6% padding inset it again, so a
+  // full-bleed square read as a stamp with a gap around it. A real logo (.github/logo.webp, 300x331) is
+  // 9.4% off. A near-square mark on a transparent canvas, filled, had its outline clipped by the tile.
   const [fills, setFills] = useState(seen ?? false)
   const isHome = project.builtin === "home"
   const hue = monogramHue(project.id)
@@ -202,7 +204,7 @@ export function ProjectSquare({ project, size }: { project: ProjectCard; size: n
         onLoad={(event) => {
           const img = event.currentTarget
           // A sized copy keeps the original's proportions, so the ratio is the original's.
-          const filling = img.naturalWidth > 0 && img.naturalHeight > 0 ? Math.abs(img.naturalWidth / img.naturalHeight - 1) <= 0.05 : fills
+          const filling = img.naturalWidth > 0 && img.naturalHeight > 0 ? iconFillsTile(img.naturalWidth, img.naturalHeight, iconCornerAlphas(img)) : fills
           setFills(filling)
           setLoaded(true)
           rememberProjectIcon(iconKey, filling)
