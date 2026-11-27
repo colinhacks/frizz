@@ -12,6 +12,7 @@ import { resolveThreadRoute } from "../lib/threadRouteState.ts"
 import { handleDialogEscape } from "../lib/selectOverlay.ts"
 import { DrawerInitialScrollCoordinator } from "../lib/drawerInitialScroll.ts"
 import { opensAtRest } from "../lib/openLanding.ts"
+import { hasRememberedTranscriptAnchor } from "../lib/transcriptScrollMemory.ts"
 import { SheetHeader } from "./ui/SheetHeader.tsx"
 import { ThreadView } from "./lazySurfaces.tsx"
 import { drawerZ } from "../lib/layers.ts"
@@ -105,7 +106,7 @@ export function ThreadSheet({ id, slug, depth, widthDepth, initiallyOpen }: { id
         scroller.scrollTop = scroller.scrollHeight
         return true
       },
-      preserveAnchor: () => location.hash.length > 1 || opensAtRestRef.current === true,
+      preserveAnchor: () => location.hash.length > 1 || opensAtRestRef.current === true || hasRememberedTranscriptAnchor(slug),
     })
     initialScrollRef.current = coordinator
 

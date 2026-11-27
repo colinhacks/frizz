@@ -126,6 +126,13 @@ export { QuestionBlockCard } from "./QuestionBlockCard.tsx"
 import { SignInModal } from "./SignInModal.tsx"
 import { PROVIDER_LABEL } from "../lib/signIn.ts"
 import { takeFullscreenEnterAnchor } from "../lib/fullscreenHandoff.ts"
+import {
+   rememberedTranscriptOpenFolds,
+  rememberTranscriptOpenFold,
+  rememberTranscriptScroll,
+  resolveRememberedTranscriptScroll,
+  transcriptLandingEpoch,
+} from "../lib/transcriptScrollMemory.ts"
 import { fetchEarlierPage } from "../lib/loadEarlier.ts"
 import { buildVirtualTranscriptMessageRows, earlierLoadGate, nextTailFollow, TAIL_FOLLOW_PX, type VirtualTranscriptMessageRow } from "../lib/virtualTranscript.ts"
 import { withoutRedundantRestDividers } from "../lib/restDividers.ts"
@@ -1033,7 +1040,10 @@ function VirtualizedThreadTranscript({
   }, [messages, running, fenceQuestions])
   // The messages that put a picture in front of the human, which no fold hides (lib/messagePictures).
   const pictures = useMemo(() => new Set(messages.flatMap((m, i) => (showsPicture(m) ? [i] : []))), [messages])
-  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(() => new Set())
+  const epoch = useMemo(() => transcriptLandingEpoch(messages), [messages])
+  const epochRef = useRef(epoch)
+  useLayoutEffect(() => { epochRef.current = epoch }, [epoch])
+  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(() => rememberedTranscriptOpenFolds(slug, epoch))
   const rows = useMemo<VirtualThreadRow[]>(() => {
     const next: VirtualThreadRow[] = [{ key: "head-anchor", kind: "head-anchor" }]
     if (transportFallback) next.push({ key: "transport-fallback", kind: "transport-fallback" })
@@ -1127,9 +1137,10 @@ function VirtualizedThreadTranscript({
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
   const pendingPrependAnchorRef = useRef<{ rowKey: string; viewportTop: number } | null>(null)
+  const rememberedOnOpen = transcriptKey ? resolveRememberedTranscriptScroll(slug, epoch, rows) : null
   // A thread at rest is still being put where it opens (lib/openLanding): from the first render until the
   // initial-scroll effect below lets go. State, because the virtualizer reads it as an option.
-  const [opening, setOpening] = useState(openAtRest)
+  const [opening, setOpening] = useState(() => openAtRest && rememberedOnOpen === null)
   const estimateRow = (index: number) => {
     const row = rows[index]
     if (!row) return 80
@@ -1154,7 +1165,18 @@ function VirtualizedThreadTranscript({
     // or the tail once tail-follow had run, and the landing arrived a frame later as a jump. An estimate,
     // from estimates: the initial-scroll effect below measures the real rows and holds the exact place.
     initialOffset: () => {
-      if (!openAtRest || !transcriptKey) return 0
+      if (!transcriptKey) return 0
+      if (rememberedOnOpen?.kind === "tail") {
+        let offset = TRANSCRIPT_PAD_PX
+        for (let i = 0; i < rows.length; i++) offset += estimateRow(i)
+        return offset
+      }
+      if (rememberedOnOpen?.kind === "anchor") {
+        let offset = TRANSCRIPT_PAD_PX
+        for (let i = 0; i < rememberedOnOpen.index; i++) offset += estimateRow(i)
+        return Math.max(0, offset - rememberedOnOpen.anchor.viewportTop)
+      }
+      if (!openAtRest) return 0
       const landing = landingRows(rows, messages, lastAgentIdx)
       const at = landing.steerLeads ? -1 : [landing.steer, landing.signOff, landing.fallback].find((index) => index >= 0) ?? -1
       let offset = at < 0 ? 0 : TRANSCRIPT_PAD_PX
@@ -1244,6 +1266,7 @@ function VirtualizedThreadTranscript({
   const firstMessageKeyRef = useRef<string | undefined>(undefined)
   const anchorRestoreUntilRef = useRef(0)
   const openHoldFrameRef = useRef(0)
+  const openedOffTailRef = useRef(false)
 
   const requestEarlier = useCallback(() => {
     const scroller = transcriptRef.current
@@ -1292,6 +1315,7 @@ function VirtualizedThreadTranscript({
     initialTranscriptKeyRef.current = transcriptKey
     tailReadyRef.current = false
     readerMovedRef.current = false
+    openedOffTailRef.current = false
     nearTopLoadArmedRef.current = true
     // ONE FRAME CHAIN, ENDED ONLY BY A NEW TRANSCRIPT OR THE UNMOUNT. This effect re-runs whenever the row
     // count moves (the status row, a question's card) and returns at once, because the key is the same. So
@@ -1312,6 +1336,70 @@ function VirtualizedThreadTranscript({
     const anchor = handoff?.candidates
       .map((candidate) => ({ candidate, index: rows.findIndex((row) => row.kind === "message" && row.message.sourceId === candidate.sourceId) }))
       .find((hit) => hit.index >= 0)
+    // A REVISITED THREAD WHERE THE READER ALREADY MOVED (lib/transcriptScrollMemory): return to the tail if
+    // they had scrolled or jumped there, or put the row they left at the top of their pane back at that
+    // offset, rather than re-running the cold-open landing on every session switch.
+    const remembered = !anchor ? resolveRememberedTranscriptScroll(slug, epochRef.current, rows) : null
+    if (remembered?.kind === "tail") {
+      readerMovedRef.current = true
+      followingTailRef.current = true
+      tailHeightRef.current = -1
+      tailReadyRef.current = true
+      setOpening(false)
+      setAtEnd(true)
+      virtualizer.scrollToEnd({ behavior: "instant" })
+      openHoldFrameRef.current = requestAnimationFrame(() => {
+        openHoldFrameRef.current = 0
+        if (followingTailRef.current && performance.now() >= readerScrollUntilRef.current) {
+          virtualizer.scrollToEnd({ behavior: "instant" })
+        }
+      })
+      return
+    }
+    if (remembered?.kind === "anchor") {
+      readerMovedRef.current = true
+      followingTailRef.current = false
+      readerAnchorRef.current = remembered.anchor
+      tailReadyRef.current = true
+      setOpening(false)
+      const until = performance.now() + ANCHOR_RESTORE_MS
+      anchorRestoreUntilRef.current = until
+      const landAnchor = (scroller: HTMLElement) => {
+        const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(remembered.anchor.rowKey)}"]`)
+        if (row) {
+          const nextTop = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+          if (Math.abs(nextTop - remembered.anchor.viewportTop) >= 0.5) {
+            scroller.scrollTop += nextTop - remembered.anchor.viewportTop
+          }
+        } else {
+          const index = rowsRef.current.findIndex((r) => r.key === remembered.anchor.rowKey)
+          const top = index >= 0 ? virtualizer.getOffsetForIndex(index, "start")?.[0] : undefined
+          if (top !== undefined) scroller.scrollTop = Math.max(0, top - remembered.anchor.viewportTop)
+        }
+        setAtEnd(scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= TAIL_FOLLOW_PX)
+      }
+      const hold = () => {
+        const scroller = transcriptRef.current
+        if (performance.now() >= until || performance.now() < readerScrollUntilRef.current) {
+          if (anchorRestoreUntilRef.current === until) anchorRestoreUntilRef.current = 0
+          openHoldFrameRef.current = 0
+          openLandRef.current = null
+          if (scroller) {
+            tailHeightRef.current = scroller.scrollHeight
+            tailViewportRef.current = scroller.clientHeight
+          }
+          return
+        }
+        if (scroller) landAnchor(scroller)
+        openHoldFrameRef.current = requestAnimationFrame(hold)
+      }
+      openLandRef.current = () => {
+        const scroller = transcriptRef.current
+        if (scroller) landAnchor(scroller)
+      }
+      hold()
+      return
+    }
     // A THREAD AT REST OPENS ON THE HUMAN'S LATEST MESSAGE AND THE FIRST SIGN-OFF UNDER IT, on every
     // surface (lib/openLanding has the rule and what it replaced). One whose turn is in flight opens on
     // its tail, where the live line or the prompt waiting on the human is. The fullscreen hand-off above
@@ -1356,7 +1444,9 @@ function VirtualizedThreadTranscript({
         // "Jump to latest" says where the reader IS, from the first frame: a thread that fits its pane
         // lands on its tail. Until 2026-11-18 a landing called itself off the tail for the whole hold and
         // took that back when it ended, so every such thread opened with the button over it for 900ms.
-        setAtEnd(scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= TAIL_FOLLOW_PX)
+        const atTail = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= TAIL_FOLLOW_PX
+        if (!atTail) openedOffTailRef.current = true
+        setAtEnd(atTail)
       }
       // Then every frame while the rows around the landing correct from their estimates: nothing above it
       // has ever been measured on a cold open. A touch on the scroller ends the hold at once.
@@ -1580,7 +1670,15 @@ function VirtualizedThreadTranscript({
     // scroll, so the pin-move effect above — which is declared EARLIER and therefore runs before this
     // pass — always reads the position from before the pin moved.
     readerAnchorRef.current = captureReaderAnchor() ?? readerAnchorRef.current
-  }, [captureReaderAnchor, transcriptRef])
+    if (tailReadyRef.current && (readerMovedRef.current || (openedOffTailRef.current && next.following))) {
+      readerMovedRef.current = true
+      rememberTranscriptScroll(slug, {
+        epoch: epochRef.current,
+        followingTail: next.following,
+        anchor: next.following ? null : readerAnchorRef.current,
+      })
+    }
+  }, [captureReaderAnchor, slug, transcriptRef])
 
   // OPENING A FOLD KEEPS THE PAGE WHERE IT WAS. The rows it stood for mount under the row above it, and a
   // reader at the tail is otherwise tail-follow's: the growth read as content arriving under them, the
@@ -1589,6 +1687,8 @@ function VirtualizedThreadTranscript({
   // does and holds the row ABOVE the hairline at its height while the new rows measure — the hairline itself
   // unmounts, one way, as the queue card's did; tail-follow reconciles once the hold ends.
   const openFold = useCallback((key: string) => {
+    readerMovedRef.current = true
+    rememberTranscriptOpenFold(slug, epochRef.current, key)
     const scroller = transcriptRef.current
     const at = rows.findIndex((row) => row.key === key)
     const above = at > 0 ? rows[at - 1].key : null
@@ -1610,7 +1710,7 @@ function VirtualizedThreadTranscript({
       requestAnimationFrame(hold)
     }
     setOpenFolds((open) => new Set(open).add(key))
-  }, [alignToAnchor, rows, syncTailFollow, transcriptRef])
+  }, [alignToAnchor, rows, slug, syncTailFollow, transcriptRef])
 
   // THE STALE FRAME. A row that is already mounted and changes height in a commit — the resting card
   // folding into its message the moment the worker picks up a Done, an answered question greying in
