@@ -1872,7 +1872,30 @@ function VirtualizedThreadTranscript({
           </div>
         )
       })}
-      <JumpToLatest overlay={jumpOverlay} hidden={atEnd} onJump={() => virtualizer.scrollToEnd({ behavior: "smooth" })} />
+      <JumpToLatest
+        overlay={jumpOverlay}
+        hidden={atEnd}
+        onJump={() => {
+          // Release any opening landing or anchor-restore hold in flight: Jump to latest is portalled into a
+          // sibling of the scroller and is a button onTranscriptControl ignores, so an active 900ms openAtRest
+          // hold otherwise overwrote the jump back to the landing offset on the next frame. Jump with `instant`
+          // rather than `smooth`: across unmeasured virtual rows, each intermediate row resizing from its 108px
+          // estimate changes scrollHeight and makes virtual-core's reconcileScroll re-issue scrollTo({ behavior:
+          // "smooth" }), which in Chromium/WebKit resets the smooth-scroll ease-in velocity to 0 on every row
+          // (measured on a 183-message thread: 46 scrollTo restarts and a 4.1s staggered crawl).
+          cancelAnimationFrame(openHoldFrameRef.current)
+          openHoldFrameRef.current = 0
+          openLandRef.current = null
+          anchorRestoreUntilRef.current = 0
+          readerScrollUntilRef.current = 0
+          setOpening(false)
+          readerMovedRef.current = true
+          followingTailRef.current = true
+          tailHeightRef.current = -1
+          setAtEnd(true)
+          virtualizer.scrollToEnd({ behavior: "instant" })
+        }}
+      />
     </div>
   )
 }
