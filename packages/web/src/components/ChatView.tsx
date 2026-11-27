@@ -126,6 +126,12 @@ export { QuestionBlockCard } from "./QuestionBlockCard.tsx"
 import { SignInModal } from "./SignInModal.tsx"
 import { PROVIDER_LABEL } from "../lib/signIn.ts"
 import { takeFullscreenEnterAnchor } from "../lib/fullscreenHandoff.ts"
+import {
+  rememberedTranscriptOpenFolds,
+  rememberTranscriptScroll,
+  resolveRememberedTranscriptScroll,
+  transcriptLandingEpoch,
+} from "../lib/transcriptScrollMemory.ts"
 import { fetchEarlierPage } from "../lib/loadEarlier.ts"
 import { buildVirtualTranscriptMessageRows, earlierLoadGate, nextTailFollow, TAIL_FOLLOW_PX, type VirtualTranscriptMessageRow } from "../lib/virtualTranscript.ts"
 import { withoutRedundantRestDividers } from "../lib/restDividers.ts"
@@ -404,6 +410,10 @@ function ChatView({ slug, phone = false, railBeside = false, header, pane }: { s
       >
       {count > 0 ? (
         <VirtualizedThreadTranscript
+          // One transcript per thread, as the pane has it (PaneThread is keyed by slug): the phone's full-
+          // screen page keeps this view mounted when a link takes it to another thread, and a transcript
+          // carried across read where it opens, its folds and its hold from the thread before.
+          key={slug}
           slug={slug}
           transcriptRef={transcriptRef}
           transcriptKey={q.data?.transcriptKey}
@@ -1023,8 +1033,9 @@ function VirtualizedThreadTranscript({
     return byRow
   }, [messageRows, settledPlacement.anchored])
   // The work between each human message and the sign-off that answers it, folded (lib/stretchFolds). A
-  // fold the reader opened stays open, by its key, for as long as this transcript is mounted.
-  // An earlier sign-off whose questions were all withdrawn folds away once a later one follows it
+  // fold the reader opened stays open, by its key, and is open again when they come back to a thread that
+  // has not moved since (lib/transcriptScrollMemory). An earlier sign-off whose questions were all
+  // withdrawn folds away once a later one follows it
   // (lib/signOffs stretchSignOffs), read off the thread's fence rows, which say how each question closed.
   const fenceQuestions = transcript.fenceQuestions
   const folds = useMemo(() => {
@@ -1033,7 +1044,15 @@ function VirtualizedThreadTranscript({
   }, [messages, running, fenceQuestions])
   // The messages that put a picture in front of the human, which no fold hides (lib/messagePictures).
   const pictures = useMemo(() => new Set(messages.flatMap((m, i) => (showsPicture(m) ? [i] : []))), [messages])
-  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(() => new Set())
+  // The steer and sign-off the thread is at, and the board's last activity on it: what the reader's
+  // remembered place belongs to.
+  const activityAt = thread?.lastActivityAt
+  const epoch = useMemo(() => transcriptLandingEpoch(messages, activityAt), [messages, activityAt])
+  const epochRef = useRef(epoch)
+  useLayoutEffect(() => { epochRef.current = epoch }, [epoch])
+  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(() => rememberedTranscriptOpenFolds(slug, epoch))
+  const openFoldsRef = useRef(openFolds)
+  useLayoutEffect(() => { openFoldsRef.current = openFolds }, [openFolds])
   const rows = useMemo<VirtualThreadRow[]>(() => {
     const next: VirtualThreadRow[] = [{ key: "head-anchor", kind: "head-anchor" }]
     if (transportFallback) next.push({ key: "transport-fallback", kind: "transport-fallback" })
@@ -1127,9 +1146,14 @@ function VirtualizedThreadTranscript({
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
   const pendingPrependAnchorRef = useRef<{ rowKey: string; viewportTop: number } | null>(null)
-  // A thread at rest is still being put where it opens (lib/openLanding): from the first render until the
-  // initial-scroll effect below lets go. State, because the virtualizer reads it as an option.
-  const [opening, setOpening] = useState(openAtRest)
+  // WHERE THE READER LEFT THIS THREAD, if they moved in it and it has not moved since (lib/transcriptScrollMemory).
+  // Only a thread at rest opens there: one whose turn is in flight opens on its tail, where the live line or
+  // the prompt waiting on the human is, wherever the reader was.
+  const rememberedPlace = () => (openAtRest && transcriptKey ? resolveRememberedTranscriptScroll(slug, epochRef.current, rows) : null)
+  // A thread at rest is still being put where it opens (lib/openLanding, or the reader's remembered row):
+  // from the first render until the initial-scroll effect below lets go. State, because the virtualizer
+  // reads it as an option. A thread that goes back to its tail is not held.
+  const [opening, setOpening] = useState(() => openAtRest && rememberedPlace()?.kind !== "tail")
   const estimateRow = (index: number) => {
     const row = rows[index]
     if (!row) return 80
@@ -1155,11 +1179,16 @@ function VirtualizedThreadTranscript({
     // from estimates: the initial-scroll effect below measures the real rows and holds the exact place.
     initialOffset: () => {
       if (!openAtRest || !transcriptKey) return 0
-      const landing = landingRows(rows, messages, lastAgentIdx)
-      const at = landing.steerLeads ? -1 : [landing.steer, landing.signOff, landing.fallback].find((index) => index >= 0) ?? -1
+      const remembered = rememberedPlace()
+      let at: number
+      if (remembered) at = remembered.kind === "tail" ? rows.length : remembered.index
+      else {
+        const landing = landingRows(rows, messages, lastAgentIdx)
+        at = landing.steerLeads ? -1 : [landing.steer, landing.signOff, landing.fallback].find((index) => index >= 0) ?? -1
+      }
       let offset = at < 0 ? 0 : TRANSCRIPT_PAD_PX
       for (let i = 0; i < at; i++) offset += estimateRow(i)
-      return offset
+      return remembered?.kind === "anchor" ? Math.max(0, offset - remembered.anchor.viewportTop) : offset
     },
     overscan: 8,
     // A PREPEND KEEPS THE READER'S ROW MOUNTED. "Load earlier" inserts a whole page above the row the
@@ -1244,6 +1273,21 @@ function VirtualizedThreadTranscript({
   const firstMessageKeyRef = useRef<string | undefined>(undefined)
   const anchorRestoreUntilRef = useRef(0)
   const openHoldFrameRef = useRef(0)
+  // A TRANSCRIPT THAT HAS UNMOUNTED NEVER TOUCHES THE SCROLLER AGAIN. The scroller is ThreadView's, and the
+  // phone's full-screen page keeps it for the next thread's transcript, which mounts in the same commit; this
+  // one's observers and listener are let go only after that commit, and in the gap they read the next
+  // thread's rows as this one's. Tail-follow then recorded the next thread's tail as this one's place:
+  // back on a thread left mid-way, the reader found its tail, 3 times in 6 on a stack (2026-11-27). Set
+  // in a layout effect, whose cleanup runs inside the commit, before any of those callbacks can; the
+  // opening's frames, which write the scroller too, are cancelled there for the same reason.
+  const aliveRef = useRef(true)
+  useLayoutEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+      cancelAnimationFrame(openHoldFrameRef.current)
+    }
+  }, [])
 
   const requestEarlier = useCallback(() => {
     const scroller = transcriptRef.current
@@ -1312,20 +1356,29 @@ function VirtualizedThreadTranscript({
     const anchor = handoff?.candidates
       .map((candidate) => ({ candidate, index: rows.findIndex((row) => row.kind === "message" && row.message.sourceId === candidate.sourceId) }))
       .find((hit) => hit.index >= 0)
+    // A THREAD THE READER ALREADY MOVED IN OPENS WHERE THEY LEFT IT, if nothing has happened in it since
+    // (lib/transcriptScrollMemory): on its tail if they were following it, as a thread in flight does, or
+    // with the row that was at the top of their pane back at the height it had. Until then
+    // every switch back to a thread re-ran the landing below, which hauled a reader who had pressed "Jump to
+    // latest" back up to the steer. The fullscreen hand-off above outranks it: the reader's place, just now.
+    const remembered = anchor ? null : rememberedPlace()
+    if (remembered) readerMovedRef.current = true
+    const placed = remembered?.kind === "anchor" ? remembered.anchor : null
     // A THREAD AT REST OPENS ON THE HUMAN'S LATEST MESSAGE AND THE FIRST SIGN-OFF UNDER IT, on every
     // surface (lib/openLanding has the rule and what it replaced). One whose turn is in flight opens on
     // its tail, where the live line or the prompt waiting on the human is. The fullscreen hand-off above
     // outranks it: that is the reader's own place, carried over.
-    const landing = !anchor && openAtRest ? landingRows(rows, messages, lastAgentIdx) : null
+    const landing = !anchor && !remembered && openAtRest ? landingRows(rows, messages, lastAgentIdx) : null
     const keyOf = (index: number | undefined) => (index !== undefined && index >= 0 ? rows[index].key : undefined)
     const steerKey = keyOf(landing?.steer)
     const signOffKey = keyOf(landing?.signOff)
     const fallbackKey = keyOf(landing?.fallback)
-    if (landing && (steerKey ?? signOffKey ?? fallbackKey) !== undefined) {
+    if (placed || (landing && (steerKey ?? signOffKey ?? fallbackKey) !== undefined)) {
       // Claimed HERE, before this commit's tail-follow pass (declared below, so it runs after this): a
       // transcript starts attached to its tail, and that pass would otherwise put the first frame there.
       followingTailRef.current = false
       tailReadyRef.current = true
+      if (placed) readerAnchorRef.current = placed
       const until = performance.now() + OPEN_AT_MESSAGE_HOLD_MS
       anchorRestoreUntilRef.current = until
       // Where a row is now, as an offset into the content: null while the virtualizer has not mounted it.
@@ -1335,22 +1388,31 @@ function VirtualizedThreadTranscript({
         return row ? row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop : null
       }
       const land = (scroller: HTMLElement) => {
-        const next = landingOffset({
-          // The list's own first message opens at the list's top, "Load earlier" in view over it.
-          steer: landing.steerLeads ? 0 : topOf(scroller, steerKey),
-          signOff: topOf(scroller, signOffKey),
-          fallback: topOf(scroller, fallbackKey),
-          paneHeight: scroller.clientHeight,
-        })
         let top: number | undefined
-        if ("top" in next) top = next.top
-        else {
+        // A row the place is measured from that the virtualizer has not mounted.
+        let reach: string | undefined
+        if (placed) {
+          const at = topOf(scroller, placed.rowKey)
+          if (at == null) reach = placed.rowKey
+          else top = at - placed.viewportTop
+        } else if (landing) {
+          const next = landingOffset({
+            // The list's own first message opens at the list's top, "Load earlier" in view over it.
+            steer: landing.steerLeads ? 0 : topOf(scroller, steerKey),
+            signOff: topOf(scroller, signOffKey),
+            fallback: topOf(scroller, fallbackKey),
+            paneHeight: scroller.clientHeight,
+          })
+          if ("top" in next) top = next.top
+          else reach = next.reach === "steer" ? steerKey : next.reach === "signOff" ? signOffKey : fallbackKey
+        }
+        if (reach !== undefined) {
           // A virtual row out of reach: go to where the virtualizer places it, which mounts it, and
           // measure it on the next frame. Written to the scroller directly, never `scrollToIndex`: the
           // library would keep re-aiming at that index for as long as this hold aims anywhere else.
-          const key = next.reach === "steer" ? steerKey : next.reach === "signOff" ? signOffKey : fallbackKey
-          const index = rowsRef.current.findIndex((row) => row.key === key)
-          top = index >= 0 ? virtualizer.getOffsetForIndex(index, "start")?.[0] : undefined
+          const index = rowsRef.current.findIndex((row) => row.key === reach)
+          const offset = index >= 0 ? virtualizer.getOffsetForIndex(index, "start")?.[0] : undefined
+          top = offset === undefined ? undefined : offset - (placed?.viewportTop ?? 0)
         }
         if (top !== undefined && Math.abs(scroller.scrollTop - top) >= 0.5) scroller.scrollTop = top
         // "Jump to latest" says where the reader IS, from the first frame: a thread that fits its pane
@@ -1426,7 +1488,6 @@ function VirtualizedThreadTranscript({
       hold()
     })
   }, [alignToScreenTop, rows.length, slug, transcriptKey, virtualizer])
-  useEffect(() => () => cancelAnimationFrame(openHoldFrameRef.current), [])
 
   // A reply sent from the top of the queue's window lands below everything the reader has not scrolled to,
   // so the send takes them there. The stamp already standing when the thread opened is someone's old send.
@@ -1545,7 +1606,7 @@ function VirtualizedThreadTranscript({
     const scroller = transcriptRef.current
     // A prepend in flight owns the scroller: "load earlier" grows the content by a whole page and
     // restores the reader's anchor across the next two frames. Following that growth would race it.
-    if (!scroller || pendingPrependAnchorRef.current) return
+    if (!aliveRef.current || !scroller || pendingPrependAnchorRef.current) return
     // Same for an anchor restore (a pin move, a head trim): the rows above the reader are mid-settle, so
     // the scroll height this would reconcile against is a value in transit. Let the restore land, then
     // resume — and do NOT refresh the reader anchor from a position it is still correcting.
@@ -1580,7 +1641,18 @@ function VirtualizedThreadTranscript({
     // scroll, so the pin-move effect above — which is declared EARLIER and therefore runs before this
     // pass — always reads the position from before the pin moved.
     readerAnchorRef.current = captureReaderAnchor() ?? readerAnchorRef.current
-  }, [captureReaderAnchor, transcriptRef])
+    // And keep it for when they come back to this thread, once they have moved in it themselves: a scroll,
+    // "Jump to latest", a fold opened (lib/transcriptScrollMemory). A place the landing alone put them in
+    // is the landing's to find again.
+    if (tailReadyRef.current && readerMovedRef.current) {
+      rememberTranscriptScroll(slug, {
+        epoch: epochRef.current,
+        followingTail: next.following,
+        anchor: next.following ? null : readerAnchorRef.current,
+        openFolds: openFoldsRef.current,
+      })
+    }
+  }, [captureReaderAnchor, slug, transcriptRef])
 
   // OPENING A FOLD KEEPS THE PAGE WHERE IT WAS. The rows it stood for mount under the row above it, and a
   // reader at the tail is otherwise tail-follow's: the growth read as content arriving under them, the
@@ -1589,6 +1661,7 @@ function VirtualizedThreadTranscript({
   // does and holds the row ABOVE the hairline at its height while the new rows measure — the hairline itself
   // unmounts, one way, as the queue card's did; tail-follow reconciles once the hold ends.
   const openFold = useCallback((key: string) => {
+    readerMovedRef.current = true
     const scroller = transcriptRef.current
     const at = rows.findIndex((row) => row.key === key)
     const above = at > 0 ? rows[at - 1].key : null
@@ -1696,6 +1769,7 @@ function VirtualizedThreadTranscript({
     let steady = 0
     let frames = 0
     const settle = () => {
+      if (!aliveRef.current) return
       steady = alignAnchor() ? steady + 1 : 0
       frames++
       if (steady >= 2 || frames >= 10) {
@@ -1731,6 +1805,7 @@ function VirtualizedThreadTranscript({
     const scroller = transcriptRef.current
     if (!scroller) return
     const inspect = () => {
+      if (!aliveRef.current) return
       syncTailFollow()
       const gate = earlierLoadGate({
         armed: nearTopLoadArmedRef.current,
