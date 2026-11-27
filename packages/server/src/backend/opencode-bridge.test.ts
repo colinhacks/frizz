@@ -572,12 +572,19 @@ test("opencode-bridge: OpenCode settings, Frizz's auto, adds no session rules an
 })
 
 test("opencode-bridge: when OpenCode's agents cannot be read, a mode that adds rules adds none, and says so", async () => {
-  const r = await rig({ configRules: [DENY_ME], noAgentRoute: true })
+  const r = await rig({
+    configRules: [DENY_ME, { action: "skill", resource: "denied-skill", effect: "deny" }],
+    skills: [{ id: "denied-skill", name: "denied-skill", description: "Denied", path: "/builtin/denied.md", content: "# Denied" }],
+    noAgentRoute: true,
+  })
   try {
-    await spawn(r, "[shell:echo DENYME][say:over]")
+    assert.deepEqual(await r.bridge.listSkills(r.stateDir), [], "without the person's agent rules, no skills are offered")
+    await spawn(r, "/denied-skill [shell:echo DENYME][say:over]")
     await until(() => ends(r) === 1)
     const create = r.fake.requests.find((q: any) => q.method === "POST" && q.path === "/api/session")
     assert.deepEqual(create.body.permissions, [], "never a bare allow-all without the person's denies after it")
+    const prompt = r.fake.requests.find((q: any) => q.path.endsWith("/prompt"))
+    assert.equal(prompt.body.skills, undefined, "without the person's agent rules, no skill is attached")
     assert.equal(records(r).find((x) => x.kind === "tool-result")!.failed, true)
     assert.ok(records(r).some((x) => x.kind === "opencode-note" && /could not read OpenCode's agents/.test(x.text)))
   } finally { await teardown(r) }

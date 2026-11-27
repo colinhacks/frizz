@@ -1311,7 +1311,8 @@ export class OpencodeBridge implements OpencodeHubListener {
 
   /** The skills OpenCode resolved for `cwd` (`GET /api/skill`), for a thread's `/` menu and the
    *  new-thread box's, filtered by the session agent's `skill` permission rules. Always read fresh when
-   *  the menu opens so a skill just written to disk is in it. */
+   *  the menu opens so a skill just written to disk is in it. When OpenCode's agents cannot be read,
+   *  returns nothing rather than offering skills the person's configuration may have denied. */
   async listSkills(cwd: string, sessionId?: string): Promise<ThreadSkill[]> {
     if (this.closed) throw new Error("OpenCode bridge is closed")
     const live = sessionId ? this.sessions.get(sessionId) : undefined
@@ -1321,17 +1322,18 @@ export class OpencodeBridge implements OpencodeHubListener {
       this.readSkillCatalog(client, dir, true),
       this.agentCatalog(client, dir),
     ])
+    if (!agentCatalog) return []
     const agentRules = this.agentRulesFor(agentCatalog, live?.mode ?? "settings")
     return skillCatalog.skills.filter((s) => opencodeSkillAllowed(s.name, agentRules))
   }
 
-  private agentRulesFor(catalog: AgentCatalog | undefined, mode: OpencodeMode): readonly OpencodeRule[] {
-    if (!catalog) return []
+  private agentRulesFor(catalog: AgentCatalog, mode: OpencodeMode): readonly OpencodeRule[] {
     return catalog.rules.get(this.agentFor(catalog, mode)) ?? []
   }
 
   /** Send a user prompt, attaching any `/name` tokens in `userText` that name a permitted skill in `cwd`
-   *  as `skills: [{ id }]` so OpenCode injects their `<skill_content>` blocks on the first step. */
+   *  as `skills: [{ id }]` so OpenCode injects their `<skill_content>` blocks on the first step. When
+   *  OpenCode's agents cannot be read, attaches nothing so a configured `skill` deny cannot be bypassed. */
   private async promptWithSkills(
     client: OpencodeClient,
     opencodeId: string,
@@ -1347,7 +1349,7 @@ export class OpencodeBridge implements OpencodeHubListener {
         this.readSkillCatalog(client, cwd).catch(() => undefined),
         knownAgents ? Promise.resolve(knownAgents) : this.agentCatalog(client, cwd),
       ])
-      if (catalog) {
+      if (catalog && agents) {
         const agentRules = this.agentRulesFor(agents, mode)
         skills = opencodeSlashSkills(userText, catalog.ids).filter((s) => opencodeSkillAllowed(s.id, agentRules))
       }
