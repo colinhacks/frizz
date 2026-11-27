@@ -2408,17 +2408,26 @@ test("the new-thread box's skills are asked of the agent its model chip picks, a
     ctx.codexAppServer = {
       async listSkillsForCwd(cwd: string) { asked.push(`codex ${cwd}`); return [{ name: "codex-skill", description: "", source: "project" }] },
     }
+    ctx.opencodeBridge = {
+      async listSkills(cwd: string, sessionId?: string) { asked.push(`opencode ${cwd} ${sessionId ?? ""}`.trim()); return [{ name: "opencode-skill", description: "OC", source: "project" }] },
+    }
     // Claude's probe is a session started the way a worker of this project is; the list is sorted, as a thread's.
     assert.deepEqual((await h.router.threadSkills.handler({ input: { backend: "claude" } })).skills.map((skill: { name: string }) => skill.name), ["alpha", "zeta"])
-    // Codex lists for a directory, and a new thread starts in the project's.
+    // Codex and OpenCode list for a directory, and a new thread starts in the project's.
     assert.deepEqual((await h.router.threadSkills.handler({ input: { backend: "codex" } })).skills.map((skill: { name: string }) => skill.name), ["codex-skill"])
-    assert.deepEqual(asked, ["claude", `codex ${h.dir}`])
+    assert.deepEqual((await h.router.threadSkills.handler({ input: { backend: "opencode" } })).skills.map((skill: { name: string }) => skill.name), ["opencode-skill"])
+    assert.deepEqual(asked, ["claude", `codex ${h.dir}`, `opencode ${h.dir}`])
+    // A live OpenCode thread asks the bridge too, passing its session id.
+    h.storage.upsertSession({ ...row("oc-thread"), agent_session_id: "ses_1" })
+    h.storage.setBackend("oc-thread", "opencode")
+    assert.deepEqual((await h.router.threadSkills.handler({ input: { slug: "oc-thread" } })).skills.map((skill: { name: string }) => skill.name), ["opencode-skill"])
+    assert.equal(asked.at(-1), `opencode ${h.dir} sid-oc-thread`)
     // The other agents list commands only for a live session. With no thread there is nothing to say,
     // and no other thread's list stands in for it.
-    for (const backend of ["antigravity", "acp", "opencode"] as const) {
+    for (const backend of ["antigravity", "acp"] as const) {
       assert.deepEqual(await h.router.threadSkills.handler({ input: { backend } }), { skills: [] })
     }
-    assert.equal(asked.length, 2)
+    assert.equal(asked.length, 4)
     // A server without the probe fails the read, which the box shows as no suggestions.
     ctx.claudeSkillsProbe = undefined
     await assert.rejects(h.router.threadSkills.handler({ input: { backend: "claude" } }), /no Claude skills probe/)

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { readFileSync } from "node:fs"
-import { INTERACTION_PROTOCOL_VERSION, InteractionRequest, NOTES_FIELD_SUFFIX, opencodeModelSlug, type InteractionField, type OpencodeModels, type InteractionRequest as InteractionRequestType } from "@frizz/shared"
+import { INTERACTION_PROTOCOL_VERSION, InteractionRequest, NOTES_FIELD_SUFFIX, opencodeModelSlug, type InteractionField, type OpencodeModels, type InteractionRequest as InteractionRequestType, type ThreadSkill } from "@frizz/shared"
 import { redactCredentialSyntax } from "../credential-redaction.ts"
 import { frizzGithubWorkerEnv } from "../github-credential.ts"
 import type { InteractionSessionScope, InteractionStore } from "../interaction-store.ts"
@@ -11,7 +11,7 @@ import { OpencodeHub, sharedOpencodeHub, type OpencodeHubListener } from "./open
 import { OPENCODE_MIN_VERSION, opencodeNativeAvailable, opencodeVersionAtLeast } from "./opencode-service.ts"
 import { OpencodeTranscriptWriter, opencodeChildTranscriptPath, opencodeTranscriptPath, type OpencodeSubAgentRecord } from "./opencode-transcript.ts"
 import {
-  asArray, asNumber, asObject, asString, errorMessage, eventSessionId, frizzToolShape, opencodeRulesOf, opencodeSessionRules, subagentResultText, toolContentText,
+  asArray, asNumber, asObject, asString, errorMessage, eventSessionId, frizzToolShape, hasOpencodeSlashCandidate, opencodeRulesOf, opencodeSessionRules, opencodeSkillsOf, opencodeSlashSkills, subagentResultText, toolContentText,
   type Json, type OpencodeEvent, type OpencodeMode, type OpencodeRule,
 } from "./opencode-types.ts"
 import { frizzCliEnv, withFrizzCliOnPath, type FrizzCli } from "./types.ts"
@@ -1139,7 +1139,7 @@ export class OpencodeBridge implements OpencodeHubListener {
     const contract = live.contractInPrompt ? this.options.contractFor?.(input.threadSlug, input.sessionId) : undefined
     const inboxId = opencodeInboxId(input.sessionId, randomUUID())
     live.pendingSends.set(inboxId, { recordText: input.prompt })
-    await client.prompt(opencodeId, { id: inboxId, text: contract ? `${contract}\n\n${input.prompt}` : input.prompt }, input.cwd)
+    await this.promptWithSkills(client, opencodeId, input.cwd, input.prompt, { id: inboxId, text: contract ? `${contract}\n\n${input.prompt}` : input.prompt })
     return { opencodeSessionId: opencodeId, ...(version ? { version } : {}) }
   }
 
@@ -1187,7 +1187,7 @@ export class OpencodeBridge implements OpencodeHubListener {
     live.pendingSends.set(inboxId, { recordText: input.text, ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}) })
     const contract = live.contractOwed ? this.options.contractFor?.(input.threadSlug, input.sessionId) : undefined
     try {
-      await client.prompt(live.opencodeId, { id: inboxId, text: contract ? `${contract}\n\n${input.text}` : input.text, delivery: input.delivery }, live.cwd)
+      await this.promptWithSkills(client, live.opencodeId, live.cwd, input.text, { id: inboxId, text: contract ? `${contract}\n\n${input.text}` : input.text, delivery: input.delivery })
     } catch (err) {
       live.pendingSends.delete(inboxId)
       throw err
@@ -1291,6 +1291,63 @@ export class OpencodeBridge implements OpencodeHubListener {
     } catch (err) {
       log.warn("opencode", `could not read OpenCode's agents for ${cwd}: ${(err as Error).message}`)
       return undefined
+    }
+  }
+
+  /** What OpenCode resolved for every skill in a directory (`GET /api/skill`), read fresh when the `/`
+   *  menu opens and cached briefly so the send that follows does not ask a second time. */
+  private readonly skillCatalogs = new WeakMap<OpencodeClient, Map<string, { at: number; skills: ThreadSkill[]; ids: Set<string> }>>()
+  private async readSkillCatalog(client: OpencodeClient, cwd: string, fresh = false): Promise<{ skills: ThreadSkill[]; ids: Set<string> }> {
+    let byDir = this.skillCatalogs.get(client)
+    if (!byDir) { byDir = new Map(); this.skillCatalogs.set(client, byDir) }
+    const cached = byDir.get(cwd)
+    if (cached && !fresh && Date.now() - cached.at < 30_000) return cached
+    const raw = await withStartupRetry(() => client.skills(cwd))
+    const skills = opencodeSkillsOf(raw, cwd, this.env)
+    const entry = { at: Date.now(), skills, ids: new Set(skills.map((s) => s.name)) }
+    byDir.set(cwd, entry)
+    return entry
+  }
+
+  /** The skills OpenCode resolved for `cwd` (`GET /api/skill`), for a thread's `/` menu and the
+   *  new-thread box's. Always read fresh when the menu opens so a skill just written to disk is in it. */
+  async listSkills(cwd: string, sessionId?: string): Promise<ThreadSkill[]> {
+    if (this.closed) throw new Error("OpenCode bridge is closed")
+    const dir = (sessionId ? this.sessions.get(sessionId)?.cwd : undefined) ?? cwd
+    const client = await this.connect()
+    const catalog = await this.readSkillCatalog(client, dir, true)
+    return catalog.skills
+  }
+
+  /** Send a user prompt, attaching any `/name` tokens in `userText` that name a registered skill in `cwd`
+   *  as `skills: [{ id }]` so OpenCode injects their `<skill_content>` blocks on the first step. */
+  private async promptWithSkills(
+    client: OpencodeClient,
+    opencodeId: string,
+    cwd: string,
+    userText: string,
+    body: { id: string; text: string; delivery?: "steer" | "queue" },
+  ): Promise<void> {
+    let skills: Array<{ id: string }> = []
+    if (hasOpencodeSlashCandidate(userText)) {
+      const catalog = await this.readSkillCatalog(client, cwd).catch(() => undefined)
+      if (catalog) skills = opencodeSlashSkills(userText, catalog.ids)
+    }
+    if (!skills.length) {
+      await client.prompt(opencodeId, body, cwd)
+      return
+    }
+    try {
+      await client.prompt(opencodeId, { ...body, skills }, cwd)
+    } catch (err) {
+      // A skill deleted on disk since the catalog was read answers 400; drop the cache and send the
+      // user's words as a plain prompt rather than failing their message.
+      if (err instanceof OpencodeHttpError && err.status === 400) {
+        this.skillCatalogs.get(client)?.delete(cwd)
+        await client.prompt(opencodeId, body, cwd)
+        return
+      }
+      throw err
     }
   }
 

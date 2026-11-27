@@ -101,9 +101,9 @@ function useDispatchForm(onDispatched?: () => void, projectPicker?: ReactNode, a
 
   // The `/` menu's source (fetchDispatchSkills above). A new function when the agent changes, which makes
   // the box ask again, and after each dispatch, so a box that stays on screen all day picks up a skill
-  // written since its last list. Only Claude and Codex can answer without a session.
+  // written since its last list. Claude, Codex and OpenCode can answer without a session.
   const [dispatches, setDispatches] = useState(0)
-  const skillsBackend = resolved?.backend === "claude" || resolved?.backend === "codex" ? resolved.backend : undefined
+  const skillsBackend = resolved?.backend === "claude" || resolved?.backend === "codex" || resolved?.backend === "opencode" ? resolved.backend : undefined
   const slashSuggest = useMemo(
     () => skillsBackend ? () => fetchDispatchSkills(project, skillsBackend) : undefined,
     // `dispatches` is a dependency on purpose: it is what retires the list a dispatch ago.

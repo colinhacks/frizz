@@ -54,6 +54,7 @@ export class OpencodeClient {
   async agents(directory: string): Promise<Json[]> { return asArray(await this.data("GET", "/api/agent", { directory })).map((a) => asObject(a)).filter((a): a is Json => !!a) }
   async models(directory: string): Promise<Json[]> { return asArray(await this.data("GET", "/api/model", { directory })).map((m) => asObject(m)).filter((m): m is Json => !!m) }
   async defaultModel(directory: string): Promise<Json | undefined> { return asObject(await this.data("GET", "/api/model/default", { directory })) }
+  async skills(directory: string): Promise<Json[]> { return asArray(await this.data("GET", "/api/skill", { directory })).map((s) => asObject(s)).filter((s): s is Json => !!s) }
 
   async createSession(body: { model?: ModelRef; agent?: string; title?: string; parentID?: string; directory: string; metadata?: Json; permissions?: OpencodeRule[] }): Promise<Json> {
     const { directory, ...rest } = body
@@ -71,7 +72,7 @@ export class OpencodeClient {
   async patchSession(id: string, body: { title?: string; metadata?: Json; permissions?: OpencodeRule[] }, directory?: string): Promise<void> { await this.send("PATCH", `/api/session/${id}`, { body, directory }) }
   async selectAgent(id: string, agent: string, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/agent`, { body: { agent }, directory }) }
   async selectModel(id: string, model: ModelRef, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/model`, { body: { model }, directory }) }
-  async prompt(id: string, body: { id?: string; text: string; delivery?: "steer" | "queue" }, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/prompt`, { body, directory }) }
+  async prompt(id: string, body: { id?: string; text: string; skills?: Array<{ id: string }>; delivery?: "steer" | "queue" }, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/prompt`, { body, directory }) }
   async compact(id: string, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/compact`, { body: {}, directory }) }
   async inbox(id: string, directory?: string): Promise<Json[]> { return asArray(await this.data("GET", `/api/session/${id}/inbox`, { directory })).map((i) => asObject(i)).filter((i): i is Json => !!i) }
   async cancelInbox(id: string, inboxId: string, directory?: string): Promise<void> { await this.send("DELETE", `/api/session/${id}/inbox/${encodeURIComponent(inboxId)}`, { directory }) }

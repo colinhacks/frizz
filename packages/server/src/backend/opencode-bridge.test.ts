@@ -12,7 +12,7 @@ import { OPENCODE_CONTRACT_KEY, OpencodeSessionStream, createOpencodeBridge, ope
 import { OpencodeHub } from "./opencode-hub.ts"
 import { ensureOpencodeService, opencodeVersionAtLeast } from "./opencode-service.ts"
 import { createOpencodeBackend, opencodeTranscriptPath, parseOpencodeSubAgentLine, projectOpencodeTranscript } from "./opencode-transcript.ts"
-import { opencodeKeptRules, opencodeModeOf, opencodeSessionRules, opencodeWildcard, parseOpencodeEvent } from "./opencode-types.ts"
+import { opencodeKeptRules, opencodeModeOf, opencodeSessionRules, opencodeSkillSource, opencodeSkillsOf, opencodeSlashSkills, opencodeWildcard, parseOpencodeEvent } from "./opencode-types.ts"
 import { parseAcpRecord } from "./acp-transcript.ts"
 // @ts-expect-error a plain .mjs fixture
 import { startFakeOpencode } from "./opencode.fixtures/fake-opencode-server.mjs"
@@ -628,4 +628,90 @@ test("opencode-bridge: a card for a call the bridge never saw reads the whole co
       }
     } finally { await teardown(r) }
   }
+})
+
+test("opencode-skills: listSkills maps canonical ids and sources, and /name tokens in prompts attach skills to the turn", async () => {
+  const r = await rig({}, { contract: "THE WORKER CONTRACT mentioning /compact-doc must not trigger a skill" })
+  try {
+    const projectDir = join(r.stateDir, "repo")
+    const nestedDir = join(projectDir, "packages", "pkg-a")
+    r.fake.skills.push(
+      { id: "opencode", name: "OpenCode", description: "Built-in OpenCode guide", path: "/builtin/opencode.md", content: "# OpenCode" },
+      { id: "compact-doc", name: "compact-doc", description: "Compact and update\n  a doc", path: join(projectDir, ".claude/skills/compact-doc/SKILL.md"), content: "# Compact" },
+      { id: "git-release", name: "Git Release", description: "Prepare a release", path: join(r.stateDir, ".claude/skills/git-release/SKILL.md"), content: "# Release" },
+      { id: "use-railway", name: "use-railway", description: "Operate Railway", path: join(r.stateDir, ".config/opencode/skills/use-railway/SKILL.md"), content: "# Railway" },
+      { id: "company-sec", name: "company-sec", description: "External catalog", path: "/opt/company-skills/company-sec/SKILL.md", content: "# Sec" },
+    )
+
+    // 1. Listing uses `id` (not the frontmatter display `name`), collapses multiline descriptions, and
+    //    classifies project (including from a nested package directory), global user, built-in and external roots.
+    const listed = await r.bridge.listSkills(nestedDir)
+    assert.deepEqual(listed, [
+      { name: "opencode", description: "Built-in OpenCode guide", source: "builtin" },
+      { name: "compact-doc", description: "Compact and update a doc", source: "project" },
+      { name: "git-release", description: "Prepare a release", source: "user" },
+      { name: "use-railway", description: "Operate Railway", source: "user" },
+      { name: "company-sec", description: "External catalog" },
+    ])
+
+    // 2. A plain prompt with no `/token` makes no `/api/skill` request and attaches no skills, even when
+    //    the worker contract itself mentions `/compact-doc`.
+    const skillRequestsBefore = r.fake.requests.filter((q: any) => q.path === "/api/skill").length
+    const { opencodeSessionId } = await r.bridge.spawnDispatch({
+      threadSlug: "t1", sessionId: "s1", cwd: projectDir, mode: "bypassPermissions",
+      model: { providerID: "opencode", id: "big-pickle" },
+      prompt: "Check /Users/colin/src/foo.ts and https://example.com/compact-doc [say:plain]",
+    })
+    await until(() => ends(r) === 1)
+    assert.equal(r.fake.requests.filter((q: any) => q.path === "/api/skill").length, skillRequestsBefore)
+    const firstPrompt = r.fake.requests.find((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)
+    assert.equal(firstPrompt.body.skills, undefined)
+
+    // 3. A follow-up naming `/compact-doc` at the start and `/git-release,` mid-sentence attaches both
+    //    canonical skill ids, while ignoring an unknown `/not-a-skill` token.
+    await r.bridge.followUp({
+      threadSlug: "t1", sessionId: "s1", cwd: projectDir, opencodeSessionId, mode: "bypassPermissions",
+      text: "/compact-doc docs/a.md then run /git-release, and ignore /not-a-skill [say:skilled]",
+      deliveryId: "d-skill", delivery: "steer",
+    })
+    await until(() => ends(r) === 2)
+    const secondPrompt = r.fake.requests.filter((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)[1]
+    assert.deepEqual(secondPrompt.body.skills, [{ id: "compact-doc" }, { id: "git-release" }])
+
+    // 4. If a cached skill is deleted on disk before the next send, OpenCode's 400 drops the cache and
+    //    retries as a plain prompt so the user's message still lands.
+    const idx = r.fake.skills.findIndex((s: any) => s.id === "compact-doc")
+    r.fake.skills.splice(idx, 1)
+    await r.bridge.followUp({
+      threadSlug: "t1", sessionId: "s1", cwd: projectDir, opencodeSessionId, mode: "bypassPermissions",
+      text: "/compact-doc docs/b.md [say:recovered]",
+      deliveryId: "d-deleted", delivery: "steer",
+    })
+    await until(() => ends(r) === 3)
+    const promptCalls = r.fake.requests.filter((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)
+    assert.equal(promptCalls.length, 4, "first attempt with deleted skill + plain retry")
+    assert.deepEqual(promptCalls[2].body.skills, [{ id: "compact-doc" }])
+    assert.equal(promptCalls[3].body.skills, undefined)
+  } finally { await teardown(r) }
+})
+
+test("opencode-skills-helpers: opencodeSkillSource, opencodeSkillsOf and opencodeSlashSkills handle edge cases", () => {
+  const env = { HOME: "/Users/alice" }
+  assert.equal(opencodeSkillSource("/builtin/report.md", "/Users/alice/git/app", env), "builtin")
+  assert.equal(opencodeSkillSource("/Users/alice/.claude/skills/a/SKILL.md", "/Users/alice/git/app", env), "user")
+  assert.equal(opencodeSkillSource("/Users/alice/.agents/skills/b/SKILL.md", "/Users/alice/git/app", env), "user")
+  assert.equal(opencodeSkillSource("/Users/alice/.config/opencode/skills/c/SKILL.md", "/Users/alice/git/app", env), "user")
+  assert.equal(opencodeSkillSource("/Users/alice/git/app/.claude/skills/d/SKILL.md", "/Users/alice/git/app", env), "project")
+  assert.equal(opencodeSkillSource("/Users/alice/git/app/.claude/skills/d/SKILL.md", "/Users/alice/git/app/packages/web", env), "project")
+  assert.deepEqual(
+    opencodeSkillsOf([
+      { id: "valid-id", name: "Valid Name", description: "ok", path: "/builtin/valid.md" },
+      { id: "valid-id", name: "Duplicate", description: "ignored", path: "/builtin/dup.md" },
+      { id: "bad/id", name: "bad/id", description: "contains slash" },
+      { id: "bad id", name: "bad id", description: "contains space" },
+    ], "/Users/alice/git/app", env),
+    [{ name: "valid-id", description: "ok", source: "builtin" }],
+  )
+  const known = new Set(["alpha", "beta.v2"])
+  assert.deepEqual(opencodeSlashSkills("/alpha and /beta.v2. Also /alpha!", known), [{ id: "alpha" }, { id: "beta.v2" }])
 })
