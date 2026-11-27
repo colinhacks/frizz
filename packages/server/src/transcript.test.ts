@@ -2342,7 +2342,7 @@ test("pagination: a huge prior turn uses explicit continuation chunks and eventu
   assert.ok(clicks > 1)
 })
 
-// An OpenCode turn of 311 tool calls and no text projected to one assistant message of about 1.6 MB, and
+// An OpenCode turn of 311 tool calls and no text projected to one assistant message of about 3.4 MB, and
 // the throw this replaced left it and everything before it unreachable (2026-11-27).
 test("pagination: a message past the byte limit is a page of its own, and the walk goes on past it", () => {
   const limits = { maxBytes: 1024 }

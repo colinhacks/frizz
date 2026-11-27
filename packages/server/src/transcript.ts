@@ -5026,7 +5026,7 @@ export function pageProjectedTranscript(
     // floor the latest window keeps (byteBoundedStart): a message past the ceiling goes out as a page of
     // its own. OpenCode and ACP project a whole turn's tool calls onto one assistant message, so a model
     // that runs hundreds of them without writing text passes this bound. Throwing here left that message,
-    // and everything before it, unreachable (2026-11-27: 311 tool calls, about 1.6 MB).
+    // and everything before it, unreachable (2026-11-27: 311 tool calls, about 3.4 MB).
     if (start < anchor && bytes + nextBytes > maxBytes) break
     start--
     bytes += nextBytes
