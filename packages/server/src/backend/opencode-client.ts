@@ -6,7 +6,13 @@ import type { OpencodeRegistration } from "./opencode-service.ts"
 // never puts it in an error or a log line.
 
 export class OpencodeHttpError extends Error {
-  constructor(readonly status: number, readonly route: string, detail: string) {
+  constructor(
+    readonly status: number,
+    readonly route: string,
+    detail: string,
+    readonly tag?: string,
+    readonly field?: string,
+  ) {
     super(`OpenCode ${route} answered ${status}${detail ? `: ${detail}` : ""}`)
   }
 }
@@ -36,8 +42,18 @@ export class OpencodeClient {
     const text = await res.text()
     if (!res.ok) {
       let detail = ""
-      try { detail = asString(asObject(JSON.parse(text))?.message) ?? asString(asObject(asObject(JSON.parse(text))?.data)?.message) ?? "" } catch { detail = text.slice(0, 200) }
-      throw new OpencodeHttpError(res.status, route, detail.slice(0, 500))
+      let tag: string | undefined
+      let field: string | undefined
+      try {
+        const parsed = asObject(JSON.parse(text))
+        const inner = asObject(parsed?.data) ?? asObject(parsed?.error)
+        detail = asString(parsed?.message) ?? asString(inner?.message) ?? ""
+        tag = asString(parsed?._tag) ?? asString(inner?._tag) ?? asString(parsed?.type) ?? asString(inner?.type)
+        field = asString(parsed?.field) ?? asString(inner?.field)
+      } catch {
+        detail = text.slice(0, 200)
+      }
+      throw new OpencodeHttpError(res.status, route, detail.slice(0, 500), tag, field)
     }
     if (!text) return undefined
     try { return JSON.parse(text) } catch { return text }
@@ -54,6 +70,7 @@ export class OpencodeClient {
   async agents(directory: string): Promise<Json[]> { return asArray(await this.data("GET", "/api/agent", { directory })).map((a) => asObject(a)).filter((a): a is Json => !!a) }
   async models(directory: string): Promise<Json[]> { return asArray(await this.data("GET", "/api/model", { directory })).map((m) => asObject(m)).filter((m): m is Json => !!m) }
   async defaultModel(directory: string): Promise<Json | undefined> { return asObject(await this.data("GET", "/api/model/default", { directory })) }
+  async skills(directory: string): Promise<Json[]> { return asArray(await this.data("GET", "/api/skill", { directory })).map((s) => asObject(s)).filter((s): s is Json => !!s) }
 
   async createSession(body: { model?: ModelRef; agent?: string; title?: string; parentID?: string; directory: string; metadata?: Json; permissions?: OpencodeRule[] }): Promise<Json> {
     const { directory, ...rest } = body
@@ -71,7 +88,7 @@ export class OpencodeClient {
   async patchSession(id: string, body: { title?: string; metadata?: Json; permissions?: OpencodeRule[] }, directory?: string): Promise<void> { await this.send("PATCH", `/api/session/${id}`, { body, directory }) }
   async selectAgent(id: string, agent: string, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/agent`, { body: { agent }, directory }) }
   async selectModel(id: string, model: ModelRef, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/model`, { body: { model }, directory }) }
-  async prompt(id: string, body: { id?: string; text: string; delivery?: "steer" | "queue" }, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/prompt`, { body, directory }) }
+  async prompt(id: string, body: { id?: string; text: string; skills?: Array<{ id: string }>; delivery?: "steer" | "queue" }, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/prompt`, { body, directory }) }
   async compact(id: string, directory?: string): Promise<void> { await this.send("POST", `/api/session/${id}/compact`, { body: {}, directory }) }
   async inbox(id: string, directory?: string): Promise<Json[]> { return asArray(await this.data("GET", `/api/session/${id}/inbox`, { directory })).map((i) => asObject(i)).filter((i): i is Json => !!i) }
   async cancelInbox(id: string, inboxId: string, directory?: string): Promise<void> { await this.send("DELETE", `/api/session/${id}/inbox/${encodeURIComponent(inboxId)}`, { directory }) }

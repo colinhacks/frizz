@@ -43,6 +43,8 @@ export async function startFakeOpencode(opts = {}) {
   const password = opts.password ?? "fake-secret-password"
   const version = opts.version ?? "2.2.5"
   const configRules = opts.configRules ?? []
+  const skills = [...(opts.skills ?? [])]
+  const activatedDirs = new Set()
   const agentRules = (agent) => [...(AGENT_RULES[agent] ?? AGENT_DEFAULT), ...configRules]
   // A service that has just started: until `activatingMs` has passed, `/api/model` answers 503 and a prompt
   // fails "Model unavailable" (`provider.no-route`), as 2.0.27 did a moment after `service start`.
@@ -297,6 +299,12 @@ export async function startFakeOpencode(opts = {}) {
     }
     if (url.pathname === "/api/info") return json(res, 200, { version, pid: process.pid, urls: [], paths: {}, capabilities: {} })
     if (url.pathname.startsWith("/api/model") && activating()) return json(res, 503, { message: "Location plugins did not finish activating" })
+    // A directory's plugins (which register every skill, the built-in ones included) activate on its first
+    // request. `/api/model` waits for that, as every OpenCode from 2.0.27 to 2.2.5 does; `/api/skill` does
+    // not, so its first read of a directory nothing has touched yet answers an empty list.
+    const directory = req.headers["x-opencode-directory"]
+    const firstTouch = typeof directory === "string" && !activatedDirs.has(directory)
+    if (typeof directory === "string") activatedDirs.add(directory)
     if (url.pathname === "/api/model") return json(res, 200, { data: [
       { id: "big-pickle", providerID: "opencode", name: "Big Pickle", variants: [], limit: { context: 200000 }, enabled: true, status: "active" },
       { id: "flash", providerID: "opencode", name: "Flash", variants: [{ id: "low" }, { id: "high" }], limit: { context: 100000 }, enabled: true, status: "active" },
@@ -304,6 +312,10 @@ export async function startFakeOpencode(opts = {}) {
     if (url.pathname === "/api/agent") {
       if (opts.noAgentRoute) return json(res, 404, { message: "no route" })
       return json(res, 200, { data: ["build", "plan", "general"].map((id) => ({ id, name: id, mode: id === "general" ? "subagent" : "primary", hidden: false, permissions: agentRules(id) })) })
+    }
+    if (url.pathname === "/api/skill") {
+      if (opts.noSkillRoute) return json(res, 404, { message: "no route" })
+      return json(res, 200, { data: firstTouch ? [] : skills })
     }
     if (url.pathname === "/api/model/default") return json(res, 200, { data: { id: "big-pickle", providerID: "opencode" } })
     if (url.pathname === "/api/session/active") return json(res, 200, { data: Object.fromEntries([...sessions.values()].filter((s) => s.running).map((s) => [s.id, { type: "running" }])) })
@@ -331,8 +343,12 @@ export async function startFakeOpencode(opts = {}) {
     if (rest === "model") { s.model = body.model; return json(res, 204) }
     if (rest === "environment") { s.env = body.variables; return json(res, 204) }
     if (rest === "prompt") {
-      const item = enqueue(s, { id: body.id ?? id("msg"), type: "user", text: body.text, delivery: body.delivery ?? "steer" })
-      return json(res, 200, { data: { id: item.id, sessionID: s.id, type: "user", payload: { text: item.text }, delivery: item.delivery } })
+      if (Array.isArray(body.skills)) {
+        const missing = body.skills.find((entry) => !skills.some((sk) => sk.id === entry?.id))
+        if (missing) return json(res, 400, { _tag: "InvalidRequestError", message: `Skill not found: ${missing.id}`, field: "skills" })
+      }
+      const item = enqueue(s, { id: body.id ?? id("msg"), type: "user", text: body.text, ...(body.skills ? { skills: body.skills } : {}), delivery: body.delivery ?? "steer" })
+      return json(res, 200, { data: { id: item.id, sessionID: s.id, type: "user", payload: { text: item.text, ...(body.skills ? { skills: body.skills } : {}) }, delivery: item.delivery } })
     }
     if (rest === "compact") { enqueue(s, { id: id("msg"), type: "compaction", text: "", delivery: "steer" }); return json(res, 200, { data: {} }) }
     if (rest === "inbox") return json(res, 200, { data: s.inbox.map((i) => ({ id: i.id, sessionID: s.id, type: i.type, payload: { text: i.text }, delivery: i.delivery })) })
@@ -383,7 +399,7 @@ export async function startFakeOpencode(opts = {}) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
   const url = `http://127.0.0.1:${server.address().port}`
   return {
-    url, password, version, sessions, requests,
+    url, password, version, sessions, requests, skills,
     registration: { id: "fake", version, url, pid: process.pid, password },
     emit,
     /** End every event stream. Events emitted until a client reconnects reach nobody. */

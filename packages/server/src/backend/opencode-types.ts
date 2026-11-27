@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs"
+import { homedir } from "node:os"
+import type { ThreadSkill, ThreadSkillSource } from "@frizz/shared"
 import { redactCredentialSyntax } from "../credential-redaction.ts"
 
 // What Frizz reads off OpenCode 2's server API. Hand-rolled and deliberately narrow
@@ -125,6 +128,113 @@ export function opencodeRulesOf(raw: unknown): OpencodeRule[] {
 }
 
 export function opencodeAgentFor(mode: OpencodeMode): "build" | "plan" { return mode === "plan" ? "plan" : "build" }
+
+// ---- skills -----------------------------------------------------------------------------------------
+
+function normDir(dir: string): string {
+  const n = dir.replaceAll("\\", "/").replace(/\/+$/, "")
+  return n || "/"
+}
+
+function isInsideDir(filePath: string, dir: string): boolean {
+  const d = normDir(dir)
+  if (d === "/") return filePath.startsWith("/")
+  return filePath === d || filePath.startsWith(`${d}/`)
+}
+
+/** Where OpenCode resolved a skill from (`GET /api/skill`'s `path`), in Frizz's `ThreadSkillSource`
+ *  vocabulary. OpenCode searches `/builtin/…`, the global roots (`~/.config/opencode/skills`,
+ *  `~/.claude/skills`, `~/.agents/skills`), and the project's `.opencode/skills`, `.claude/skills` and
+ *  `.agents/skills` from `cwd` up to the project root. */
+export function opencodeSkillSource(skillPath: string | undefined, cwd: string, env: NodeJS.ProcessEnv = process.env): ThreadSkillSource | undefined {
+  if (!skillPath) return undefined
+  const p = skillPath.replaceAll("\\", "/")
+  if (p === "/builtin" || p.startsWith("/builtin/")) return "builtin"
+  const homeRaw = env.HOME?.trim() || homedir()
+  const home = homeRaw ? normDir(homeRaw) : ""
+  const xdgConfig = env.XDG_CONFIG_HOME?.trim() ? normDir(env.XDG_CONFIG_HOME.trim()) : home ? `${home}/.config` : ""
+  if (xdgConfig && isInsideDir(p, `${xdgConfig}/opencode`)) return "user"
+  const target = cwd ? normDir(cwd) : ""
+  if (home && target !== home && (isInsideDir(p, `${home}/.claude`) || isInsideDir(p, `${home}/.agents`))) return "user"
+  if (target && isInsideDir(p, target)) return "project"
+  // A skill in an ancestor of `cwd` (e.g. a monorepo root's `.claude/skills`) is still the project's,
+  // unless that ancestor is the user's home directory itself.
+  const skillRoot = /^(.+?)\/(?:\.(?:opencode|claude|agents)\/)?skills?\//.exec(p)?.[1]
+  if (skillRoot && target && isInsideDir(target, skillRoot) && (!home || normDir(skillRoot) !== home)) return "project"
+  if (home && isInsideDir(p, home)) return "user"
+  return undefined
+}
+
+/** Whether `skillId` is permitted by the session agent's resolved rules (plus Frizz's `STILL_DENIED`,
+ *  which always denies `skill` `browser`). OpenCode's `GET /api/skill` lists every discovered skill
+ *  before permission evaluation, and `POST /api/session/:id/prompt` materializes `skills` attachments
+ *  without checking `skill` rules (`SessionPrompt.prepare`), where `SkillInstructions.load` filters by
+ *  `Permission.evaluate("skill", id, rules).effect !== "deny"`. Filtering here keeps denied skills out
+ *  of both the `/` menu and prompt attachments. */
+export function opencodeSkillAllowed(skillId: string, agentRules: readonly OpencodeRule[] = []): boolean {
+  const rules = [...agentRules, ...STILL_DENIED]
+  for (let i = rules.length - 1; i >= 0; i--) {
+    const r = rules[i]!
+    if (opencodeWildcard("skill", r.action) && opencodeWildcard(skillId, r.resource)) {
+      return r.effect !== "deny"
+    }
+  }
+  return true
+}
+
+/** Skills as OpenCode lists them (`GET /api/skill`), keyed by their canonical `id` rather than their
+ *  frontmatter display `name` (which can carry spaces and capitals, whereas the `/` token and
+ *  `POST /api/session/:id/prompt`'s `skills` attachment both take `id`), and filtered by the agent's
+ *  `skill` permission rules. */
+export function opencodeSkillsOf(
+  raw: unknown,
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  agentRules: readonly OpencodeRule[] = [],
+): ThreadSkill[] {
+  const out: ThreadSkill[] = []
+  const seen = new Set<string>()
+  // OpenCode reports each path resolved (`/private/var/…` on macOS for a `/var/…` directory), so the
+  // directories it is compared with are resolved too, or a project or HOME behind a symlink loses its label.
+  const real = (dir: string | undefined) => { if (!dir?.trim()) return dir; try { return realpathSync.native(dir.trim()) } catch { return dir } }
+  cwd = real(cwd) ?? cwd
+  env = { ...env, HOME: real(env.HOME), XDG_CONFIG_HOME: real(env.XDG_CONFIG_HOME) }
+  for (const item of asArray(raw)) {
+    if (out.length >= 1024) break
+    const o = asObject(item)
+    const id = (asString(o?.id) ?? asString(o?.name))?.trim()
+    if (!id || id.length > 512 || /[\s/]/.test(id) || seen.has(id)) continue
+    if (!opencodeSkillAllowed(id, agentRules)) continue
+    seen.add(id)
+    const description = (asString(o?.description) ?? "").replace(/\s+/g, " ").trim().slice(0, 1024)
+    const source = opencodeSkillSource(asString(o?.path), cwd, env)
+    out.push({ name: id, description, ...(source ? { source } : {}) })
+  }
+  return out
+}
+
+const SLASH_TOKEN_RE = /(?:^|\s)\/([^\s/]+)(?=\s|$)/g
+
+export function hasOpencodeSlashCandidate(text: string): boolean {
+  return /(?:^|\s)\/[^\s/]+(?=\s|$)/.test(text)
+}
+
+/** The skills a prompt invokes by `/name` (at the start or after whitespace, matching `slashToken.ts`),
+ *  resolved against the skills OpenCode registered for the directory (`GET /api/skill`). Passed as
+ *  `skills: [{ id }]` on `POST /api/session/:id/prompt`, so OpenCode attaches their `<skill_content>`
+ *  blocks to the turn's user message the way Claude Code expands `/name`. */
+export function opencodeSlashSkills(text: string, knownSkills: ReadonlySet<string>): Array<{ id: string }> {
+  if (!knownSkills.size) return []
+  const ids: string[] = []
+  for (const m of text.matchAll(SLASH_TOKEN_RE)) {
+    const raw = m[1]
+    if (!raw) continue
+    const stripped = raw.replace(/[.,;:!?)]+$/, "")
+    const id = knownSkills.has(raw) ? raw : stripped && knownSkills.has(stripped) ? stripped : undefined
+    if (id && !ids.includes(id)) ids.push(id)
+  }
+  return ids.map((id) => ({ id }))
+}
 
 // ---- tools ------------------------------------------------------------------------------------------
 

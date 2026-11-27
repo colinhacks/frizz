@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { readFileSync } from "node:fs"
-import { INTERACTION_PROTOCOL_VERSION, InteractionRequest, NOTES_FIELD_SUFFIX, opencodeModelSlug, type InteractionField, type OpencodeModels, type InteractionRequest as InteractionRequestType } from "@frizz/shared"
+import { INTERACTION_PROTOCOL_VERSION, InteractionRequest, NOTES_FIELD_SUFFIX, opencodeModelSlug, type InteractionField, type OpencodeModels, type InteractionRequest as InteractionRequestType, type ThreadSkill } from "@frizz/shared"
 import { redactCredentialSyntax } from "../credential-redaction.ts"
 import { frizzGithubWorkerEnv } from "../github-credential.ts"
 import type { InteractionSessionScope, InteractionStore } from "../interaction-store.ts"
@@ -11,7 +11,7 @@ import { OpencodeHub, sharedOpencodeHub, type OpencodeHubListener } from "./open
 import { OPENCODE_MIN_VERSION, opencodeNativeAvailable, opencodeVersionAtLeast } from "./opencode-service.ts"
 import { OpencodeTranscriptWriter, opencodeChildTranscriptPath, opencodeTranscriptPath, type OpencodeSubAgentRecord } from "./opencode-transcript.ts"
 import {
-  asArray, asNumber, asObject, asString, errorMessage, eventSessionId, frizzToolShape, opencodeRulesOf, opencodeSessionRules, subagentResultText, toolContentText,
+  asArray, asNumber, asObject, asString, errorMessage, eventSessionId, frizzToolShape, hasOpencodeSlashCandidate, opencodeRulesOf, opencodeSessionRules, opencodeSkillAllowed, opencodeSkillsOf, opencodeSlashSkills, subagentResultText, toolContentText,
   type Json, type OpencodeEvent, type OpencodeMode, type OpencodeRule,
 } from "./opencode-types.ts"
 import { frizzCliEnv, withFrizzCliOnPath, type FrizzCli } from "./types.ts"
@@ -1140,7 +1140,7 @@ export class OpencodeBridge implements OpencodeHubListener {
     const contract = live.contractInPrompt ? this.options.contractFor?.(input.threadSlug, input.sessionId) : undefined
     const inboxId = opencodeInboxId(input.sessionId, randomUUID())
     live.pendingSends.set(inboxId, { recordText: input.prompt })
-    await client.prompt(opencodeId, { id: inboxId, text: contract ? `${contract}\n\n${input.prompt}` : input.prompt }, input.cwd)
+    await this.promptWithSkills(client, opencodeId, input.cwd, input.mode, input.prompt, { id: inboxId, text: contract ? `${contract}\n\n${input.prompt}` : input.prompt }, catalog)
     return { opencodeSessionId: opencodeId, ...(version ? { version } : {}) }
   }
 
@@ -1188,7 +1188,7 @@ export class OpencodeBridge implements OpencodeHubListener {
     live.pendingSends.set(inboxId, { recordText: input.text, ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}) })
     const contract = live.contractOwed ? this.options.contractFor?.(input.threadSlug, input.sessionId) : undefined
     try {
-      await client.prompt(live.opencodeId, { id: inboxId, text: contract ? `${contract}\n\n${input.text}` : input.text, delivery: input.delivery }, live.cwd)
+      await this.promptWithSkills(client, live.opencodeId, live.cwd, live.mode, input.text, { id: inboxId, text: contract ? `${contract}\n\n${input.text}` : input.text, delivery: input.delivery })
     } catch (err) {
       live.pendingSends.delete(inboxId)
       throw err
@@ -1292,6 +1292,91 @@ export class OpencodeBridge implements OpencodeHubListener {
     } catch (err) {
       log.warn("opencode", `could not read OpenCode's agents for ${cwd}: ${(err as Error).message}`)
       return undefined
+    }
+  }
+
+  /** What OpenCode resolved for every skill in a directory (`GET /api/skill`), read fresh when the `/`
+   *  menu opens and cached briefly so the send that follows does not ask a second time. */
+  private readonly skillCatalogs = new WeakMap<OpencodeClient, Map<string, { at: number; skills: ThreadSkill[]; ids: Set<string> }>>()
+  private async readSkillCatalog(client: OpencodeClient, cwd: string, fresh = false): Promise<{ skills: ThreadSkill[]; ids: Set<string> }> {
+    let byDir = this.skillCatalogs.get(client)
+    if (!byDir) { byDir = new Map(); this.skillCatalogs.set(client, byDir) }
+    const cached = byDir.get(cwd)
+    if (cached && !fresh && Date.now() - cached.at < 30_000) return cached
+    // `/api/skill` does not wait for the directory's plugins, which register every skill (the built-in
+    // ones too), so its first read of a directory answers an empty list; `/api/model/default` waits for
+    // them (OpenCode 2.0.27 to 2.2.5, measured on 2.0.27). Ask it first, and read the skills after.
+    await withStartupRetry(() => client.defaultModel(cwd)).catch(() => undefined)
+    const raw = await withStartupRetry(() => client.skills(cwd))
+    const skills = opencodeSkillsOf(raw, cwd, this.env)
+    const entry = { at: Date.now(), skills, ids: new Set(skills.map((s) => s.name)) }
+    byDir.set(cwd, entry)
+    return entry
+  }
+
+  /** The skills OpenCode resolved for `cwd` (`GET /api/skill`), for a thread's `/` menu and the
+   *  new-thread box's, filtered by the session agent's `skill` permission rules. Always read fresh when
+   *  the menu opens so a skill just written to disk is in it. When OpenCode's agents cannot be read,
+   *  returns nothing rather than offering skills the person's configuration may have denied. */
+  async listSkills(cwd: string, sessionId?: string): Promise<ThreadSkill[]> {
+    if (this.closed) throw new Error("OpenCode bridge is closed")
+    const live = sessionId ? this.sessions.get(sessionId) : undefined
+    const dir = live?.cwd ?? cwd
+    const client = await this.connect()
+    const [skillCatalog, agentCatalog] = await Promise.all([
+      this.readSkillCatalog(client, dir, true),
+      this.agentCatalog(client, dir),
+    ])
+    if (!agentCatalog) return []
+    const agentRules = this.agentRulesFor(agentCatalog, live?.mode ?? "settings")
+    return skillCatalog.skills.filter((s) => opencodeSkillAllowed(s.name, agentRules))
+  }
+
+  private agentRulesFor(catalog: AgentCatalog, mode: OpencodeMode): readonly OpencodeRule[] {
+    return catalog.rules.get(this.agentFor(catalog, mode)) ?? []
+  }
+
+  /** Send a user prompt, attaching any `/name` tokens in `userText` that name a permitted skill in `cwd`
+   *  as `skills: [{ id }]` so OpenCode injects their `<skill_content>` blocks on the first step. When
+   *  OpenCode's agents cannot be read, attaches nothing so a configured `skill` deny cannot be bypassed. */
+  private async promptWithSkills(
+    client: OpencodeClient,
+    opencodeId: string,
+    cwd: string,
+    mode: OpencodeMode,
+    userText: string,
+    body: { id: string; text: string; delivery?: "steer" | "queue" },
+    knownAgents?: AgentCatalog,
+  ): Promise<void> {
+    let skills: Array<{ id: string }> = []
+    if (hasOpencodeSlashCandidate(userText)) {
+      const [catalog, agents] = await Promise.all([
+        this.readSkillCatalog(client, cwd).catch(() => undefined),
+        knownAgents ? Promise.resolve(knownAgents) : this.agentCatalog(client, cwd),
+      ])
+      if (catalog && agents) {
+        const agentRules = this.agentRulesFor(agents, mode)
+        skills = opencodeSlashSkills(userText, catalog.ids).filter((s) => opencodeSkillAllowed(s.id, agentRules))
+      }
+    }
+    if (!skills.length) {
+      await client.prompt(opencodeId, body, cwd)
+      return
+    }
+    try {
+      await client.prompt(opencodeId, { ...body, skills }, cwd)
+    } catch (err) {
+      // A skill deleted on disk since the catalog was read fails on the `skills` attachment (400
+      // `InvalidRequestError` with `field: "skills"` on OpenCode's `session.prompt` route, or a
+      // `SkillNotFoundError` / `SkillLoadError` tag); drop the cache and send the user's words as a plain
+      // prompt rather than failing their message. Unrelated 400/404 errors (e.g. `SessionNotFoundError`)
+      // still throw.
+      if (isOpencodeSkillAttachmentError(err)) {
+        this.skillCatalogs.get(client)?.delete(cwd)
+        await client.prompt(opencodeId, body, cwd)
+        return
+      }
+      throw err
     }
   }
 
@@ -1435,6 +1520,17 @@ export class OpencodeBridge implements OpencodeHubListener {
     this.detachHub?.()
     this.detachHub = undefined
   }
+}
+
+/** Whether `POST /api/session/:id/prompt` failed specifically because an attached skill id could not be
+ *  resolved or loaded (`Session.SkillNotFoundError` maps to `400 InvalidRequestError` with `field:
+ *  "skills"` in OpenCode 2's `session.prompt` handler, and the OpenAPI contract also names
+ *  `SkillNotFoundError` / `SkillLoadError`). */
+export function isOpencodeSkillAttachmentError(err: unknown): boolean {
+  if (!(err instanceof OpencodeHttpError)) return false
+  if (err.field === "skills") return true
+  if (err.tag === "SkillNotFoundError" || err.tag === "SkillLoadError" || err.tag === "Session.SkillNotFoundError") return true
+  return false
 }
 
 /** A location the service has just opened answers 503 until its plugins activate, which takes seconds on
