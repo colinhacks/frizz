@@ -6,7 +6,7 @@
 // pressed "Jump to latest" back to the human's steer at the top of the stretch.
 //
 // A remembered place is recorded only once the reader has actually moved in the thread (scrolled, pressed
-// "Jump to latest", expanded a fold, or sent a reply), and is stamped with the thread's current landing
+// "Jump to latest", or expanded a fold), and is stamped with the thread's current landing
 // epoch — the human's latest message (`steerKey`) and the newest sign-off after it (`latestSignOffKey`).
 // While that epoch is unchanged (including while a working or quiet-parked thread appends tool calls and
 // wakes), returning to the thread restores the reader's place: pinned to the tail if they were at the
@@ -128,13 +128,6 @@ export function resolveRememberedTranscriptScroll(
   const index = rows.findIndex((row) => row.key === entry.anchor!.rowKey)
   if (index < 0) return null
   return { kind: "anchor", index, anchor: entry.anchor }
-}
-
-/** Whether `slug` has a remembered mid-thread anchor that a drawer's initial scroll coordinator must not
- *  override with a scroll-to-bottom. */
-export function hasRememberedTranscriptAnchor(slug: string): boolean {
-  const entry = bySlug.get(slug)
-  return Boolean(entry && entry.moved && !entry.followingTail && entry.anchor)
 }
 
 /** Test seam. */

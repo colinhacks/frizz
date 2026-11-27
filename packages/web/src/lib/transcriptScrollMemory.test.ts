@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import {
   clearRememberedTranscriptScroll,
-  hasRememberedTranscriptAnchor,
   rememberedTranscriptOpenFolds,
   rememberTranscriptOpenFold,
   rememberTranscriptScroll,
@@ -22,7 +21,6 @@ test("a thread the reader never moved in uses the cold-open landing", () => {
   clearRememberedTranscriptScroll()
   const epoch = transcriptLandingEpoch([human("u1"), work("a1"), work("a2")])
   assert.equal(resolveRememberedTranscriptScroll("t", epoch, ROWS), null)
-  assert.equal(hasRememberedTranscriptAnchor("t"), false)
 })
 
 test("a reader who scrolled or jumped to the tail returns to the tail, even as new work messages arrive", () => {
@@ -39,7 +37,6 @@ test("a reader who scrolled or jumped to the tail returns to the tail, even as n
     resolveRememberedTranscriptScroll("t", transcriptLandingEpoch(grown), grownRows),
     { kind: "tail" },
   )
-  assert.equal(hasRememberedTranscriptAnchor("t"), false)
 })
 
 test("a reader parked mid-thread returns to the same row and viewport offset across session switches", () => {
@@ -52,7 +49,6 @@ test("a reader parked mid-thread returns to the same row and viewport offset acr
     anchor: { rowKey: "a1", viewportTop: -24 },
   })
 
-  assert.equal(hasRememberedTranscriptAnchor("t"), true)
   assert.deepEqual(
     resolveRememberedTranscriptScroll("t", epoch, ROWS),
     { kind: "anchor", index: 2, anchor: { rowKey: "a1", viewportTop: -24 } },

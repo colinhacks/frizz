@@ -1137,7 +1137,7 @@ function VirtualizedThreadTranscript({
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
   const pendingPrependAnchorRef = useRef<{ rowKey: string; viewportTop: number } | null>(null)
-  const rememberedOnOpen = transcriptKey ? resolveRememberedTranscriptScroll(slug, epoch, rows) : null
+  const rememberedOnOpen = openAtRest && transcriptKey ? resolveRememberedTranscriptScroll(slug, epoch, rows) : null
   // A thread at rest is still being put where it opens (lib/openLanding): from the first render until the
   // initial-scroll effect below lets go. State, because the virtualizer reads it as an option.
   const [opening, setOpening] = useState(() => openAtRest && rememberedOnOpen === null)
@@ -1336,10 +1336,11 @@ function VirtualizedThreadTranscript({
     const anchor = handoff?.candidates
       .map((candidate) => ({ candidate, index: rows.findIndex((row) => row.kind === "message" && row.message.sourceId === candidate.sourceId) }))
       .find((hit) => hit.index >= 0)
-    // A REVISITED THREAD WHERE THE READER ALREADY MOVED (lib/transcriptScrollMemory): return to the tail if
-    // they had scrolled or jumped there, or put the row they left at the top of their pane back at that
-    // offset, rather than re-running the cold-open landing on every session switch.
-    const remembered = !anchor ? resolveRememberedTranscriptScroll(slug, epochRef.current, rows) : null
+    // A REVISITED THREAD AT REST WHERE THE READER ALREADY MOVED (lib/transcriptScrollMemory): return to the
+    // tail if they had scrolled or jumped there, or put the row they left at the top of their pane back at
+    // that offset, rather than re-running the cold-open landing on every session switch. A thread whose turn
+    // is in flight or that has a prompt card waiting at its tail (`!openAtRest`) still opens on its tail.
+    const remembered = !anchor && openAtRest ? resolveRememberedTranscriptScroll(slug, epochRef.current, rows) : null
     if (remembered?.kind === "tail") {
       readerMovedRef.current = true
       followingTailRef.current = true
