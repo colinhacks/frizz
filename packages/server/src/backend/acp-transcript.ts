@@ -15,9 +15,11 @@ import { applyEvent } from "../tailer.ts"
 // rest/turn detection, the queue's rest time, the preview and the delivery ledger all work without a
 // third fold, and `projectAcpTranscript` below turns the same file into the drawer's messages.
 //
-// Two extra fields ride on a record and are stripped before `applyEvent`: `messageId` on a streamed
-// text block (so several partial flushes of one agent message render as one bubble) and `acp` on a
-// tool call (its ACP `kind`, `title` and `locations`, which the drawer shows and the fold ignores).
+// Three extra fields ride on a record and are stripped before `applyEvent`: `messageId` on a streamed
+// text block (so several partial flushes of one agent message render as one bubble), `acp` on a
+// tool call (its ACP `kind`, `title` and `locations`, which the drawer shows and the fold ignores), and
+// `step` on a text block or tool call whose writer knows the model step it came from (OpenCode's
+// bridge does, ACP's does not), so the drawer gives each step a message of its own.
 
 //
 // OpenCode's native backend writes the same kind of file for the same reason (opencode-transcript.ts):
@@ -54,7 +56,7 @@ export type AcpRecord =
   | AcpNote
   | AcpContractRecord
   | AcpToolInputRecord
-  | (NormalizedEvent & { messageId?: string; acp?: { kind?: string; title?: string; locations?: string[]; input?: unknown } })
+  | (NormalizedEvent & { messageId?: string; step?: string; acp?: { kind?: string; title?: string; locations?: string[]; input?: unknown } })
 
 const EVENT_KINDS: ReadonlySet<string> = new Set([
   "turn-start", "turn-end", "provider-error", "assistant-text", "user-message", "tool-call", "tool-result",
@@ -80,7 +82,7 @@ export function parseAcpRecord(line: string): AcpRecord | undefined {
 export function parseAcpLine(line: string): NormalizedEvent[] {
   const rec = parseAcpRecord(line)
   if (!rec || rec.kind === "acp-session" || rec.kind === "acp-note" || rec.kind === "acp-contract" || rec.kind === "acp-tool-input" || rec.kind.startsWith("opencode-")) return []
-  const { messageId: _m, acp: _a, ...ev } = rec as NormalizedEvent & { messageId?: string; acp?: unknown }
+  const { messageId: _m, step: _s, acp: _a, ...ev } = rec as NormalizedEvent & { messageId?: string; step?: string; acp?: unknown }
   return [ev as NormalizedEvent]
 }
 
@@ -291,6 +293,10 @@ export interface WrittenTranscriptDialect {
   /** Clean a reasoning record's text before it joins the turn's reasoning block; returning null (or
    *  blank text) drops it. */
   reasoning?: (text: string) => string | null
+  /** A `context-usage` record ends the model step it measured. Set, it closes an assistant message whose
+   *  records name no `step`: a file written before its writer recorded one. A message that names its step
+   *  is closed by the next step's records instead, so this never splits one. */
+  usageEndsStep?: boolean
 }
 
 /** The drawer's messages from the raw file. `identityPrefix` seeds `sourceId`s the client keys on. */
@@ -299,6 +305,10 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
   const pushUser = userProjector?.(out)
   let current: TranscriptMessage | undefined // the open assistant message
   let currentMessageId: string | undefined
+  // The model step the open message holds, when its records name one. One step is one provider call,
+  // so a long turn of tool calls with no text becomes one message per step, as Claude's do, rather than
+  // one message holding every call (311 calls and 3.4 MB in one OpenCode turn, 2026-11-27).
+  let currentStep: string | undefined
   // The CURRENT turn's reasoning block, mirroring Codex's `turnReasoning` (transcript.ts). ACP and
   // Antigravity emit a thought chunk before nearly every tool batch, so pushing a fresh reasoning
   // message each time fragments one tool run into dozens of alternating `Reasoning` / `Ran N tool
@@ -312,7 +322,15 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
   const openTools = new Map<string, TranscriptToolCall>()
   const lines = raw.split("\n")
 
-  const close = () => { current = undefined; currentMessageId = undefined; thoughtSinceText = false }
+  const close = () => { current = undefined; currentMessageId = undefined; currentStep = undefined; thoughtSinceText = false }
+  // A record of another step closes the open message. A record that names no step joins it, and a
+  // message opened without one takes the first step it is given, which is how a file the bridge began
+  // before it recorded steps and finished after reads.
+  const enterStep = (step: string | undefined) => {
+    if (step === undefined) return
+    if (currentStep !== undefined && currentStep !== step) close()
+    currentStep = step
+  }
   const openAssistant = (i: number, at: string | undefined): TranscriptMessage => {
     if (!current) {
       current = { sourceId: `${identityPrefix}:${i}`, role: "assistant", text: "", tools: [], parts: [], ...(at ? { at } : {}) }
@@ -341,10 +359,12 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
       case "acp-note":
       case "acp-contract":
       case "title":
-      case "context-usage":
       case "compaction":
       case "agent-report":
       case "agent-instruction":
+        break
+      case "context-usage":
+        if (dialect?.usageEndsStep && currentStep === undefined) close()
         break
       case "user-message": {
         close()
@@ -391,6 +411,7 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
       case "assistant-text": {
         // Partial flushes of one agent message share a messageId → one bubble. A different message (or
         // none) after tools still continues the same assistant turn as a new text part.
+        enterStep(rec.step)
         const msg = openAssistant(i, rec.at)
         const mid = (rec as { messageId?: string }).messageId
         if (mid && mid === currentMessageId) {
@@ -405,6 +426,7 @@ export function projectAcpTranscript(raw: string, identityPrefix = "acp", userPr
         break
       }
       case "tool-call": {
+        enterStep(rec.step)
         const msg = openAssistant(i, rec.at)
         currentMessageId = undefined
         thoughtSinceText = false
