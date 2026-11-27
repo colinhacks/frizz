@@ -639,6 +639,21 @@ function TranscriptReadFailed({ error, retry }: { error: unknown; retry: () => P
     </div>
   )
 }
+// The row "load earlier" keeps under the reader's eye (see VirtualizedThreadTranscript's prepend restore).
+type PrependAnchor = { rowKey: string; viewportTop: number; index: number }
+
+// WHETHER THE EARLIER PAGE IS IN, read off the anchored row itself. A page lands ABOVE it, so its index
+// grows; a live push only trims the head, which shrinks it. The head row's key cannot tell the two apart:
+// until the first page is in, every push replaces the window whole (lib/transcriptPagination
+// reconcileLiveMessages) and each append during the fetch slid the head, which read as the page landing.
+// A trim moves the baseline down with it, so the page still reads as growth past it.
+function prependPageLanded(anchor: PrependAnchor, rows: readonly { key: string }[]): boolean {
+  const at = rows.findIndex((row) => row.key === anchor.rowKey)
+  if (at < 0) return false
+  if (anchor.index < 0 || at < anchor.index) anchor.index = at
+  return at > anchor.index
+}
+
 type VirtualThreadRow =
   // A zero-height sentinel that is ALWAYS row 0, so `getItemKey(0)` is a constant for the list's whole
   // life. That is load-bearing, not decoration — see the head-trim realignment below, which is only
@@ -1145,7 +1160,8 @@ function VirtualizedThreadTranscript({
 
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
-  const pendingPrependAnchorRef = useRef<{ rowKey: string; viewportTop: number } | null>(null)
+  // `index` is where that row stands in the list while the page is on its way (see prependPageLanded).
+  const pendingPrependAnchorRef = useRef<PrependAnchor | null>(null)
   // WHERE THE READER LEFT THIS THREAD, if they moved in it and it has not moved since (lib/transcriptScrollMemory).
   // Only a thread at rest opens there: one whose turn is in flight opens on its tail, where the live line or
   // the prompt waiting on the human is, wherever the reader was.
@@ -1259,6 +1275,9 @@ function VirtualizedThreadTranscript({
   const tailHeightRef = useRef(-1)
   const tailViewportRef = useRef(-1)
   const readerScrollUntilRef = useRef(0)
+  // When the reader last touched the scroller (a wheel, a touch, a key), for the restores that must yield
+  // to a gesture made AFTER they began rather than to one still in its 700ms window.
+  const readerInputAtRef = useRef(0)
   // The virtualizer's total-size box. Its height IS getTotalSize(), so observing it catches every way
   // the transcript can grow: a row inserted at its estimate, and each later measurement correction.
   const contentRef = useRef<HTMLDivElement>(null)
@@ -1300,6 +1319,7 @@ function VirtualizedThreadTranscript({
         pendingPrependAnchorRef.current = {
           rowKey,
           viewportTop: firstVisible.getBoundingClientRect().top - scrollerTop,
+          index: rowsRef.current.findIndex((row) => row.key === rowKey),
         }
       }
     }
@@ -1560,7 +1580,17 @@ function VirtualizedThreadTranscript({
     // First commit establishes the baseline. A reader AT the tail is tail-follow's to move; a prepend owns
     // the scroller through its own anchor; and the initial scroll-to-end must not be fought.
     if (previousKey === undefined || previousKey === firstMessageKey) return
-    if (!tailReadyRef.current || followingTailRef.current || pendingPrependAnchorRef.current) return
+    if (!tailReadyRef.current || followingTailRef.current) return
+    // A trim while an earlier page is on its way holds the row that page will be restored around, at the
+    // place the reader has it now (the scroll listener keeps that current). Nothing held them through it
+    // until 2026-11-28: the prepend owned the scroller from the moment the page was asked for, so each
+    // append during the fetch slid the transcript up under the reader. Once the page is in, it is the
+    // prepend restore's.
+    const pending = pendingPrependAnchorRef.current
+    if (pending) {
+      if (!prependPageLanded(pending, rowsRef.current)) alignToAnchor(pending)
+      return
+    }
     const anchor = readerAnchorRef.current
     if (!anchor) return
     // Deliberately NO scroller claim here, unlike the pin move. A trim lands on EVERY append once the
@@ -1741,11 +1771,27 @@ function VirtualizedThreadTranscript({
   // the first commit, against rows still at their estimates, was undone by the second, and the reader
   // was shown a frame ~1,800px further down the page (a 250-step transcript, 2026-10-14). The frames
   // after paint then hold it while rows measured by the ResizeObserver settle.
-  const prependSettleRef = useRef<{ anchor: { rowKey: string; viewportTop: number }; frame: number } | null>(null)
+  //
+  // …UNTIL THE READER SCROLLS AGAIN. The page lands under a reader who is usually still wheeling up — the
+  // load is armed by reaching the top — and every alignment after the landing put the row back where it
+  // was, so each notch they wheeled was taken back on the next frame: the transcript stuttered 20px down
+  // and up for ten frames at every page boundary (transcriptScrollBack.e2e.test.ts, 2026-11-28). Once
+  // the page is in and the reader has moved since, the virtualizer's own correction keeps the rows above
+  // them in place as they measure, so the hold lets go. `landedAt` is when the restore first saw the page.
+  const prependSettleRef = useRef<{ anchor: { rowKey: string; viewportTop: number }; frame: number; landedAt: number | null } | null>(null)
+  const releasePrepend = useCallback((anchor: { rowKey: string; viewportTop: number }) => {
+    if (pendingPrependAnchorRef.current === anchor) pendingPrependAnchorRef.current = null
+    if (prependSettleRef.current) cancelAnimationFrame(prependSettleRef.current.frame)
+    prependSettleRef.current = null
+  }, [])
   useLayoutEffect(() => {
     const anchor = pendingPrependAnchorRef.current
     const scroller = transcriptRef.current
     if (!anchor || !scroller || loadingEarlier) return
+    const landed = prependPageLanded(anchor, rows)
+    const settling = prependSettleRef.current?.anchor === anchor ? prependSettleRef.current : null
+    const readerMovedSince = (since: number | null | undefined) => since != null && readerInputAtRef.current > since
+    if (readerMovedSince(settling?.landedAt)) return releasePrepend(anchor)
     // Whether the anchored row was on screen and needed no correction.
     const alignAnchor = (): boolean => {
       const anchoredRow = Array.from(scroller.querySelectorAll<HTMLElement>("[data-transcript-row-key]"))
@@ -1764,22 +1810,24 @@ function VirtualizedThreadTranscript({
       return false
     }
     alignAnchor()
-    if (prependSettleRef.current?.anchor === anchor) return
-    // Then every frame until the row has held still for two frames running (at most ten).
+    if (settling) {
+      if (landed && settling.landedAt === null) settling.landedAt = performance.now()
+      return
+    }
+    // Then every frame until the row has held still for two frames running (at most ten), counting only
+    // frames after the page is in: the loading flag can clear a task before the rows it fetched commit.
     let steady = 0
     let frames = 0
     const settle = () => {
       if (!aliveRef.current) return
-      steady = alignAnchor() ? steady + 1 : 0
+      const landedAt = prependSettleRef.current?.landedAt
+      if (readerMovedSince(landedAt)) return releasePrepend(anchor)
+      steady = alignAnchor() && landedAt != null ? steady + 1 : 0
       frames++
-      if (steady >= 2 || frames >= 10) {
-        if (pendingPrependAnchorRef.current === anchor) pendingPrependAnchorRef.current = null
-        prependSettleRef.current = null
-        return
-      }
+      if (steady >= 2 || frames >= 10) return releasePrepend(anchor)
       if (prependSettleRef.current) prependSettleRef.current.frame = requestAnimationFrame(settle)
     }
-    prependSettleRef.current = { anchor, frame: requestAnimationFrame(settle) }
+    prependSettleRef.current = { anchor, frame: requestAnimationFrame(settle), landedAt: landed ? performance.now() : null }
   })
   useEffect(() => () => { if (prependSettleRef.current) cancelAnimationFrame(prependSettleRef.current.frame) }, [])
 
@@ -1806,6 +1854,14 @@ function VirtualizedThreadTranscript({
     if (!scroller) return
     const inspect = () => {
       if (!aliveRef.current) return
+      // WHILE THE PAGE IS ON ITS WAY, THE ANCHOR MOVES WITH THE READER. It was read when the load was asked
+      // for, and the reader keeps wheeling for as long as the fetch takes, so restoring that reading put
+      // them back where they asked from: every notch wheeled during the fetch, undone in one jump.
+      const pending = pendingPrependAnchorRef.current
+      if (pending && !prependPageLanded(pending, rowsRef.current)) {
+        const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(pending.rowKey)}"]`)
+        if (row) pending.viewportTop = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+      }
       syncTailFollow()
       const gate = earlierLoadGate({
         armed: nearTopLoadArmedRef.current,
@@ -1822,7 +1878,8 @@ function VirtualizedThreadTranscript({
     // that happens to be growing at that moment can't claim the movement and haul them back down.
     const markReaderIntent = () => {
       readerMovedRef.current = true
-      readerScrollUntilRef.current = performance.now() + READER_GESTURE_MS
+      readerInputAtRef.current = performance.now()
+      readerScrollUntilRef.current = readerInputAtRef.current + READER_GESTURE_MS
       requestAnimationFrame(inspect)
     }
     const markKeyboardIntent = (event: KeyboardEvent) => {
