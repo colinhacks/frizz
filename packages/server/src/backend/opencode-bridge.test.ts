@@ -511,6 +511,20 @@ test("opencode transcript: each model step is a message of its own, as a Claude 
   assert.deepEqual(shapes(projectAntigravityTranscript(jsonl(stepTurn(false)), "antigravity:s", opencodeToolCards)), one)
 })
 
+test("opencode transcript: a thought before each step still joins the turn's one reasoning block, while each step keeps its own message", () => {
+  // The bridge writes a step's reasoning before its text and calls, and names no step on it.
+  const withThoughts = (named: boolean) => stepTurn(named).flatMap((x, i, all) => {
+    const opensStep = (x.kind === "assistant-text" || x.kind === "tool-call") && (i === 0 || all[i - 1]!.kind === "context-usage" || all[i - 1]!.kind === "turn-start")
+    return opensStep ? [{ kind: "reasoning", at: x.at, text: `thinking before ${x.kind === "tool-call" ? x.id : x.text}` }, x] : [x]
+  })
+  for (const named of [true, false]) {
+    const msgs = projectOpencodeTranscript(jsonl(withThoughts(named)), "opencode:s", opencodeToolCards)
+    assert.deepEqual(msgs.map((m) => m.kind === "reasoning" ? "reasoning" : m.role), ["user", "reasoning", "assistant", "assistant", "assistant"], `named: ${named}`)
+    assert.equal(msgs[1]!.text, "thinking before Looking.\n\nthinking before c3\n\nthinking before All good.", "every step's thought, in one block")
+    assert.deepEqual(shapes(msgs.filter((m) => m.kind !== "reasoning")).slice(1), [["assistant", ["completed", "completed"], "Looking."], ["assistant", ["completed"], ""], ["assistant", [], "All good."]])
+  }
+})
+
 test("opencode transcript: a usage record never splits a step that names itself, and a step the bridge began unnamed keeps its calls", () => {
   const recs = [
     { kind: "turn-start", at: "2026-11-27T10:00:00.000Z" },
