@@ -1876,13 +1876,15 @@ function VirtualizedThreadTranscript({
         overlay={jumpOverlay}
         hidden={atEnd}
         onJump={() => {
-          // Release any opening landing or anchor-restore hold in flight: Jump to latest is portalled into a
-          // sibling of the scroller and is a button onTranscriptControl ignores, so an active 900ms openAtRest
-          // hold otherwise overwrote the jump back to the landing offset on the next frame. Jump with `instant`
-          // rather than `smooth`: across unmeasured virtual rows, each intermediate row resizing from its 108px
-          // estimate changes scrollHeight and makes virtual-core's reconcileScroll re-issue scrollTo({ behavior:
-          // "smooth" }), which in Chromium/WebKit resets the smooth-scroll ease-in velocity to 0 on every row
-          // (measured on a 183-message thread: 46 scrollTo restarts and a 4.1s staggered crawl).
+          // JUMP TO LATEST TAKES THE READER THERE AT ONCE, and outranks any hold in flight: the opening landing,
+          // an anchor restore, and a "Load earlier" page still landing, whose restore would otherwise put the
+          // reader back on the row they had at the top once it arrived. The button is
+          // portalled outside the scroller, so no reader-intent listener sees the press, and the opening
+          // landing's 900ms hold put the scroller back on the landing the next frame: a press while a thread
+          // at rest was opening did nothing. It was a SMOOTH jump until 2026-11-27, and a smooth scroll across
+          // rows still at their estimates restarts from rest each time one measures, because virtual-core's
+          // reconcile re-aims at the new end with another smooth `scrollTo`: 59-65 restarts and 5.5-6s to
+          // cross a 16,000px folded thread on a stack (colinhacks/frizz#85; openLanding.e2e.test.ts pins both).
           cancelAnimationFrame(openHoldFrameRef.current)
           openHoldFrameRef.current = 0
           openLandRef.current = null
