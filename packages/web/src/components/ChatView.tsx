@@ -1145,7 +1145,8 @@ function VirtualizedThreadTranscript({
 
   // The row a "load earlier" must keep under the reader's eye, from the moment it is asked for until the
   // prepend's layout effect has put it back (see rangeExtractor below and the effect that consumes it).
-  const pendingPrependAnchorRef = useRef<{ rowKey: string; viewportTop: number } | null>(null)
+  // `headKey` is the first message row when it was asked for: the page has landed once that changes.
+  const pendingPrependAnchorRef = useRef<{ rowKey: string; viewportTop: number; headKey?: string } | null>(null)
   // WHERE THE READER LEFT THIS THREAD, if they moved in it and it has not moved since (lib/transcriptScrollMemory).
   // Only a thread at rest opens there: one whose turn is in flight opens on its tail, where the live line or
   // the prompt waiting on the human is, wherever the reader was.
@@ -1259,6 +1260,9 @@ function VirtualizedThreadTranscript({
   const tailHeightRef = useRef(-1)
   const tailViewportRef = useRef(-1)
   const readerScrollUntilRef = useRef(0)
+  // When the reader last touched the scroller (a wheel, a touch, a key), for the restores that must yield
+  // to a gesture made AFTER they began rather than to one still in its 700ms window.
+  const readerInputAtRef = useRef(0)
   // The virtualizer's total-size box. Its height IS getTotalSize(), so observing it catches every way
   // the transcript can grow: a row inserted at its estimate, and each later measurement correction.
   const contentRef = useRef<HTMLDivElement>(null)
@@ -1300,6 +1304,7 @@ function VirtualizedThreadTranscript({
         pendingPrependAnchorRef.current = {
           rowKey,
           viewportTop: firstVisible.getBoundingClientRect().top - scrollerTop,
+          headKey: firstMessageKeyRef.current,
         }
       }
     }
@@ -1741,11 +1746,27 @@ function VirtualizedThreadTranscript({
   // the first commit, against rows still at their estimates, was undone by the second, and the reader
   // was shown a frame ~1,800px further down the page (a 250-step transcript, 2026-10-14). The frames
   // after paint then hold it while rows measured by the ResizeObserver settle.
-  const prependSettleRef = useRef<{ anchor: { rowKey: string; viewportTop: number }; frame: number } | null>(null)
+  //
+  // …UNTIL THE READER SCROLLS AGAIN. The page lands under a reader who is usually still wheeling up — the
+  // load is armed by reaching the top — and every alignment after the landing put the row back where it
+  // was, so each notch they wheeled was taken back on the next frame: the transcript stuttered 20px down
+  // and up for ten frames at every page boundary (transcriptScrollBack.e2e.test.ts, 2026-11-28). Once
+  // the page is in and the reader has moved since, the virtualizer's own correction keeps the rows above
+  // them in place as they measure, so the hold lets go. `landedAt` is when the restore first saw the page.
+  const prependSettleRef = useRef<{ anchor: { rowKey: string; viewportTop: number }; frame: number; landedAt: number | null } | null>(null)
+  const releasePrepend = useCallback((anchor: { rowKey: string; viewportTop: number }) => {
+    if (pendingPrependAnchorRef.current === anchor) pendingPrependAnchorRef.current = null
+    if (prependSettleRef.current) cancelAnimationFrame(prependSettleRef.current.frame)
+    prependSettleRef.current = null
+  }, [])
   useLayoutEffect(() => {
     const anchor = pendingPrependAnchorRef.current
     const scroller = transcriptRef.current
     if (!anchor || !scroller || loadingEarlier) return
+    const landed = firstMessageKey !== anchor.headKey
+    const settling = prependSettleRef.current?.anchor === anchor ? prependSettleRef.current : null
+    const readerMovedSince = (since: number | null | undefined) => since != null && readerInputAtRef.current > since
+    if (readerMovedSince(settling?.landedAt)) return releasePrepend(anchor)
     // Whether the anchored row was on screen and needed no correction.
     const alignAnchor = (): boolean => {
       const anchoredRow = Array.from(scroller.querySelectorAll<HTMLElement>("[data-transcript-row-key]"))
@@ -1764,22 +1785,24 @@ function VirtualizedThreadTranscript({
       return false
     }
     alignAnchor()
-    if (prependSettleRef.current?.anchor === anchor) return
-    // Then every frame until the row has held still for two frames running (at most ten).
+    if (settling) {
+      if (landed && settling.landedAt === null) settling.landedAt = performance.now()
+      return
+    }
+    // Then every frame until the row has held still for two frames running (at most ten), counting only
+    // frames after the page is in: the loading flag can clear a task before the rows it fetched commit.
     let steady = 0
     let frames = 0
     const settle = () => {
       if (!aliveRef.current) return
-      steady = alignAnchor() ? steady + 1 : 0
+      const landedAt = prependSettleRef.current?.landedAt
+      if (readerMovedSince(landedAt)) return releasePrepend(anchor)
+      steady = alignAnchor() && landedAt != null ? steady + 1 : 0
       frames++
-      if (steady >= 2 || frames >= 10) {
-        if (pendingPrependAnchorRef.current === anchor) pendingPrependAnchorRef.current = null
-        prependSettleRef.current = null
-        return
-      }
+      if (steady >= 2 || frames >= 10) return releasePrepend(anchor)
       if (prependSettleRef.current) prependSettleRef.current.frame = requestAnimationFrame(settle)
     }
-    prependSettleRef.current = { anchor, frame: requestAnimationFrame(settle) }
+    prependSettleRef.current = { anchor, frame: requestAnimationFrame(settle), landedAt: landed ? performance.now() : null }
   })
   useEffect(() => () => { if (prependSettleRef.current) cancelAnimationFrame(prependSettleRef.current.frame) }, [])
 
@@ -1806,6 +1829,14 @@ function VirtualizedThreadTranscript({
     if (!scroller) return
     const inspect = () => {
       if (!aliveRef.current) return
+      // WHILE THE PAGE IS ON ITS WAY, THE ANCHOR MOVES WITH THE READER. It was read when the load was asked
+      // for, and the reader keeps wheeling for as long as the fetch takes, so restoring that reading put
+      // them back where they asked from: every notch wheeled during the fetch, undone in one jump.
+      const pending = pendingPrependAnchorRef.current
+      if (pending && firstMessageKeyRef.current === pending.headKey) {
+        const row = scroller.querySelector<HTMLElement>(`[data-transcript-row-key="${CSS.escape(pending.rowKey)}"]`)
+        if (row) pending.viewportTop = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+      }
       syncTailFollow()
       const gate = earlierLoadGate({
         armed: nearTopLoadArmedRef.current,
@@ -1822,7 +1853,8 @@ function VirtualizedThreadTranscript({
     // that happens to be growing at that moment can't claim the movement and haul them back down.
     const markReaderIntent = () => {
       readerMovedRef.current = true
-      readerScrollUntilRef.current = performance.now() + READER_GESTURE_MS
+      readerInputAtRef.current = performance.now()
+      readerScrollUntilRef.current = readerInputAtRef.current + READER_GESTURE_MS
       requestAnimationFrame(inspect)
     }
     const markKeyboardIntent = (event: KeyboardEvent) => {
