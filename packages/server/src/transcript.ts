@@ -5022,10 +5022,12 @@ export function pageProjectedTranscript(
   let bytes = 0
   while (start > boundary && anchor - start < maxItems) {
     const nextBytes = messageBytes(messages[start - 1])
-    // One canonical message is atomic. Fail explicitly instead of truncating its text/tools or silently
-    // violating the response ceiling; ordinary provider output is well below this defensive bound.
-    if (nextBytes > maxBytes) throw new Error("one transcript message exceeds the earlier-page byte limit")
-    if (bytes + nextBytes > maxBytes) break
+    // One canonical message is atomic, so it is never cut. A page always carries at least one, the same
+    // floor the latest window keeps (byteBoundedStart): a message past the ceiling goes out as a page of
+    // its own. OpenCode and ACP project a whole turn's tool calls onto one assistant message, so a model
+    // that runs hundreds of them without writing text passes this bound. Throwing here left that message,
+    // and everything before it, unreachable (2026-11-27: 311 tool calls, about 1.6 MB).
+    if (start < anchor && bytes + nextBytes > maxBytes) break
     start--
     bytes += nextBytes
   }
