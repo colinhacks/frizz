@@ -3882,17 +3882,17 @@ export function createRouter(ctx: AppContext) {
     }),
 
     // The composer's `/` typeahead asks the thread's HARNESS for its skills — the broker daemon's
-    // `supportedCommands()` for Claude, the app-server's `skills/list` for Codex. Frizz owns no skill
-    // discovery of its own, on purpose: the harness already resolves plugins, project and global roots
-    // and enable state, and a frizz-side scan could only drift from what the session actually loaded.
-    // Unavailability (no live daemon, a legacy row, an old broker) THROWS with a reason; the web treats
-    // any failure as "no suggestions" rather than surfacing an error.
+    // `supportedCommands()` for Claude, the app-server's `skills/list` for Codex, `/api/skill` for
+    // OpenCode. Frizz owns no skill discovery of its own, on purpose: the harness already resolves
+    // plugins, project and global roots and enable state, and a frizz-side scan could only drift from
+    // what the session actually loaded. Unavailability (no live daemon, a legacy row, an old broker)
+    // THROWS with a reason; the web treats any failure as "no suggestions" rather than surfacing an error.
     //
     // The new-thread box names a BACKEND instead (colinhacks/frizz#79): there is no thread to ask, so it
     // asks what a new thread of that agent in this project would get. Claude's skills probe is a session
-    // started the way a worker is, Codex's `skills/list` takes the project's directory. The other agents
-    // list commands only for a live session, so the box gets nothing rather than another thread's list,
-    // which could name what this agent does not have.
+    // started the way a worker is, Codex's `skills/list` and OpenCode's `/api/skill` take the project's
+    // directory. The other agents list commands only for a live session, so the box gets nothing rather
+    // than another thread's list, which could name what this agent does not have.
     threadSkills: query({
       input: ThreadSkillsInput,
       output: ThreadSkillsResult,
@@ -3907,6 +3907,9 @@ export function createRouter(ctx: AppContext) {
           } else if (input.backend === "codex") {
             if (!ctx.codexAppServer) throw new Error("This server has no Codex app-server to ask for skills")
             skills = await ctx.codexAppServer.listSkillsForCwd(ctx.project.dir)
+          } else if (input.backend === "opencode") {
+            if (!ctx.opencodeBridge) throw new Error("This server has no OpenCode bridge to ask for skills")
+            skills = await ctx.opencodeBridge.listSkills(ctx.project.dir)
           }
           return { skills: skills.sort((a, b) => a.name.localeCompare(b.name)) }
         }
@@ -3914,7 +3917,10 @@ export function createRouter(ctx: AppContext) {
         if (!row) throw new Error(`thread ${input.slug} has no session to ask for skills`)
         let skills: ThreadSkill[]
         if (row.backend === "opencode") {
-          skills = [] // OpenCode finds its own skills, and has no route that lists them for a session
+          if (!ctx.opencodeBridge) {
+            throw new Error("This OpenCode thread has no bridge to ask for skills")
+          }
+          skills = await ctx.opencodeBridge.listSkills(ctx.project.dir, row.session_id)
         } else if (row.backend === "antigravity") {
           // Antigravity's slash commands (`/goal`, `/schedule`, `/plan`…), which it lists for a live session.
           skills = ctx.antigravityBridge?.commands(input.slug, row.session_id) ?? []
