@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -8,12 +8,14 @@ import Database from "../sqlite.ts"
 import { createInteractionStore, type InteractionStore } from "../interaction-store.ts"
 import { newTailState } from "../tailer.ts"
 import { opencodeToolCards } from "../transcript.ts"
-import { OPENCODE_CONTRACT_KEY, OpencodeSessionStream, createOpencodeBridge, opencodeFormAnswer, opencodeInboxId, type OpencodeBridge } from "./opencode-bridge.ts"
+import { OPENCODE_CONTRACT_KEY, OpencodeSessionStream, createOpencodeBridge, isOpencodeSkillAttachmentError, opencodeFormAnswer, opencodeInboxId, type OpencodeBridge } from "./opencode-bridge.ts"
+import { OpencodeHttpError } from "./opencode-client.ts"
 import { OpencodeHub } from "./opencode-hub.ts"
 import { ensureOpencodeService, opencodeVersionAtLeast } from "./opencode-service.ts"
 import { createOpencodeBackend, opencodeTranscriptPath, parseOpencodeSubAgentLine, projectOpencodeTranscript } from "./opencode-transcript.ts"
-import { opencodeKeptRules, opencodeModeOf, opencodeSessionRules, opencodeWildcard, parseOpencodeEvent } from "./opencode-types.ts"
-import { parseAcpRecord } from "./acp-transcript.ts"
+import { opencodeKeptRules, opencodeModeOf, opencodeSessionRules, opencodeSkillAllowed, opencodeSkillSource, opencodeSkillsOf, opencodeSlashSkills, opencodeWildcard, parseOpencodeEvent } from "./opencode-types.ts"
+import { parseAcpRecord, projectAcpTranscript } from "./acp-transcript.ts"
+import { projectAntigravityTranscript } from "./antigravity-transcript.ts"
 // @ts-expect-error a plain .mjs fixture
 import { startFakeOpencode } from "./opencode.fixtures/fake-opencode-server.mjs"
 
@@ -291,6 +293,12 @@ test("opencode-bridge: a stream dropped mid-turn is reconciled from the session'
     assert.equal(recs.filter((x) => x.kind === "assistant-text").map((x) => x.text).join(""), "after the gap")
     assert.equal(recs.find((x) => x.kind === "turn-end")!.finalText, "after the gap")
     assert.equal(recs.filter((x) => x.kind === "user-message").length, 1)
+    // Written from the session's messages, each record still names the step it came from.
+    const steps = r.fake.sessions.get(opencodeSessionId).messages.filter((m: any) => m.type === "assistant").map((m: any) => m.id)
+    const call = recs.find((x) => x.kind === "tool-call")!
+    const text = recs.filter((x) => x.kind === "assistant-text")
+    assert.ok(steps.includes(call.step), `the call names its step: ${call.step}`)
+    assert.ok(text.every((x) => x.step === text[0]!.step) && steps.includes(text[0]!.step) && text[0]!.step !== call.step, "the answer names its own step")
   } finally { await teardown(r) }
 })
 
@@ -451,6 +459,11 @@ test("opencode recorded stream: OpenCode 2.2.5's own events fold to the expected
   assert.match(steered.recs[5].text, /WOMBAT/)
   assert.equal(steered.recs[2].name, "Bash")
   assert.match(steered.recs.at(-1).finalText, /WOMBAT/)
+  // OpenCode's own events name each call's and each text's step, and the drawer gives each step a message.
+  const stepped = steered.recs.filter((x: any) => x.kind === "tool-call" || x.kind === "assistant-text")
+  assert.deepEqual(stepped.map((x: any) => x.step), ["msg_1b2f21d51001uJgnn3qieOv7Wi", "msg_1b2f25174001Oc8G2uYe14k2TH", "msg_1b2f28508001NLBU80cxGxTUE3"])
+  const drawn = projectOpencodeTranscript(readFileSync(steered.path, "utf8"), "opencode:s", opencodeToolCards)
+  assert.deepEqual(drawn.map((m) => [m.role, m.tools.length, m.text.includes("WOMBAT")]), [["user", 0, false], ["assistant", 1, false], ["user", 0, true], ["assistant", 1, false], ["assistant", 0, true]])
   const s = newTailState("t", "s", "/x")
   const backend = createOpencodeBackend({ stateDir: dir })
   for (const line of readFileSync(steered.path, "utf8").split("\n")) backend.foldLine(s, line)
@@ -466,6 +479,67 @@ test("opencode recorded stream: OpenCode 2.2.5's own events fold to the expected
   const parent = fold("12qI3zEC")
   const agent = projectOpencodeTranscript(readFileSync(parent.path, "utf8"), "opencode:p", opencodeToolCards).flatMap((m) => m.tools).find((t) => t.name === "Agent")!
   assert.equal(agent.output, "CHILDOK")
+})
+
+// One turn of three model steps, as the bridge writes it: a lead-in and two calls, one call, then the answer.
+const stepTurn = (named: boolean) => [
+  { kind: "user-message", at: "2026-11-27T10:00:00.000Z", text: "audit it", synthetic: false },
+  { kind: "turn-start", at: "2026-11-27T10:00:00.000Z" },
+  { kind: "assistant-text", at: "2026-11-27T10:00:01.000Z", text: "Looking.", final: false, messageId: "msg_a:0", ...(named ? { step: "msg_a" } : {}) },
+  { kind: "tool-call", at: "2026-11-27T10:00:01.000Z", id: "c1", name: "Read", input: { file_path: "/p/a.ts" }, ...(named ? { step: "msg_a" } : {}) },
+  { kind: "tool-call", at: "2026-11-27T10:00:01.000Z", id: "c2", name: "Read", input: { file_path: "/p/b.ts" }, ...(named ? { step: "msg_a" } : {}) },
+  { kind: "tool-result", at: "2026-11-27T10:00:02.000Z", id: "c1", text: "a" },
+  { kind: "tool-result", at: "2026-11-27T10:00:02.000Z", id: "c2", text: "b" },
+  { kind: "context-usage", at: "2026-11-27T10:00:02.000Z", tokens: 1000, window: 200000 },
+  { kind: "tool-call", at: "2026-11-27T10:00:03.000Z", id: "c3", name: "Bash", input: { command: "ls" }, ...(named ? { step: "msg_b" } : {}) },
+  { kind: "tool-result", at: "2026-11-27T10:00:03.000Z", id: "c3", text: "x" },
+  { kind: "context-usage", at: "2026-11-27T10:00:03.000Z", tokens: 1100, window: 200000 },
+  { kind: "assistant-text", at: "2026-11-27T10:00:04.000Z", text: "All good.", final: false, messageId: "msg_c:0", ...(named ? { step: "msg_c" } : {}) },
+  { kind: "context-usage", at: "2026-11-27T10:00:04.000Z", tokens: 1200, window: 200000 },
+  { kind: "turn-end", at: "2026-11-27T10:00:04.000Z", finalText: "All good.", successful: true },
+]
+const jsonl = (recs: object[]) => recs.map((x) => JSON.stringify(x)).join("\n") + "\n"
+const shapes = (msgs: ReturnType<typeof projectOpencodeTranscript>) => msgs.map((m) => [m.role, m.tools.map((t) => t.status), m.text])
+
+test("opencode transcript: each model step is a message of its own, as a Claude turn's API messages are", () => {
+  const want = [["user", [], "audit it"], ["assistant", ["completed", "completed"], "Looking."], ["assistant", ["completed"], ""], ["assistant", [], "All good."]]
+  assert.deepEqual(shapes(projectOpencodeTranscript(jsonl(stepTurn(true)), "opencode:s", opencodeToolCards)), want, "by the step each record names")
+  assert.deepEqual(shapes(projectOpencodeTranscript(jsonl(stepTurn(true).filter((x) => x.kind !== "context-usage")), "opencode:s", opencodeToolCards)), want, "the step names alone are enough")
+  assert.deepEqual(shapes(projectOpencodeTranscript(jsonl(stepTurn(false)), "opencode:s", opencodeToolCards)), want, "a file written before steps were named splits at each step's usage record")
+  // ACP and Antigravity write usage records too, on the agent's own schedule: their turn stays one message.
+  const one = [["user", [], "audit it"], ["assistant", ["completed", "completed", "completed"], "Looking.\n\nAll good."]]
+  assert.deepEqual(shapes(projectAcpTranscript(jsonl(stepTurn(false)), "acp:s")).map(([role, tools]) => [role, tools]), one.map(([role, tools]) => [role, tools]))
+  assert.deepEqual(shapes(projectAntigravityTranscript(jsonl(stepTurn(false)), "antigravity:s", opencodeToolCards)), one)
+})
+
+test("opencode transcript: a thought before each step still joins the turn's one reasoning block, while each step keeps its own message", () => {
+  // The bridge writes a step's reasoning before its text and calls, and names no step on it.
+  const withThoughts = (named: boolean) => stepTurn(named).flatMap((x, i, all) => {
+    const opensStep = (x.kind === "assistant-text" || x.kind === "tool-call") && (i === 0 || all[i - 1]!.kind === "context-usage" || all[i - 1]!.kind === "turn-start")
+    return opensStep ? [{ kind: "reasoning", at: x.at, text: `thinking before ${x.kind === "tool-call" ? x.id : x.text}` }, x] : [x]
+  })
+  for (const named of [true, false]) {
+    const msgs = projectOpencodeTranscript(jsonl(withThoughts(named)), "opencode:s", opencodeToolCards)
+    assert.deepEqual(msgs.map((m) => m.kind === "reasoning" ? "reasoning" : m.role), ["user", "reasoning", "assistant", "assistant", "assistant"], `named: ${named}`)
+    assert.equal(msgs[1]!.text, "thinking before Looking.\n\nthinking before c3\n\nthinking before All good.", "every step's thought, in one block")
+    assert.deepEqual(shapes(msgs.filter((m) => m.kind !== "reasoning")).slice(1), [["assistant", ["completed", "completed"], "Looking."], ["assistant", ["completed"], ""], ["assistant", [], "All good."]])
+  }
+})
+
+test("opencode transcript: a usage record never splits a step that names itself, and a step the bridge began unnamed keeps its calls", () => {
+  const recs = [
+    { kind: "turn-start", at: "2026-11-27T10:00:00.000Z" },
+    // Written by a bridge that did not name steps, then (after a restart in the same step) by one that does.
+    { kind: "tool-call", at: "2026-11-27T10:00:01.000Z", id: "c1", name: "Bash", input: { command: "a" } },
+    { kind: "tool-call", at: "2026-11-27T10:00:01.000Z", id: "c2", name: "Bash", input: { command: "b" }, step: "msg_a" },
+    { kind: "context-usage", at: "2026-11-27T10:00:02.000Z", tokens: 1000 },
+    // A usage record inside a named step leaves its message open.
+    { kind: "tool-call", at: "2026-11-27T10:00:02.000Z", id: "c3", name: "Bash", input: { command: "c" }, step: "msg_a" },
+    { kind: "tool-call", at: "2026-11-27T10:00:03.000Z", id: "c4", name: "Bash", input: { command: "d" }, step: "msg_b" },
+  ]
+  const msgs = projectOpencodeTranscript(jsonl(recs), "opencode:s", opencodeToolCards)
+  assert.deepEqual(msgs.map((m) => m.tools.map((t) => t.command)), [["a", "b", "c"], ["d"]])
+  assert.deepEqual(msgs.map((m) => m.sourceId), ["opencode:s:1", "opencode:s:5"], "each message keeps the line it opened on, so a reread draws the same rows")
 })
 
 test("opencode-service: a healthy registration is used as it is; a missing one is started and waited for; a dead start fails within the wait", async () => {
@@ -571,12 +645,19 @@ test("opencode-bridge: OpenCode settings, Frizz's auto, adds no session rules an
 })
 
 test("opencode-bridge: when OpenCode's agents cannot be read, a mode that adds rules adds none, and says so", async () => {
-  const r = await rig({ configRules: [DENY_ME], noAgentRoute: true })
+  const r = await rig({
+    configRules: [DENY_ME, { action: "skill", resource: "denied-skill", effect: "deny" }],
+    skills: [{ id: "denied-skill", name: "denied-skill", description: "Denied", path: "/builtin/denied.md", content: "# Denied" }],
+    noAgentRoute: true,
+  })
   try {
-    await spawn(r, "[shell:echo DENYME][say:over]")
+    assert.deepEqual(await r.bridge.listSkills(r.stateDir), [], "without the person's agent rules, no skills are offered")
+    await spawn(r, "/denied-skill [shell:echo DENYME][say:over]")
     await until(() => ends(r) === 1)
     const create = r.fake.requests.find((q: any) => q.method === "POST" && q.path === "/api/session")
     assert.deepEqual(create.body.permissions, [], "never a bare allow-all without the person's denies after it")
+    const prompt = r.fake.requests.find((q: any) => q.path.endsWith("/prompt"))
+    assert.equal(prompt.body.skills, undefined, "without the person's agent rules, no skill is attached")
     assert.equal(records(r).find((x) => x.kind === "tool-result")!.failed, true)
     assert.ok(records(r).some((x) => x.kind === "opencode-note" && /could not read OpenCode's agents/.test(x.text)))
   } finally { await teardown(r) }
@@ -628,4 +709,153 @@ test("opencode-bridge: a card for a call the bridge never saw reads the whole co
       }
     } finally { await teardown(r) }
   }
+})
+
+test("opencode-skills: listSkills maps canonical ids and sources, filters denied skills, and attaches permitted /name tokens", async () => {
+  const r = await rig(
+    {
+      configRules: [
+        { action: "skill", resource: "internal-*", effect: "deny" },
+        { action: "skill", resource: "internal-public", effect: "allow" },
+      ],
+    },
+    { contract: "THE WORKER CONTRACT mentioning /compact-doc must not trigger a skill" },
+  )
+  try {
+    // OpenCode reports resolved paths, and a thread's directory exists.
+    const stateDir = realpathSync(r.stateDir)
+    const projectDir = join(stateDir, "repo")
+    const nestedDir = join(projectDir, "packages", "pkg-a")
+    mkdirSync(nestedDir, { recursive: true })
+    r.fake.skills.push(
+      { id: "opencode", name: "OpenCode", description: "Built-in OpenCode guide", path: "/builtin/opencode.md", content: "# OpenCode" },
+      { id: "browser", name: "browser", description: "Denied built-in browser skill", path: "/builtin/browser.md", content: "# Browser" },
+      { id: "compact-doc", name: "compact-doc", description: "Compact and update\n  a doc", path: join(projectDir, ".claude/skills/compact-doc/SKILL.md"), content: "# Compact" },
+      { id: "internal-secret", name: "internal-secret", description: "Denied by config", path: join(projectDir, ".opencode/skills/internal-secret/SKILL.md"), content: "# Secret" },
+      { id: "internal-public", name: "internal-public", description: "Carved-out exception", path: join(projectDir, ".opencode/skills/internal-public/SKILL.md"), content: "# Public" },
+      { id: "git-release", name: "Git Release", description: "Prepare a release", path: join(stateDir, ".claude/skills/git-release/SKILL.md"), content: "# Release" },
+      { id: "use-railway", name: "use-railway", description: "Operate Railway", path: join(stateDir, ".config/opencode/skills/use-railway/SKILL.md"), content: "# Railway" },
+      { id: "company-sec", name: "company-sec", description: "External catalog", path: "/opt/company-skills/company-sec/SKILL.md", content: "# Sec" },
+    )
+
+    // 1. Listing uses `id` (not the frontmatter display `name`), collapses multiline descriptions,
+    //    classifies project (including from a nested package directory), global user, built-in and external
+    //    roots, and drops skills denied by STILL_DENIED (`browser`) or the person's config (`internal-secret`)
+    //    while keeping carved-out exceptions (`internal-public`).
+    const listed = await r.bridge.listSkills(nestedDir)
+    assert.deepEqual(listed, [
+      { name: "opencode", description: "Built-in OpenCode guide", source: "builtin" },
+      { name: "compact-doc", description: "Compact and update a doc", source: "project" },
+      { name: "internal-public", description: "Carved-out exception", source: "project" },
+      { name: "git-release", description: "Prepare a release", source: "user" },
+      { name: "use-railway", description: "Operate Railway", source: "user" },
+      { name: "company-sec", description: "External catalog" },
+    ])
+
+    // 2. A plain prompt with no `/token` makes no `/api/skill` request and attaches no skills, even when
+    //    the worker contract itself mentions `/compact-doc`.
+    const skillRequestsBefore = r.fake.requests.filter((q: any) => q.path === "/api/skill").length
+    const { opencodeSessionId } = await r.bridge.spawnDispatch({
+      threadSlug: "t1", sessionId: "s1", cwd: projectDir, mode: "bypassPermissions",
+      model: { providerID: "opencode", id: "big-pickle" },
+      prompt: "Check /Users/colin/src/foo.ts and https://example.com/compact-doc [say:plain]",
+    })
+    await until(() => ends(r) === 1)
+    assert.equal(r.fake.requests.filter((q: any) => q.path === "/api/skill").length, skillRequestsBefore)
+    const firstPrompt = r.fake.requests.find((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)
+    assert.equal(firstPrompt.body.skills, undefined)
+
+    // 3. A follow-up naming `/compact-doc`, `/git-release,` and `/internal-public` attaches those
+    //    canonical skill ids, while ignoring `/browser`, `/internal-secret` (both denied) and `/not-a-skill`.
+    await r.bridge.followUp({
+      threadSlug: "t1", sessionId: "s1", cwd: projectDir, opencodeSessionId, mode: "bypassPermissions",
+      text: "/compact-doc docs/a.md then /git-release, /internal-public /browser /internal-secret /not-a-skill [say:skilled]",
+      deliveryId: "d-skill", delivery: "steer",
+    })
+    await until(() => ends(r) === 2)
+    const secondPrompt = r.fake.requests.filter((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)[1]
+    assert.deepEqual(secondPrompt.body.skills, [{ id: "compact-doc" }, { id: "git-release" }, { id: "internal-public" }])
+
+    // 4. If a cached skill is deleted on disk before the next send, OpenCode's skill-attachment failure
+    //    (`field: "skills"`) drops the cache and retries as a plain prompt so the user's message still lands.
+    const idx = r.fake.skills.findIndex((s: any) => s.id === "compact-doc")
+    r.fake.skills.splice(idx, 1)
+    await r.bridge.followUp({
+      threadSlug: "t1", sessionId: "s1", cwd: projectDir, opencodeSessionId, mode: "bypassPermissions",
+      text: "/compact-doc docs/b.md [say:recovered]",
+      deliveryId: "d-deleted", delivery: "steer",
+    })
+    await until(() => ends(r) === 3)
+    const promptCalls = r.fake.requests.filter((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)
+    assert.equal(promptCalls.length, 4, "first attempt with deleted skill + plain retry")
+    assert.deepEqual(promptCalls[2].body.skills, [{ id: "compact-doc" }])
+    assert.equal(promptCalls[3].body.skills, undefined)
+  } finally { await teardown(r) }
+})
+
+test("opencode-skills: a service without the skill route lists nothing and still sends the prompt, words unchanged", async () => {
+  const r = await rig({ noSkillRoute: true, skills: [{ id: "compact-doc", name: "compact-doc", path: "/x/.claude/skills/compact-doc/SKILL.md", content: "" }] })
+  try {
+    const projectDir = join(r.stateDir, "repo")
+    // The router turns this rejection into an empty `/` menu; it is never an error card.
+    await assert.rejects(r.bridge.listSkills(projectDir))
+    const text = "/compact-doc docs/a.md [say:plain]"
+    const { opencodeSessionId } = await r.bridge.spawnDispatch({
+      threadSlug: "t1", sessionId: "s1", cwd: projectDir, mode: "bypassPermissions",
+      model: { providerID: "opencode", id: "big-pickle" }, prompt: text,
+    })
+    await until(() => ends(r) === 1)
+    const prompts = r.fake.requests.filter((q: any) => q.path === `/api/session/${opencodeSessionId}/prompt`)
+    assert.equal(prompts.length, 1)
+    assert.equal(prompts[0].body.skills, undefined)
+    assert.ok(prompts[0].body.text.endsWith(text))
+  } finally { await teardown(r) }
+})
+
+test("opencode-skills-helpers: opencodeSkillSource, opencodeSkillAllowed and isOpencodeSkillAttachmentError handle edge cases", () => {
+  const env = { HOME: "/Users/alice" }
+  assert.equal(opencodeSkillSource("/builtin/report.md", "/Users/alice/git/app", env), "builtin")
+  assert.equal(opencodeSkillSource("/Users/alice/.claude/skills/a/SKILL.md", "/Users/alice/git/app", env), "user")
+  assert.equal(opencodeSkillSource("/Users/alice/.agents/skills/b/SKILL.md", "/Users/alice/git/app", env), "user")
+  assert.equal(opencodeSkillSource("/Users/alice/.config/opencode/skills/c/SKILL.md", "/Users/alice/git/app", env), "user")
+  assert.equal(opencodeSkillSource("/Users/alice/git/app/.claude/skills/d/SKILL.md", "/Users/alice/git/app", env), "project")
+  assert.equal(opencodeSkillSource("/Users/alice/git/app/.claude/skills/d/SKILL.md", "/Users/alice/git/app/packages/web", env), "project")
+  const rules = [
+    { action: "skill", resource: "internal-*", effect: "deny" as const },
+    { action: "skill", resource: "internal-ok", effect: "allow" as const },
+  ]
+  assert.equal(opencodeSkillAllowed("browser", rules), false, "STILL_DENIED always blocks skill browser")
+  assert.equal(opencodeSkillAllowed("internal-secret", rules), false)
+  assert.equal(opencodeSkillAllowed("internal-ok", rules), true)
+  assert.deepEqual(
+    opencodeSkillsOf([
+      { id: "valid-id", name: "Valid Name", description: "ok", path: "/builtin/valid.md" },
+      { id: "valid-id", name: "Duplicate", description: "ignored", path: "/builtin/dup.md" },
+      { id: "browser", name: "browser", description: "denied" },
+      { id: "internal-secret", name: "internal-secret", description: "denied" },
+      { id: "bad/id", name: "bad/id", description: "contains slash" },
+      { id: "bad id", name: "bad id", description: "contains space" },
+    ], "/Users/alice/git/app", env, rules),
+    [{ name: "valid-id", description: "ok", source: "builtin" }],
+  )
+  // OpenCode reports resolved paths; a project and HOME reached through a symlink keep their labels.
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "opencode-skill-real-")))
+  mkdirSync(join(base, "real-home", "app"), { recursive: true })
+  symlinkSync(join(base, "real-home"), join(base, "home"))
+  assert.deepEqual(
+    opencodeSkillsOf([
+      { id: "proj", path: join(base, "real-home/app/.claude/skills/proj/SKILL.md") },
+      { id: "mine", path: join(base, "real-home/.claude/skills/mine/SKILL.md") },
+    ], join(base, "home", "app"), { HOME: join(base, "home") }).map((s) => s.source),
+    ["project", "user"],
+  )
+  const known = new Set(["alpha", "beta.v2"])
+  assert.deepEqual(opencodeSlashSkills("/alpha and /beta.v2. Also /alpha!", known), [{ id: "alpha" }, { id: "beta.v2" }])
+
+  // Only skill-attachment failures trigger the plain-prompt retry; unrelated 400/404 errors must not.
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(400, "POST /api/session/s/prompt", "Skill not found: x", "InvalidRequestError", "skills")), true)
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(404, "POST /api/session/s/prompt", "Skill not found: x", "SkillNotFoundError")), true)
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(502, "POST /api/session/s/prompt", "Could not load skill", "SkillLoadError")), true)
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(400, "POST /api/session/s/prompt", "Attachment too large", "InvalidRequestError", "files")), false)
+  assert.equal(isOpencodeSkillAttachmentError(new OpencodeHttpError(404, "POST /api/session/s/prompt", "Session not found", "SessionNotFoundError")), false)
 })

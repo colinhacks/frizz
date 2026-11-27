@@ -24,10 +24,10 @@ export function fetchThreadSkills(slug: string): Promise<ThreadSkill[]> {
 
 // THE NEW-THREAD BOX'S `/` MENU (colinhacks/frizz#79). A thread's box asks its live session; this box has
 // no thread yet, so it asks the server what a new thread of the agent its model chip picks would get in
-// this project: Claude's skills probe, a session started the way a worker is, and Codex's skill list for
-// the project's directory. Antigravity, ACP agents and OpenCode list commands only for a live session, so
-// for them the box offers nothing rather than another thread's list, which could name what this agent
-// does not have.
+// this project: Claude's skills probe, a session started the way a worker is, and Codex's and OpenCode's
+// skill lists for the project's directory. Antigravity and ACP agents list commands only for a live
+// session, so for them the box offers nothing rather than another thread's list, which could name what
+// this agent does not have.
 //
 // Cached per project and agent for a short while, so reopening the dialog does not ask again. A failure
 // is not cached and reads as "no suggestions", as the thread menu's does.
