@@ -1872,7 +1872,37 @@ function VirtualizedThreadTranscript({
           </div>
         )
       })}
-      <JumpToLatest overlay={jumpOverlay} hidden={atEnd} onJump={() => virtualizer.scrollToEnd({ behavior: "smooth" })} />
+      <JumpToLatest
+        overlay={jumpOverlay}
+        hidden={atEnd}
+        onJump={() => {
+          // JUMP TO LATEST TAKES THE READER THERE AT ONCE, and outranks any hold in flight: the opening landing,
+          // an anchor restore, and a "Load earlier" page still landing, whose restore would otherwise put the
+          // reader back on the row they had at the top once it arrived. The button is
+          // portalled outside the scroller, so no reader-intent listener sees the press, and the opening
+          // landing's 900ms hold put the scroller back on the landing the next frame: a press while a thread
+          // at rest was opening did nothing. It was a SMOOTH jump until 2026-11-27, and a smooth scroll across
+          // rows still at their estimates restarts from rest each time one measures, because virtual-core's
+          // reconcile re-aims at the new end with another smooth `scrollTo`: 59-65 restarts and 5.5-6s to
+          // cross a 16,000px folded thread on a stack (colinhacks/frizz#85; openLanding.e2e.test.ts pins both).
+          cancelAnimationFrame(openHoldFrameRef.current)
+          openHoldFrameRef.current = 0
+          openLandRef.current = null
+          pendingPrependAnchorRef.current = null
+          if (prependSettleRef.current) {
+            cancelAnimationFrame(prependSettleRef.current.frame)
+            prependSettleRef.current = null
+          }
+          anchorRestoreUntilRef.current = 0
+          readerScrollUntilRef.current = 0
+          setOpening(false)
+          readerMovedRef.current = true
+          followingTailRef.current = true
+          tailHeightRef.current = -1
+          setAtEnd(true)
+          virtualizer.scrollToEnd({ behavior: "instant" })
+        }}
+      />
     </div>
   )
 }

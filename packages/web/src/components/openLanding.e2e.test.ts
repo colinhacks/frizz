@@ -123,6 +123,56 @@ test("a thread at rest opens on the human's latest message and the first sign-of
       assert.ok(r.steer.top < 0 && r.steer.bottom > 0 && r.steer.bottom < r.first.top, `${where}: the end of the human's message still shows over it`)
     }
     const onItsTail = (r: Reading, where: string) => assert.ok(r.fromTail <= 4, `${where}: a running thread opens on its tail, and it is ${r.fromTail}px from it`)
+    // "JUMP TO LATEST" TAKES THE READER TO THE TAIL AT ONCE, from anywhere, the landing's hold included.
+    // Pressed the moment a thread at rest drew it, the hold put the scroller back on the landing the next
+    // frame and the press did nothing. And a smooth jump across rows still at their estimates restarted on
+    // every row that measured: 59-65 restarts over 5.5-6s on a 16,000px thread (colinhacks/frizz#85).
+    // Counted in frames, in the page, so a slow CDP round trip cannot pass a smooth scroll or fail an
+    // instant one. A smooth jump over this seed's 4,000px threads takes about 50.
+    const jumpLands = async (surface: string, where: string, { tap = false } = {}) => {
+      await page.evaluate((sel) => {
+        const scroller = document.querySelector<HTMLElement>(`${sel} [data-drawer-transcript-scroll]`)!
+        const seen = window as unknown as { __jumpFrames: number | null }
+        seen.__jumpFrames = null
+        document.addEventListener("click", (event) => {
+          if (!(event.target instanceof Element) || !event.target.closest("[data-jump-to-latest]")) return
+          let frames = 0
+          const tick = () => {
+            frames++
+            if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 4) seen.__jumpFrames = frames
+            else if (frames < 600) requestAnimationFrame(tick)
+          }
+          requestAnimationFrame(tick)
+        }, { capture: true, once: true })
+      }, surface)
+      if (tap) await page.tap("[data-jump-to-latest]")
+      else await page.click("[data-jump-to-latest]")
+      const reached = await page.waitForFunction(() => (window as unknown as { __jumpFrames: number | null }).__jumpFrames !== null, { timeout: 10_000 }).then(() => true, () => false)
+      assert.ok(reached, `${where}: Jump to latest never reached the tail (${JSON.stringify(await read(surface))})`)
+      const frames = await page.evaluate(() => (window as unknown as { __jumpFrames: number }).__jumpFrames)
+      assert.ok(frames <= 6, `${where}: Jump to latest reached the tail in ${frames} frames`)
+      // …and is still there once any hold it interrupted would have let go, with the button gone.
+      await new Promise((r) => setTimeout(r, 1200))
+      const after = await read(surface)
+      assert.ok(after && after.fromTail <= 4, `${where}: the reader stays on the tail after the jump, and is ${after?.fromTail}px from it`)
+      assert.equal(await page.$("[data-jump-to-latest]"), null, `${where}: Jump to latest is gone once the reader is on the tail`)
+    }
+    // From the top of a whole transcript, after its landing has let go.
+    const jumpFromTop = async (surface: string, where: string, options?: { tap?: boolean }) => {
+      await settled(surface)
+      await page.evaluate((sel) => { document.querySelector<HTMLElement>(`${sel} [data-drawer-transcript-scroll]`)!.scrollTop = 0 }, surface)
+      await page.waitForSelector("[data-jump-to-latest]", { timeout: 5000 })
+      await jumpLands(surface, where, options)
+    }
+    // The moment a freshly opened thread at rest draws the button, well inside its landing's 900ms hold.
+    const jumpDuringTheHold = async (url: string, surface: string, where: string, options?: { tap?: boolean }) => {
+      await page.goto(url, { waitUntil: "domcontentloaded" })
+      await page.waitForSelector(`${surface} [data-transcript-row-key]`, { timeout: 30_000 })
+      const drawn = Date.now()
+      await page.waitForSelector("[data-jump-to-latest]", { timeout: 2000 })
+      assert.ok(Date.now() - drawn < 600, `${where}: the press lands inside the landing's hold`)
+      await jumpLands(surface, where, options)
+    }
 
     const boardUrl = `${baseUrl}/project/${first.projectSlug}`
     const pane = (slug: string) => `[data-pane-thread] [data-thread-surface="${slug}"]`
@@ -161,6 +211,14 @@ test("a thread at rest opens on the human's latest message and the first sign-of
     await page.click(row("land-unsigned"))
     const unsigned = await settled(pane("land-unsigned"))
     assert.ok(unsigned.steer && unsigned.steer.top >= 0 && unsigned.steer.top <= 80 && unsigned.fromTail > 200, `a stretch with no sign-off opens on the human's message (${JSON.stringify(unsigned)})`)
+    // Pressing Jump to latest while the 900ms opening hold is still in flight releases the hold and lands on
+    // the tail immediately, rather than being overwritten back to the steer on the next frame.
+    await page.click(row("land-short"))
+    await page.waitForSelector(`${pane("land-short")} [data-transcript-row-key]`, { timeout: 30_000 })
+    await page.click(row("land-unsigned"))
+    await page.waitForSelector(`${pane("land-unsigned")} [data-jump-to-latest]`, { timeout: 30_000 })
+    await page.click(`${pane("land-unsigned")} [data-jump-to-latest]`)
+    onItsTail(await settled(pane("land-unsigned")), "the pane, Jump to latest pressed during the opening hold")
 
     // …and by its address, for the threads out of the queue, whose whole transcript the pane draws.
     for (const slug of ["land-snoozed", "land-done"]) {
@@ -169,10 +227,14 @@ test("a thread at rest opens on the human's latest message and the first sign-of
     }
     await page.goto(`${boardUrl}?thread=land-running`, { waitUntil: "networkidle2" })
     onItsTail(await settled(pane("land-running")), "the pane")
+    await jumpDuringTheHold(`${boardUrl}?thread=land-queued`, pane("land-queued"), "the pane, pressed inside the landing's hold")
+    await page.goto(`${boardUrl}?thread=land-snoozed`, { waitUntil: "networkidle2" })
+    await jumpFromTop(pane("land-snoozed"), "the pane, from the top of a whole transcript")
 
     // 2. A DESKTOP'S DRAWER, which a thread link opens over a status list. It opened on the tail.
     await page.goto(`${boardUrl}/status/active?thread=land-snoozed`, { waitUntil: "networkidle2" })
     readsAsAPair(await settled(drawer("land-snoozed")), "a desktop's drawer")
+    await jumpFromTop(drawer("land-snoozed"), "a desktop's drawer, from the top of a whole transcript")
     await page.goto(`${boardUrl}/status/active?thread=land-running`, { waitUntil: "networkidle2" })
     onItsTail(await settled(drawer("land-running")), "a desktop's drawer")
 
@@ -185,6 +247,9 @@ test("a thread at rest opens on the human's latest message and the first sign-of
     readsFromTheSignOff(await settled(`[data-thread-surface="land-long-steer"]`), "a phone's drawer, a steer taller than the pane")
     await page.goto(`${boardUrl}/thread/land-running`, { waitUntil: "networkidle2" })
     onItsTail(await settled(`[data-thread-surface="land-running"]`), "a phone's full-screen page")
+    await jumpDuringTheHold(`${boardUrl}/thread/land-queued`, `[data-thread-surface="land-queued"]`, "a phone's full-screen page, tapped inside the landing's hold", { tap: true })
+    await page.goto(`${boardUrl}?thread=land-snoozed`, { waitUntil: "networkidle2" })
+    await jumpFromTop(`[data-thread-surface="land-snoozed"]`, "a phone's drawer, from the top of a whole transcript", { tap: true })
 
     assert.deepEqual(errors, [], "no console or page errors")
   } finally {
