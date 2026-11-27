@@ -1,4 +1,4 @@
-// THE READER'S PLACE IN EACH THREAD, across thread switches within the session.
+// THE READER'S PLACE IN EACH THREAD, across thread switches within the tab.
 //
 // Selecting another thread in the sidebar (or closing and reopening a drawer) unmounts the thread's
 // VirtualizedThreadTranscript. Without per-thread scroll memory, returning to a thread treated every
@@ -6,14 +6,23 @@
 // pressed "Jump to latest" back to the human's steer at the top of the stretch.
 //
 // A remembered place is recorded only once the reader has actually moved in the thread (scrolled, pressed
-// "Jump to latest", or expanded a fold), and is stamped with the thread's current landing
-// epoch — the human's latest message (`steerKey`) and the newest sign-off after it (`latestSignOffKey`).
-// While that epoch is unchanged (including while a working or quiet-parked thread appends tool calls and
-// wakes), returning to the thread restores the reader's place: pinned to the tail if they were at the
-// tail, or anchored to the top visible row's key and viewport offset if they were mid-thread. When a new
-// human steer or a new sign-off lands while they are away, the epoch changes and the thread opens on the
-// new handoff as `openLanding` intends.
+// "Jump to latest" or expanded a fold): pinned to the tail if they were at the tail, or the top visible
+// row's key and its offset in the pane if they were mid-thread, with the folds they had open. It is
+// stamped with the thread as it stood: the human's latest message (`steerKey`), the newest sign-off after
+// it (`latestSignOffKey`) and the board's `lastActivityAt`. Coming back to a thread that has not moved
+// since restores the place. Coming back to one that has — a steer from another tab, a sign-off, a wake —
+// opens on its landing again, as `openLanding` intends for a new handoff. The board's stamp is what
+// decides that: a transcript no surface shows is not kept live (api/transcript-live.ts), so the copy a
+// revisit paints first can predate what happened while the reader was away, and the board never does.
+// While the reader stays on the thread, each place they move to is stamped with whatever arrives, so what
+// they watched land does not count as moving while away. The transcript reads all this only for a thread
+// at rest: one whose turn is in flight still opens on its tail.
+//
+// In memory, for this tab alone: a reload, or another device, opens every thread on its landing again.
+// Keyed by project and slug, because a thread slug is unique only within its project and a tab moves
+// between projects without a reload (lib/queryKeyScope), and bounded to the threads read most recently.
 
+import { isConsolePath, projectSlug } from "./base-path.ts"
 import { isHumanTurn, lastHumanTurnIndex, type HumanTurnLike } from "./messagePresentation.ts"
 
 export interface TranscriptScrollAnchor {
@@ -26,6 +35,8 @@ export interface TranscriptLandingEpoch {
   steerKey: string | undefined
   /** Identity of the newest sign-off after that message, if any. */
   latestSignOffKey: string | undefined
+  /** The board's `lastActivityAt` for the thread: anything appended to it since moves this. */
+  activityAt: string | undefined
 }
 
 export type TranscriptEpochMsgLike = HumanTurnLike & {
@@ -39,21 +50,32 @@ export type RememberedTranscriptPlace =
 
 interface StoredTranscriptScroll {
   epoch: TranscriptLandingEpoch
-  moved: boolean
   followingTail: boolean
   anchor: TranscriptScrollAnchor | null
-  openFolds: Set<string>
+  openFolds: ReadonlySet<string>
 }
 
-const bySlug = new Map<string, StoredTranscriptScroll>()
+// A few hundred bytes each. Past this the thread read longest ago opens on its landing again.
+export const MAX_REMEMBERED_THREADS = 100
+
+const byThread = new Map<string, StoredTranscriptScroll>()
+
+function threadKey(slug: string): string {
+  return `${isConsolePath() ? "@console" : (projectSlug() ?? "")}\u0000${slug}`
+}
+
+function current(slug: string, epoch: TranscriptLandingEpoch): StoredTranscriptScroll | undefined {
+  const entry = byThread.get(threadKey(slug))
+  return entry && sameEpoch(entry.epoch, epoch) ? entry : undefined
+}
 
 function sameEpoch(a: TranscriptLandingEpoch, b: TranscriptLandingEpoch): boolean {
-  return a.steerKey === b.steerKey && a.latestSignOffKey === b.latestSignOffKey
+  return a.steerKey === b.steerKey && a.latestSignOffKey === b.latestSignOffKey && a.activityAt === b.activityAt
 }
 
 /** The human's latest message and the newest sign-off after it, which together identify the handoff the
- *  thread is currently at. */
-export function transcriptLandingEpoch(messages: readonly TranscriptEpochMsgLike[]): TranscriptLandingEpoch {
+ *  thread is currently at, and the board's last activity on it. */
+export function transcriptLandingEpoch(messages: readonly TranscriptEpochMsgLike[], activityAt: string | undefined): TranscriptLandingEpoch {
   const at = lastHumanTurnIndex(messages)
   const steerAt = messages[at] !== undefined && isHumanTurn(messages[at]) ? at : -1
   const steerKey = steerAt >= 0 ? (messages[steerAt]?.sourceId ?? `idx:${steerAt}`) : undefined
@@ -64,50 +86,29 @@ export function transcriptLandingEpoch(messages: readonly TranscriptEpochMsgLike
       break
     }
   }
-  return { steerKey, latestSignOffKey }
+  return { steerKey, latestSignOffKey, activityAt }
 }
 
-/** Record where the reader left `slug`. */
+/** Record where the reader is in `slug`, with the folds they have open. Newest last: a Map iterates in
+ *  insertion order, so the first key is the thread read longest ago. */
 export function rememberTranscriptScroll(
   slug: string,
   state: {
     epoch: TranscriptLandingEpoch
     followingTail: boolean
     anchor: TranscriptScrollAnchor | null
+    openFolds: ReadonlySet<string>
   },
 ): void {
-  const existing = bySlug.get(slug)
-  const openFolds = existing && sameEpoch(existing.epoch, state.epoch) ? existing.openFolds : new Set<string>()
-  bySlug.set(slug, {
-    epoch: state.epoch,
-    moved: true,
-    followingTail: state.followingTail,
-    anchor: state.followingTail ? null : state.anchor,
-    openFolds,
-  })
+  const key = threadKey(slug)
+  byThread.delete(key)
+  byThread.set(key, { ...state, anchor: state.followingTail ? null : state.anchor })
+  while (byThread.size > MAX_REMEMBERED_THREADS) byThread.delete(byThread.keys().next().value!)
 }
 
-/** Record a fold the reader expanded in `slug`, so a remembered anchor inside it stays mounted on return. */
-export function rememberTranscriptOpenFold(slug: string, epoch: TranscriptLandingEpoch, foldKey: string): void {
-  const existing = bySlug.get(slug)
-  if (existing && sameEpoch(existing.epoch, epoch)) {
-    existing.openFolds.add(foldKey)
-    return
-  }
-  bySlug.set(slug, {
-    epoch,
-    moved: false,
-    followingTail: false,
-    anchor: null,
-    openFolds: new Set([foldKey]),
-  })
-}
-
-/** The folds the reader already expanded in `slug` during the current landing epoch. */
+/** The folds the reader had open in `slug`, if it has not moved since. */
 export function rememberedTranscriptOpenFolds(slug: string, epoch: TranscriptLandingEpoch): ReadonlySet<string> {
-  const existing = bySlug.get(slug)
-  if (!existing || !sameEpoch(existing.epoch, epoch)) return new Set()
-  return new Set(existing.openFolds)
+  return new Set(current(slug, epoch)?.openFolds)
 }
 
 /** Where `slug` should open on revisit, or `null` when it should use its cold-open landing. */
@@ -116,22 +117,17 @@ export function resolveRememberedTranscriptScroll(
   epoch: TranscriptLandingEpoch,
   rows: readonly { key: string }[],
 ): RememberedTranscriptPlace | null {
-  const entry = bySlug.get(slug)
+  const entry = current(slug, epoch)
   if (!entry) return null
-  if (!sameEpoch(entry.epoch, epoch)) {
-    bySlug.delete(slug)
-    return null
-  }
-  if (!entry.moved) return null
   if (entry.followingTail) return { kind: "tail" }
-  if (!entry.anchor) return null
-  const index = rows.findIndex((row) => row.key === entry.anchor!.rowKey)
+  const anchor = entry.anchor
+  if (!anchor) return null
+  const index = rows.findIndex((row) => row.key === anchor.rowKey)
   if (index < 0) return null
-  return { kind: "anchor", index, anchor: entry.anchor }
+  return { kind: "anchor", index, anchor }
 }
 
 /** Test seam. */
-export function clearRememberedTranscriptScroll(slug?: string): void {
-  if (slug !== undefined) bySlug.delete(slug)
-  else bySlug.clear()
+export function clearRememberedTranscriptScroll(): void {
+  byThread.clear()
 }
