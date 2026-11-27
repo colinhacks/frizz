@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client"
 import type { BoardSnapshot, ThreadView as ThreadViewModel, TranscriptMessage } from "@frizz/shared"
 import { ThreadView } from "./components/ChatView.tsx"
 import { TooltipProvider } from "./components/Tooltip.tsx"
-import type { PaginatedTranscriptData } from "./lib/transcriptPagination.ts"
+import { mergeOptimistic, preserveMessageIdentity } from "./lib/transcript-sync.ts"
+import { reconcileLiveMessages, type PaginatedTranscriptData } from "./lib/transcriptPagination.ts"
 import { store } from "./store.ts"
 import "./styles.css"
 
@@ -13,7 +14,10 @@ import "./styles.css"
 // Rows vary from one line to several paragraphs, as a real thread's do, so every row above the reader
 // mounts at an estimate and corrects.
 //
-// It does NOT boot a frizz server: the RPC calls the transcript makes are answered here.
+// It does NOT boot a frizz server: the RPC calls the transcript makes are answered here, and
+// `__scrollBack.append()` is the turn going on: one new message, pushed as the server's latest window
+// through the same pipeline socket.ts runs a transcript push through. Until the first earlier page is in,
+// a push replaces the window whole, so each append also slides one message off its head.
 //   ?earlierDelay=400   how long an earlier page takes to arrive, in ms (default 0)
 const params = new URLSearchParams(location.search)
 const EARLIER_DELAY_MS = Number(params.get("earlierDelay") ?? 0)
@@ -50,11 +54,28 @@ const initialPage: PaginatedTranscriptData = {
   historyLoaded: false,
 }
 
+// EXACTLY socket.ts `handle("transcript")`: the server's messages through reconcileLiveMessages, then the
+// optimistic and identity-preserving pair, into the same query cache key.
+function push(messages: TranscriptMessage[]) {
+  queryClient.setQueryData(["transcript", SLUG], (prev: PaginatedTranscriptData | undefined) => {
+    const reconciled = reconcileLiveMessages(prev, messages)
+    return { ...reconciled, messages: preserveMessageIdentity(prev?.messages, mergeOptimistic(prev?.messages, reconciled.messages)) }
+  })
+}
+
+let earlierPagesRequested = 0
 let earlierPagesServed = 0
 declare global {
-  interface Window { __scrollBack: { earlierPagesServed(): number } }
+  interface Window { __scrollBack: { earlierPagesRequested(): number; earlierPagesServed(): number; append(): void } }
 }
-window.__scrollBack = { earlierPagesServed: () => earlierPagesServed }
+window.__scrollBack = {
+  earlierPagesRequested: () => earlierPagesRequested,
+  earlierPagesServed: () => earlierPagesServed,
+  append() {
+    all.push(message(all.length))
+    push(all.slice(-WINDOW))
+  },
+}
 
 const json = (result: unknown) => new Response(JSON.stringify({ result }), { headers: { "content-type": "application/json" } })
 const originalFetch = window.fetch
@@ -65,6 +86,7 @@ window.fetch = async (input, init) => {
     // A query carries its input in the URL, a mutation in the body (api/rpc.ts).
     const input = JSON.parse(url.searchParams.get("input") ?? (typeof init?.body === "string" ? init.body : "{}")) as { cursor?: string }
     const cursor = input.cursor ?? ""
+    earlierPagesRequested++
     if (EARLIER_DELAY_MS > 0) await new Promise((resolve) => setTimeout(resolve, EARLIER_DELAY_MS))
     earlierPagesServed++
     return json(page(Number(cursor.replace("before:", "")) || 0))

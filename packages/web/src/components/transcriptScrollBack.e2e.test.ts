@@ -10,8 +10,12 @@ import test from "node:test"
 // thread with a 400ms one (2026-11-28).
 //
 // A trackpad's stream of small notches, 20px every 8ms, is replayed over transcript-scroll-back-fixture.html
-// across two earlier pages, once with pages that arrive at once and once with pages that take 300ms, and
-// the row under the reader is read on every frame. With the wheel going up, content only ever moves DOWN
+// across two earlier pages: pages that arrive at once, pages that take 300ms, and pages that take 300ms
+// on a thread whose turn goes on, a new message every 60ms while a page is in flight. Until the first page
+// is in, each of those slides a message off the head of the window, and the restore read that as the page
+// landing: it stopped following the reader, and a trim moved the transcript up under them unheld. The row
+// under the reader is read on every frame, except, on the live thread, a frame that leaves the scroller at
+// its very top: a trim there cannot be held by any write. With the wheel going up, content only ever moves DOWN
 // the screen, with one allowance: the frame a page lands on may lose the one notch the compositor applied
 // since the last frame, which no main-thread scroll write can carry (the virtualizer's own corrections
 // lose it the same way). More than one such frame per landing, or a larger move, is the stutter.
@@ -24,10 +28,16 @@ const NOTCH = 20
 const EVERY_MS = 8
 const PAGES = 2
 
-interface Frame { key: string | null; y: number | null; repicked: boolean }
+interface Frame { key: string | null; y: number | null; repicked: boolean; scrollTop: number }
 
-for (const earlierDelay of [0, 300]) {
-  test(`wheeling up across earlier pages that take ${earlierDelay}ms never moves the transcript against the reader`, { skip: !baseUrl, timeout: 120_000 }, async () => {
+const CASES = [
+  { earlierDelay: 0, live: false, name: "earlier pages that arrive at once" },
+  { earlierDelay: 300, live: false, name: "earlier pages that take 300ms" },
+  { earlierDelay: 300, live: true, name: "earlier pages that take 300ms, on a thread still receiving messages" },
+]
+
+for (const { earlierDelay, live, name } of CASES) {
+  test(`wheeling up across ${name} never moves the transcript against the reader`, { skip: !baseUrl, timeout: 120_000 }, async () => {
     const { launchHeadless } = await import("../../../../scripts/lib/headless-browser.mjs")
     const browser = await launchHeadless()
     try {
@@ -57,13 +67,20 @@ for (const earlierDelay of [0, 300]) {
             key = row?.dataset.transcriptRowKey ?? null
             repicked = true
           }
-          state.__frames.push({ key, y: row ? row.getBoundingClientRect().top : null, repicked })
+          state.__frames.push({ key, y: row ? row.getBoundingClientRect().top : null, repicked, scrollTop: scroller.scrollTop })
           if (!state.__stop) requestAnimationFrame(loop)
         }
         requestAnimationFrame(loop)
         const box = scroller.getBoundingClientRect()
         return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
       })
+      // The turn going on: a message every 60ms for as long as an earlier page is in flight.
+      if (live) {
+        await page.evaluate(() => {
+          const fixture = (window as unknown as { __scrollBack: { earlierPagesRequested(): number; earlierPagesServed(): number; append(): void } }).__scrollBack
+          setInterval(() => { if (fixture.earlierPagesRequested() > fixture.earlierPagesServed()) fixture.append() }, 60)
+        })
+      }
       await page.mouse.move(center.x, center.y)
       const cdp = await page.createCDPSession()
       const served = () => page.evaluate(() => (window as unknown as { __scrollBack: { earlierPagesServed(): number } }).__scrollBack.earlierPagesServed())
@@ -90,6 +107,9 @@ for (const earlierDelay of [0, 300]) {
       for (let i = 1; i < frames.length; i++) {
         const [a, b] = [frames[i - 1], frames[i]]
         if (b.repicked || a.key !== b.key || a.y === null || b.y === null) continue
+        // A trim above a reader already at the top of the window has nothing left to scroll into, so
+        // no write can hold their row: the transcript has to move up by what was trimmed.
+        if (live && b.scrollTop <= 1) continue
         if (b.y - a.y < -1) against.push({ frame: i, moved: Math.round(b.y - a.y) })
       }
       const detail = `${JSON.stringify(against)} over ${frames.length} frames`
