@@ -42,6 +42,10 @@ window.fetch = async (input, init) => {
     const needsConfirmation = mode === "executing" && body.terminateLive !== true
     return rpcResult({ needsConfirmation, ...(needsConfirmation && hold ? { hold } : {}) })
   }
+  if (url.pathname === "/_frizz/rpc/snoozeAwaitingBackground") {
+    window.dispatchEvent(new CustomEvent("fixture-keep-running"))
+    return rpcResult(null)
+  }
   return nativeFetch(input, init)
 }
 
@@ -72,12 +76,21 @@ const thread: ThreadView = {
 function Fixture() {
   const [calls, setCalls] = useState<string[]>([])
   const [done, setDone] = useState(false)
+  const [keptRunning, setKeptRunning] = useState(false)
   useEffect(() => {
     const onComplete = ((event: CustomEvent<{ terminateLive?: boolean }>) => {
       setCalls((prior) => [...prior, event.detail.terminateLive ? "terminate" : "initial"])
     }) as EventListener
+    const onKeepRunning = () => {
+      setCalls((prior) => [...prior, "keep-running"])
+      setKeptRunning(true)
+    }
     window.addEventListener("fixture-complete", onComplete)
-    return () => window.removeEventListener("fixture-complete", onComplete)
+    window.addEventListener("fixture-keep-running", onKeepRunning)
+    return () => {
+      window.removeEventListener("fixture-complete", onComplete)
+      window.removeEventListener("fixture-keep-running", onKeepRunning)
+    }
   }, [])
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-xl items-center px-4 py-8">
@@ -90,10 +103,11 @@ function Fixture() {
           </p>
           <p data-fixture-complete-calls className="mt-3 text-[11px] text-muted">RPC calls: {calls.join(", ") || "none"}</p>
           {done && <p data-fixture-done className="mt-1 text-[11px] text-accent">Done applied</p>}
+          {keptRunning && <p data-fixture-kept-running className="mt-1 text-[11px] text-accent">Kept running</p>}
         </div>
         {/* The header's lifecycle cluster — the check is what this fixture drives. */}
         <div className="flex justify-end px-4 py-2">
-          {phone ? <PhoneDoneButton thread={thread} compact={false} /> : <ThreadLifecycleActions thread={thread} onArchived={() => setDone(true)} />}
+          {phone ? <PhoneDoneButton thread={thread} compact={false} /> : <ThreadLifecycleActions thread={thread} onArchived={() => setDone(true)} onSnoozed={() => setKeptRunning(true)} />}
         </div>
       </section>
     </main>

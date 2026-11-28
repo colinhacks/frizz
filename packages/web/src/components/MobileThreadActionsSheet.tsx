@@ -182,6 +182,7 @@ function ActionsList({ thread, title, setView, dismiss, onArchived }: {
           iconSize={19}
           iconClassName="shrink-0 text-muted"
           onArchived={() => dismiss(onArchived)}
+          onSnoozed={() => dismiss(onArchived)}
           className={`${ROW_CLASS} !gap-[14px] !font-normal`}
         />
       )}

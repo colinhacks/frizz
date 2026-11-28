@@ -146,6 +146,22 @@ export function completionHoldSummary(hold: CompletionHold | undefined): Complet
   }
 }
 
+// True for the "The agent is resting, but … still running:" branch of completionHoldSummary: the parent
+// turn is at rest (`!hold.turnInFlight`) and its own sub-agents or background shells are live, so the
+// server's `snoozeAwaitingBackground` can take the thread out of the queue while that background work
+// keeps running. False while the parent turn itself is executing, cut off, unobservable, or already
+// event-snoozed.
+export function completionHoldCanKeepRunning(
+  hold: CompletionHold | undefined,
+  thread?: Pick<ThreadView, "bgSnoozed">,
+): boolean {
+  if (!hold || hold.cutOff || hold.unobservable || hold.turnInFlight) return false
+  if (thread?.bgSnoozed === true) return false
+  const agents = Math.max(hold.subAgentCount, hold.subAgents.length)
+  const shells = Math.max(hold.bgShellCount, hold.bgShells.length)
+  return agents + shells > 0
+}
+
 function holdRow(kind: CompletionHoldRow["kind"], op: CompletionHold["subAgents"][number]): CompletionHoldRow {
   return { kind, label: op.label, state: op.state, ...(op.startedAt ? { startedAt: op.startedAt } : {}) }
 }

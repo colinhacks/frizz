@@ -3,7 +3,7 @@ import { Check, Loader2 } from "lucide-react"
 import type { CompletionHold, ThreadView } from "@frizz/shared"
 import { rpc } from "../api/rpc.ts"
 import { showToast } from "../store.ts"
-import { threadLifecycleAvailability, completionArchivesImmediately } from "../lib/threadLifecycle.ts"
+import { threadLifecycleAvailability, completionArchivesImmediately, completionHoldCanKeepRunning } from "../lib/threadLifecycle.ts"
 import { markArchived, clearArchived } from "../lib/optimisticArchive.ts"
 import { isPinned, settleCompletion } from "../lib/completionPins.ts"
 import { HEADER_ICON_CLASS } from "../lib/headerIcon.ts"
@@ -63,7 +63,7 @@ export function ThreadLifecycleActions({
       ) : (
         <>
           {available.snooze && <SnoozeMenu thread={thread} onSnoozed={onSnoozed} />}
-          <StateButton thread={thread} onArchived={onArchived} onDismissCancel={onDismissCancel} iconOnly />
+          <StateButton thread={thread} onArchived={onArchived} onDismissCancel={onDismissCancel} onSnoozed={onSnoozed} iconOnly />
         </>
       )}
     </span>
@@ -127,6 +127,7 @@ export function StateButton({
   thread,
   onArchived,
   onDismissCancel,
+  onSnoozed,
   className = "rounded-md border border-border-strong bg-panel-2/60 px-2.5 py-1 text-[12px] text-fg/80 hover:bg-panel-2 hover:text-fg",
   iconClassName = "",
   iconSize = 12,
@@ -137,6 +138,7 @@ export function StateButton({
   // Undo an optimistic dismissal (queue only). Present ⇒ the click may dismiss the card BEFORE the RPC
   // returns and reinstate it if the server declines; absent ⇒ the button waits for the round-trip.
   onDismissCancel?: () => void
+  onSnoozed?: () => void
   // Carries the CORNER as well as the fill, because the surfaces disagree about it: the phone's sheet row
   // is a list row, while the in-card copy takes the tighter card-action radius so it relates to the
   // card's own corner (TranscriptCard's CARD_ACTION_RADIUS). It cannot be hardcoded
@@ -225,6 +227,22 @@ export function StateButton({
     setUnpinAskOpen(false)
     complete(false, canOptimistic)
   }
+  const canKeepRunning = completionHoldCanKeepRunning(hold, thread)
+  const keepRunning = () => {
+    setPending(true)
+    rpc
+      .snoozeAwaitingBackground({ slug: thread.id, sessionId: thread.sessionId ?? "" })
+      .then(() => {
+        setConfirmOpen(false)
+        setPending(false)
+        showToast("Snoozed until the background work returns")
+        onSnoozed?.()
+      })
+      .catch((error) => {
+        showToast(`Couldn’t snooze: ${(error as Error).message.slice(0, 80)}`)
+        setPending(false)
+      })
+  }
   return (
     <>
       {iconOnly ? (
@@ -267,14 +285,26 @@ export function StateButton({
         className="w-[390px] max-w-[92vw]"
         footer={
           <>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => setConfirmOpen(false)}
-              className="button-outline rounded-md px-3 py-1.5 text-[12px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg disabled:opacity-45"
-            >
-              Cancel
-            </button>
+            {canKeepRunning ? (
+              <button
+                type="button"
+                data-hold-keep-running
+                disabled={pending}
+                onClick={keepRunning}
+                className="button-outline rounded-md px-3 py-1.5 text-[12px] text-fg/80 outline-none transition-colors hover:bg-panel-2 hover:text-fg disabled:opacity-45"
+              >
+                Keep running
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setConfirmOpen(false)}
+                className="button-outline rounded-md px-3 py-1.5 text-[12px] text-muted outline-none transition-colors hover:bg-panel-2 hover:text-fg disabled:opacity-45"
+              >
+                Cancel
+              </button>
+            )}
             <button
               type="button"
               data-dialog-default

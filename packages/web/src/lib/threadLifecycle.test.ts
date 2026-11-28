@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import type { CompletionHold, ThreadView } from "@frizz/shared"
-import { threadLifecycleAvailability, completionArchivesImmediately, completionHoldSummary } from "./threadLifecycle.ts"
+import { threadLifecycleAvailability, completionArchivesImmediately, completionHoldCanKeepRunning, completionHoldSummary } from "./threadLifecycle.ts"
 
 function thread(over: Partial<ThreadView> = {}): ThreadView {
   return {
@@ -168,6 +168,22 @@ test("completionHoldSummary reports withheld labels as '+N more' and never claim
   // No hold at all (older server, or a mispredict with no evidence) degrades to the original sentence.
   assert.equal(completionHoldSummary(undefined).lead, "This thread is still running.")
   assert.equal(completionHoldSummary(hold()).lead, "This thread is still running.", "an evidence-free hold asserts nothing new")
+})
+
+test("completionHoldCanKeepRunning offers the event-snooze only when the parent is resting behind live work", () => {
+  const restingWithSub = hold({ subAgents: [{ label: "Audit the resolver", state: "running" }], subAgentCount: 1 })
+  const restingWithShell = hold({ bgShells: [{ label: "Watch CI", state: "running" }], bgShellCount: 1 })
+  assert.equal(completionHoldCanKeepRunning(restingWithSub, thread()), true)
+  assert.equal(completionHoldCanKeepRunning(restingWithShell, thread()), true)
+  // Already event-snoozed: nothing left for Keep running to arm.
+  assert.equal(completionHoldCanKeepRunning(restingWithSub, thread({ bgSnoozed: true })), false)
+  // Executing, cut off, unobservable, or no live background work: the server would reject snoozeAwaitingBackground.
+  assert.equal(completionHoldCanKeepRunning(hold({ ...restingWithSub, turnInFlight: true }), thread()), false)
+  assert.equal(completionHoldCanKeepRunning(hold({ turnInFlight: true }), thread()), false)
+  assert.equal(completionHoldCanKeepRunning(hold({ turnInFlight: true, cutOff: true }), thread()), false)
+  assert.equal(completionHoldCanKeepRunning(hold({ ...restingWithSub, unobservable: true }), thread()), false)
+  assert.equal(completionHoldCanKeepRunning(hold(), thread()), false)
+  assert.equal(completionHoldCanKeepRunning(undefined, thread()), false)
 })
 
 test("every owned open queue reason retains enabled lifecycle actions", () => {
