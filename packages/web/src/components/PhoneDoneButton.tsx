@@ -1,7 +1,10 @@
 import { useState } from "react"
 import { Check, Loader2 } from "lucide-react"
 import type { CompletionHold, ThreadView } from "@frizz/shared"
-import { markDoneAndAdvance } from "../lib/mobileTriage.ts"
+import { rpc } from "../api/rpc.ts"
+import { showToast } from "../store.ts"
+import { leaveFiledThread, markDoneAndAdvance } from "../lib/mobileTriage.ts"
+import { completionHoldCanKeepRunning } from "../lib/threadLifecycle.ts"
 import { CompletionHoldBody } from "./CompletionHoldBody.tsx"
 import { Dialog } from "./ui/Dialog.tsx"
 
@@ -29,6 +32,20 @@ export function PhoneDoneButton({ thread, compact }: { thread: ThreadView; compa
     // "done" leaves `pending` set: the thread is on its way out, and a button that re-enabled under
     // the transition would invite a second completion.
     if (outcome.kind !== "done") setPending(false)
+  }
+
+  const canKeepRunning = completionHoldCanKeepRunning(hold?.hold, thread)
+  async function keepRunning() {
+    setPending(true)
+    try {
+      await rpc.snoozeAwaitingBackground({ slug: thread.id, sessionId: thread.sessionId ?? "" })
+      setHold(null)
+      leaveFiledThread(thread.id)
+      showToast("Snoozed until activity")
+    } catch (error) {
+      showToast(`Couldn’t snooze: ${(error instanceof Error ? error.message : String(error)).slice(0, 80)}`)
+      setPending(false)
+    }
   }
 
   return (
@@ -61,15 +78,27 @@ export function PhoneDoneButton({ thread, compact }: { thread: ThreadView; compa
         className="w-[390px] max-w-[92vw]"
         footer={
           <>
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => setHold(null)}
-              // `pb-0.5` on both: the 14px label sat 0.81px below the 40px box's centre (ink-align, 2026-11-24).
-              className="button-outline h-[40px] rounded-md px-4 pb-0.5 text-[14px] text-muted outline-none disabled:opacity-45"
-            >
-              Cancel
-            </button>
+            {canKeepRunning ? (
+              <button
+                type="button"
+                data-hold-keep-running
+                disabled={pending}
+                onClick={() => void keepRunning()}
+                className="button-outline h-[40px] rounded-md px-4 pb-0.5 text-[14px] text-fg/80 outline-none transition-colors hover:bg-panel-2 hover:text-fg disabled:opacity-45"
+              >
+                Keep running
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setHold(null)}
+                // `pb-0.5` on both: the 14px label sat 0.81px below the 40px box's centre (ink-align, 2026-11-24).
+                className="button-outline h-[40px] rounded-md px-4 pb-0.5 text-[14px] text-muted outline-none disabled:opacity-45"
+              >
+                Cancel
+              </button>
+            )}
             <button
               type="button"
               data-phone-done-confirm

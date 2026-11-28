@@ -25,13 +25,13 @@ after(async () => {
 })
 
 /** The fixture's thread has a turn executing, so Mark as done asks first. */
-async function openConfirm(): Promise<{ page: Page; errors: string[] }> {
+async function openConfirm(query = "mode=executing"): Promise<{ page: Page; errors: string[] }> {
   const page = await browser!.newPage()
   await page.setViewport({ width: 900, height: 700 })
   const errors: string[] = []
   page.on("console", (m) => { if (m.type() === "error" && !/404|favicon/i.test(m.text())) errors.push(m.text()) })
   page.on("pageerror", (e) => errors.push(String(e)))
-  await page.goto(`${baseUrl}/completion-lifecycle-fixture.html?mode=executing`, { waitUntil: "networkidle0" })
+  await page.goto(`${baseUrl}/completion-lifecycle-fixture.html?${query}`, { waitUntil: "networkidle0" })
   await page.click("button[aria-label='Mark as done']")
   await page.waitForSelector("[role=dialog] [data-dialog-default]")
   // Radix places the focus a frame after the dialog mounts.
@@ -79,6 +79,20 @@ test("another button the focus was moved to keeps its own Enter", { skip: !baseU
     await page.keyboard.press("Enter")
     await page.waitForSelector("[role=dialog]", { hidden: true })
     assert.equal(await calls(page), "RPC calls: initial", "Cancel ended nothing")
+    assert.equal(await page.$("[data-fixture-done]"), null)
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.close()
+  }
+})
+
+test("a resting thread with live background work offers Keep running to dequeue without stopping it", { skip: !baseUrl, timeout: 60_000 }, async () => {
+  const { page, errors } = await openConfirm("mode=executing&ops=one")
+  try {
+    await page.click("[data-hold-keep-running]")
+    await page.waitForSelector("[role=dialog]", { hidden: true })
+    await page.waitForSelector("[data-fixture-kept-running]")
+    assert.equal(await calls(page), "RPC calls: initial, keep-running")
     assert.equal(await page.$("[data-fixture-done]"), null)
     assert.deepEqual(errors, [])
   } finally {
