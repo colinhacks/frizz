@@ -2123,12 +2123,12 @@ function signoffNudgeAwaitingLines(needsInput: boolean): string[] {
     "  - `watching` — something has to HAPPEN outside the thread: a release, a review, another agent's",
     "    merge, the next daily cycle. The thread is snoozed, and nothing on its row moves, until a named",
     "    item reports or `for:` runs out.",
-    "  - `needs_input` — the human can read, try or act on something NOW while the work runs (a partial",
-    "    result, a file you wrote, a server to try), even if you need nothing back from them. The thread",
-    "    goes into their queue, and the prose under `---` says what to look at.",
-    "  `working` and `watching` owe NO write-up: the fence alone is the whole message. If you wrote ANY",
-    "  words for the human at this rest, it is `needs_input` — nothing else is put in front of them. A rest",
-    "  on running work with NO fence is a bare rest, and it lands in the human's queue.",
+    "  - `needs_input` — the human can read, try or act on something NOW while the work runs (a server to",
+    "    try, a deliverable ready for review), even if you need nothing back from them. The thread goes",
+    "    into their queue, and the prose under `---` says what to look at. Routine progress while your",
+    "    own sub-agents or shells keep working is `working`, not `needs_input`.",
+    "  `working` and `watching` owe NO write-up: the fence alone is the whole message. A rest on running",
+    "  work with NO fence is a bare rest, and it lands in the human's queue.",
   ]
 }
 
