@@ -41,7 +41,7 @@ export function PhoneDoneButton({ thread, compact }: { thread: ThreadView; compa
       await rpc.snoozeAwaitingBackground({ slug: thread.id, sessionId: thread.sessionId ?? "" })
       setHold(null)
       leaveFiledThread(thread.id)
-      showToast("Snoozed until the background work returns")
+      showToast("Snoozed until activity")
     } catch (error) {
       showToast(`Couldn’t snooze: ${(error instanceof Error ? error.message : String(error)).slice(0, 80)}`)
       setPending(false)

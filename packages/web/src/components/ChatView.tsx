@@ -4733,6 +4733,7 @@ export function FenceCard({ fenceKind, body, hints, pastRest }: { fenceKind: Fen
           iconClassName={ICON_LABEL_NUDGE}
           onArchived={queueDismiss?.dismiss}
           onDismissCancel={queueDismiss?.cancel}
+          onSnoozed={queueDismiss?.dismiss}
         />
       </CardActions>
     ) : null

@@ -235,7 +235,7 @@ export function StateButton({
       .then(() => {
         setConfirmOpen(false)
         setPending(false)
-        showToast("Snoozed until the background work returns")
+        showToast("Snoozed until activity")
         onSnoozed?.()
       })
       .catch((error) => {
