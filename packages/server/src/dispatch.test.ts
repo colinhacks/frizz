@@ -592,6 +592,8 @@ test("end-state contract: a fenceless rest is a DEFECT, done checks, awaiting pa
     assert.match(c, /`working` — the work finishes BY ITSELF/)
     assert.match(c, /`watching` — the wait is on something OUTSIDE the thread/)
     assert.match(c, /`needs_input` — the human can read, try or act on something NOW/)
+    assert.match(c, /Routine progress while your own sub-agents or shells keep working[\s\S]{0,120}is NOT `needs_input` — park that quietly with `status: working`/)
+    assert.doesNotMatch(c, /a partial result, a file/i)
     assert.match(c, /`needs_input: true` and `needs_input: false`, the answer before 2026-10-05, are still read/)
     // A rest the human is not queued to read owes them nothing to read (maintainer 2026-10-01).
     assert.match(c, /A QUIET PARK NEEDS NO WRITE-UP/)
